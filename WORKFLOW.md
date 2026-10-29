@@ -241,7 +241,9 @@ mkdir tasks\2026-08-04-add-login
 ### Step 3.2: 写 prd.md
 
 把 Task Handoff 复制到 `tasks/<日期>-<简述>/prd.md`。
-按 prd.md 模板逐项填写：Goal、Requirements、User Stories、Out of Scope、Constraints、Context Pointers、Testing Decisions、Risks、Verification Plan。
+按 prd.md 模板逐项填写：Goal、Requirements、User Stories、Out of Scope、Not yet specified、Constraints、Context Pointers、Testing Decisions、Risks、Verification Plan。
+
+`Not yet specified` 是**雾区**：确定在后面、但现在还没法精确表述的东西写在这里，**不要**硬拆成假切片。判据是「能不能现在就把问题写清楚」——能就开切片或决策条目，不能就留在这。每解掉一个决策，回来看一次这节。详见 `tasks/README.md`。
 
 「档位」那一行**留空**——网页对话的 AI 没见过代码，判不了。由本地 Agent 在 3.3 只读分析后填。
 
@@ -435,6 +437,14 @@ tasks/2026-08-04-add-login/
   02-api.md         # 被谁挡: 01
   03-ui.md          # 被谁挡: 02
 ```
+
+拆分时守住三条：
+
+- **切片只装「已经知道怎么做」的活。** 某一步本质是待决策的问题（选型、取哪个口径、要不要做、做到多大）→ 先落一条**决策条目**（问题 + 结论 + 依据），拿到结论再拆执行切片。别把问题硬写成切片。
+- **判据是「能不能现在就把问题精确表述出来」**，不是「能不能现在回答」。表述不出来 → 留在 `prd.md` 的 `## Not yet specified`（雾区），不要预切成切片大小的假切片。
+- **切片必须垂直**（贯穿 schema / API / UI / 测试），不是一个横向的层；每个切片做完都能独立演示或验证。
+
+每解掉一个决策条目，回来看一次雾区有没有能落成新切片 / 新决策条目的。
 
 规则见 `tasks/README.md`。
 
