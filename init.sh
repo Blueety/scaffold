@@ -14,19 +14,34 @@ fi
 PROJECT_NAME="$1"
 
 # 校验项目名。
-# 允许：ASCII 字母数字、点、下划线、连字符，以及中文等非 ASCII 字节（UTF-8 原样透传）。
-# 拒绝：路径分隔符、空白、控制字符和 shell/sed 元字符——它们会破坏 cp/sed 或造成路径穿越。
-# 用 tr 做「补集删除」而不是字符类取反：不依赖 locale，LC_ALL=C 下同样正确。
+# 允许：ASCII 字母数字、点、下划线、连字符，以及中文等非 ASCII 字符（UTF-8 原样透传）。
+# 拒绝：路径分隔符、空白、控制字符和 shell/sed 元字符——它们会破坏 cp/sed 或造成路径穿越；
+#       也拒绝尾随的点，因为 Windows 会把它规范化掉，导致 mkdir 与后续路径落到不同目录。
+# 规则与 init.ps1 保持一致，两边接受集必须相同。
 reject_project_name() {
     echo "错误: 项目名 '$PROJECT_NAME' 非法"
-    echo '允许字母、数字、点、下划线、连字符和中文；不能是 . / .. / .git，也不能以 - 开头。'
-    echo '也不能含空格、引号、反斜杠、/ 或 & $ ` ; | < > ( ) * ? 等元字符。'
+    echo '允许字母、数字、点、下划线、连字符和中文等非 ASCII 字符；不能是 . / .. / .git（不分大小写），'
+    echo '不能以 - 开头或以 . 结尾，也不能含空格、引号、反斜杠、/ 或 & $ ` ; | < > ( ) * ? 等元字符。'
     exit 1
 }
 
+# 控制字符单独挡一道：下面的 tr 结果要过 $(...) 命令替换，而它会吃掉结尾换行，
+# 于是纯换行的名字会被误判成合法。
 case "$PROJECT_NAME" in
-    ""|.|..|.git|-*) reject_project_name ;;
+    ""|*[[:cntrl:]]*) reject_project_name ;;
 esac
+
+# .git 不分大小写：Windows 的文件名不区分大小写，.GIT 和 .git 是同一个东西。
+# 保留设备名同理：Windows 上 CON/NUL/COM1 之类的名字建不出普通目录（Git Bash 下
+# mkdir 会留下一个设备项）。取第一个点之前的部分来判断，CON.txt 也是设备名。
+lower_name="$(printf '%s' "$PROJECT_NAME" | LC_ALL=C tr 'A-Z' 'a-z')"
+case "$lower_name" in
+    .|..|.git|-*|*.) reject_project_name ;;
+esac
+case "${lower_name%%.*}" in
+    con|prn|aux|nul|com[1-9]|lpt[1-9]) reject_project_name ;;
+esac
+
 if [ -n "$(printf '%s' "$PROJECT_NAME" | LC_ALL=C tr -d 'A-Za-z0-9._\200-\377-')" ]; then
     reject_project_name
 fi
@@ -84,8 +99,10 @@ while IFS= read -r f; do
 done < <(find "$TARGET_DIR" -type f)
 
 # 初始化 git。断言真的建出来了，不把失败当成功。
-cd "$TARGET_DIR"
-if ! git_init_err="$(git init 2>&1 >/dev/null)"; then
+#
+# 一律用 git -C "$TARGET_DIR"，不 cd 进去：Windows 会规范化尾随点之类的路径，
+# cd 可能落到调用者的目录，于是 git init 在调用者的目录里建出一个游离仓库。
+if ! git_init_err="$(git -C "$TARGET_DIR" init 2>&1 >/dev/null)"; then
     echo "错误: git init 失败"
     if [ -n "$git_init_err" ]; then printf '%s\n' "$git_init_err" | sed 's/^/  /'; fi
     echo "项目文件已创建在 $TARGET_DIR，但没有初始化 git 仓库。"
@@ -103,7 +120,7 @@ fi
 # 同时启用随项目分发的 git 钩子：.git/hooks 不受版本控制，所以钩子放在 .githooks/，
 # 用 core.hooksPath 指过去。不设这一步，闸门检查就只是一次性的。
 set_git_config() {
-    if ! git config "$1" "$2"; then
+    if ! git -C "$TARGET_DIR" config "$1" "$2"; then
         echo "错误: 设置 $1=$2 失败"
         echo "手动执行: cd $TARGET_DIR && git config $1 $2"
         exit 1
@@ -116,15 +133,16 @@ set_git_config core.hooksPath .githooks
 # 而 Windows 上 git add 会记成 100644，之后 clone 到 Linux/macOS 时 git 会因为
 # 钩子不是可执行文件而静默跳过它。
 while IFS= read -r f; do
+    rel="${f#"$TARGET_DIR"/}"
     if ! chmod +x "$f"; then
-        echo "错误: 加可执行位失败: $f"
+        echo "错误: 加可执行位失败: $rel"
         exit 1
     fi
-    if ! git add --chmod=+x -- "$f"; then
-        echo "错误: 记录可执行位失败: $f"
+    if ! git -C "$TARGET_DIR" add --chmod=+x -- "$rel"; then
+        echo "错误: 记录可执行位失败: $rel"
         exit 1
     fi
-done < <(find scripts .githooks -type f | sort)
+done < <(find "$TARGET_DIR/scripts" "$TARGET_DIR/.githooks" -type f | sort)
 
 echo ""
 echo "项目 '$PROJECT_NAME' 创建成功!"

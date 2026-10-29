@@ -4,23 +4,27 @@
 
 param(
     [Parameter(Mandatory=$true)]
+    [AllowEmptyString()]
     [string]$ProjectName
 )
 
 $ErrorActionPreference = "Stop"
 
-# Validate the project name.
-# Allowed: Unicode letters (Chinese included), digits, dot, underscore, hyphen.
-# Rejected: path separators, whitespace, control characters and shell/regex
-# metacharacters, plus '.', '..', '.git' and a leading '-'.
-# Keep this rule in sync with init.sh.
-if ($ProjectName -notmatch '^[\w.-]+$' -or
+# Validate the project name. This must accept exactly the same set as init.sh -
+# otherwise a name works under WSL and fails on Windows.
+# Allowed: ASCII letters/digits/dot/underscore/hyphen, plus any non-ASCII character
+# (Chinese included). Anything else - whitespace, control characters, quotes, path
+# separators, shell metacharacters - is rejected by the character class.
+# Also rejected: '.', '..', '.git' (case-insensitive), a leading '-', a trailing '.'
+# (Windows silently strips it) and the reserved device names CON/PRN/AUX/NUL/COM1-9/LPT1-9.
+if ($ProjectName -notmatch '^([\w.-]|[^\x00-\x7F])+$' -or
     $ProjectName -eq '.' -or $ProjectName -eq '..' -or $ProjectName -eq '.git' -or
-    $ProjectName.StartsWith('-')) {
+    $ProjectName.StartsWith('-') -or $ProjectName.EndsWith('.') -or
+    $ProjectName -match '^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$') {
     Write-Host "Error: invalid project name '$ProjectName'" -ForegroundColor Red
-    Write-Host "Allowed: letters (Chinese included), digits, dot, underscore, hyphen."
-    Write-Host "Not '.', '..', '.git', a leading '-', or anything containing spaces, quotes,"
-    Write-Host "path separators or shell metacharacters."
+    Write-Host "Allowed: letters, digits, dot, underscore, hyphen, and non-ASCII characters (Chinese included)."
+    Write-Host "Not '.', '..', '.git', a leading '-', a trailing '.', a Windows device name,"
+    Write-Host "or anything containing spaces, quotes, path separators or shell metacharacters."
     exit 1
 }
 
@@ -45,6 +49,13 @@ Write-Host "Creating project: $ProjectName" -ForegroundColor Cyan
 # Create directory structure (src has no template file, so it is listed explicitly)
 New-Item -ItemType Directory -Path (Join-Path $TargetDir "src") -Force | Out-Null
 
+# Assert the directory really landed on this name. Windows rewrites trailing dots and
+# reserves device names; if that happens every later path points somewhere else.
+if (-not (Test-Path -LiteralPath $TargetDir)) {
+    Write-Host "Error: '$ProjectName' was not created as '$TargetDir' (the name was rewritten by the filesystem)" -ForegroundColor Red
+    exit 1
+}
+
 # Copy template files.
 # The list is derived from templates/ itself, never hardcoded: hardcoding Chinese
 # filenames breaks under Windows PowerShell 5.1, which reads this BOM-less script
@@ -64,13 +75,19 @@ if (-not (Test-Path (Join-Path $TargetDir "AGENTS.md"))) {
     exit 1
 }
 
-# Replace project name placeholder in every template file that carries it
+# Substitute the placeholder at the byte level so the script stays transparent to
+# BOMs, CRLF and non-UTF-8 bytes. Get-Content -Raw -Encoding UTF8 would drop a BOM and
+# turn invalid bytes into U+FFFD, while init.sh's sed works on the byte stream and
+# preserves both. ISO-8859-1 maps 1 byte to 1 char losslessly, so a byte array can be
+# round-tripped through String.Replace with the replacement pre-encoded as UTF-8.
+$latin1 = [System.Text.Encoding]::GetEncoding(28591)
+$needle = '{{PROJECT_NAME}}'
+$replacement = $latin1.GetString([System.Text.Encoding]::UTF8.GetBytes($ProjectName))
 foreach ($f in (Get-ChildItem -Path $TargetDir -Recurse -File -Force)) {
-    $content = Get-Content $f.FullName -Raw -Encoding UTF8
-    if ($content -notmatch '\{\{PROJECT_NAME\}\}') { continue }
     try {
-        $replaced = $content -replace '\{\{PROJECT_NAME\}\}', $ProjectName
-        [System.IO.File]::WriteAllText($f.FullName, $replaced, [System.Text.UTF8Encoding]::new($false))
+        $text = $latin1.GetString([System.IO.File]::ReadAllBytes($f.FullName))
+        if (-not $text.Contains($needle)) { continue }
+        [System.IO.File]::WriteAllBytes($f.FullName, $latin1.GetBytes($text.Replace($needle, $replacement)))
     }
     catch {
         Write-Host "Error: failed to substitute placeholder in '$($f.FullName)': $_" -ForegroundColor Red
@@ -88,13 +105,16 @@ if (-not (Get-Command 'git' -ErrorAction SilentlyContinue)) {
 
 # Redirect stderr to a file rather than 2>&1: with $ErrorActionPreference='Stop' a
 # native command's stderr wrapped into the success stream can abort the script.
+#
+# All git calls use `git -C $TargetDir` instead of Push-Location. Windows rewrites
+# trailing dots and reserves device names; when that happens Push-Location fails
+# inside the relaxed-$ErrorActionPreference window below and git would silently run
+# in the caller's directory, leaving a stray repository behind.
 $gitErrFile = [System.IO.Path]::GetTempFileName()
 $prevEap = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
-Push-Location $TargetDir
-$gitOutput = & git init 2>$gitErrFile
+$gitOutput = & git -C $TargetDir init 2>$gitErrFile
 $gitCode = $LASTEXITCODE
-Pop-Location
 $ErrorActionPreference = $prevEap
 $gitErr = (Get-Content $gitErrFile -Raw -ErrorAction SilentlyContinue)
 Remove-Item $gitErrFile -Force -ErrorAction SilentlyContinue
@@ -119,14 +139,12 @@ function Invoke-Git {
     param([string[]]$GitArgs, [string]$Manual)
     $errFile = [System.IO.Path]::GetTempFileName()
     # $ErrorActionPreference='Stop' turns any native command's stderr into a
-    # terminating error (NativeCommandError), even when redirected to a file — a
+    # terminating error (NativeCommandError), even when redirected to a file - a
     # plain `git add` warning would abort the script. Relax it for the call.
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    Push-Location $TargetDir
-    $out = & git @GitArgs 2>$errFile
+    $out = & git -C $TargetDir @GitArgs 2>$errFile
     $code = $LASTEXITCODE
-    Pop-Location
     $ErrorActionPreference = $prevEap
     $err = (Get-Content $errFile -Raw -ErrorAction SilentlyContinue)
     Remove-Item $errFile -Force -ErrorAction SilentlyContinue
@@ -153,14 +171,14 @@ Invoke-Git @('config', 'core.hooksPath', '.githooks') 'git config core.hooksPath
 # Record the hook and the checker as executable in the git index. Windows has no
 # executable bit, so `git add` would record 100644 and a later clone on Linux/macOS
 # would silently skip the hook.
-Push-Location $TargetDir
+$targetPrefixLength = $TargetDir.TrimEnd('\', '/').Length + 1
 foreach ($rel in @('scripts', '.githooks')) {
-    foreach ($f in (Get-ChildItem -Path $rel -File -Recurse -ErrorAction SilentlyContinue)) {
-        $relPath = (Resolve-Path -Relative $f.FullName).Replace('\', '/')
+    $relDir = Join-Path $TargetDir $rel
+    foreach ($f in (Get-ChildItem -Path $relDir -File -Recurse -ErrorAction SilentlyContinue)) {
+        $relPath = $f.FullName.Substring($targetPrefixLength).Replace('\', '/')
         Invoke-Git @('add', '--chmod=+x', '--', $relPath) "git add --chmod=+x $relPath"
     }
 }
-Pop-Location
 
 Write-Host ""
 Write-Host "Project '$ProjectName' created!" -ForegroundColor Green
