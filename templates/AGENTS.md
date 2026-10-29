@@ -49,7 +49,7 @@
 - 提交前闸门是**自动**的：`.githooks/pre-commit` 会跑 `scripts/check-gates.sh --staged`，检查 `[DEBUG-` 残留、`plan.md` 的档位/类型/闸门 A 字段、`journal.md` 的章节与验证结果。被拦下就按提示补内容，**不要**用 `git commit --no-verify` 绕过。手动全量检查：`bash scripts/check-gates.sh`。
 - 验证通过后，运行 `git diff` 检查改动范围。
 - 任务结束后：可复用的规则追加到 `docs/pitfalls.md`；符合 ADR 三条准入条件的决策写进 `docs/adr/NNNN-slug.md`。
-- 任务结束后：日志写进 `tasks/<日期>-<简述>/journal.md`，内容包括目标、改动文件清单、验证结果、遇到的问题、下次注意什么、涉及的 ADR 编号。
+- 任务结束后：日志写进 `tasks/<日期>-<简述>/journal.md`，内容包括目标、改动文件清单、验证结果、遇到的问题、下次注意什么、涉及的 ADR 编号、下一步。
 
 ## Done Means
 

@@ -35,18 +35,7 @@
 
 ### Step 1.2: 生成 Task Brief
 
-讨论清楚后，参考 `web-chat-templates/task-brief.md` 模板，贴这段提示词：
-
-```
-我接下来要把这个需求交给本地 coding agent 执行。
-请不要写代码。
-请把我们的讨论整理成 Task Brief，重点写清楚：
-目标、用户场景、范围、不做什么、上下文入口、约束、验收标准、风险。
-另外单独写两段：
-1. User Stories：长的编号列表，覆盖这个功能的各个方面
-2. 术语与决策：术语表、被排除的方案、刻意反常规的地方、看不见的约束
-输出为 Task Brief 格式。
-```
+讨论清楚后，用 `web-chat-templates/task-brief.md` 的模板；提示词在 `web-chat-templates/README.md` 的「在网页对话中使用的提示词」一节。只此一处，别复制到别处。
 
 ### Step 1.2b: 决定技术栈
 
@@ -204,7 +193,7 @@ Agent 会读你的配置文件，写出**实际命令**，不是猜的。
 请参考 skills/bug-fix/SKILL.md 的流程来修这个 bug。
 ```
 
-角色提示词在 `docs/agents/` 里（`架构师.md` / `执行者.md` / `任务分级.md`），不用再手动粘贴：
+`docs/agents/` 里是角色提示词和流程细则（`架构师.md` / `执行者.md` 是角色；`任务分级.md` 是判档规则），不用再手动粘贴：
 
 ```
 请阅读 docs/agents/执行者.md，按它的要求工作。
@@ -409,7 +398,7 @@ git commit -m "feat: 添加 XXX 功能"
 
 ```
 请把这次任务的执行日志保存到 tasks/<日期>-<简述>/journal.md。
-内容包括：目标、改了哪些文件、验证结果、遇到的问题、下次注意什么、涉及的 ADR 编号。
+内容包括：目标、改了哪些文件、验证结果、遇到的问题、下次注意什么、涉及的 ADR 编号、下一步。
 ```
 
 这步的作用：下次会话接手时，Agent 读 journal.md 就知道前因后果，不用从头解释。
@@ -485,6 +474,8 @@ scripts/check-gates.sh --staged     # 只查已暂存内容（pre-commit 钩子�
 ```
 
 它随项目分发，并在 `git init` 后被 `core.hooksPath` 挂成 pre-commit 钩子——所以闸门 B 是**自动**过的，不靠自觉。临时绕过用 `git commit --no-verify`。
+
+`--staged` 检查的是**索引里的内容**，不是工作区：「先 `git add` 了坏版本、事后又把文件改好」不会放行；反过来工作区脏但索引干净也不会误拦。
 
 ---
 

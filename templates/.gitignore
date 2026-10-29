@@ -33,6 +33,3 @@ npm-debug.log*
 coverage/
 htmlcov/
 .pytest_cache/
-
-# Agent work (保留 tasks/，忽略临时文件)
-tasks/*/tmp/
