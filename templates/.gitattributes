@@ -1,0 +1,7 @@
+# 锁 LF。本项目带 shell 脚本（scripts/check-gates.sh）和 git 钩子
+# （.githooks/pre-commit），CRLF 会让它们在 Linux/macOS 上报
+# `bad interpreter: No such file or directory`，或者钩子直接不执行。
+# Windows 批处理反过来必须是 CRLF，所以单独列出来。
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf

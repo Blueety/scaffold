@@ -99,11 +99,32 @@ fi
 
 # 关掉路径转义。core.quotepath 默认 true，git 会把非 ASCII 路径转成八进制再加引号
 # （本脚手架自带 docs/agents/架构师.md 等中文文件名），Agent 拿到这种路径没法直接用。
-if ! git config core.quotepath false; then
-    echo "错误: 设置 core.quotepath=false 失败"
-    echo "手动执行: cd $TARGET_DIR && git config core.quotepath false"
-    exit 1
-fi
+#
+# 同时启用随项目分发的 git 钩子：.git/hooks 不受版本控制，所以钩子放在 .githooks/，
+# 用 core.hooksPath 指过去。不设这一步，闸门检查就只是一次性的。
+set_git_config() {
+    if ! git config "$1" "$2"; then
+        echo "错误: 设置 $1=$2 失败"
+        echo "手动执行: cd $TARGET_DIR && git config $1 $2"
+        exit 1
+    fi
+}
+set_git_config core.quotepath false
+set_git_config core.hooksPath .githooks
+
+# 钩子和检查脚本要有可执行位，并且要把这个位记进 git 索引：cp 不保留权限，
+# 而 Windows 上 git add 会记成 100644，之后 clone 到 Linux/macOS 时 git 会因为
+# 钩子不是可执行文件而静默跳过它。
+while IFS= read -r f; do
+    if ! chmod +x "$f"; then
+        echo "错误: 加可执行位失败: $f"
+        exit 1
+    fi
+    if ! git add --chmod=+x -- "$f"; then
+        echo "错误: 记录可执行位失败: $f"
+        exit 1
+    fi
+done < <(find scripts .githooks -type f | sort)
 
 echo ""
 echo "项目 '$PROJECT_NAME' 创建成功!"

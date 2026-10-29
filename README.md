@@ -28,7 +28,12 @@ my-project-name/
 ├── CONTEXT.md             # 领域词表（空壳，首次术语定案时填）
 ├── README.md              # 项目说明
 ├── .gitignore             # Git 忽略规则
+├── .gitattributes         # 锁 LF（脚本与钩子在 Linux/macOS 上必须无 CRLF）
 ├── src/                   # 源代码目录（空）
+├── scripts/
+│   └── check-gates.sh     # 闸门检查器（plan.md / journal.md / [DEBUG- 残留）
+├── .githooks/
+│   └── pre-commit         # 提交前调 check-gates.sh
 ├── docs/
 │   ├── architecture.md    # 架构说明
 │   ├── commands.md        # 命令说明
@@ -61,6 +66,14 @@ my-project-name/
 1. **初始化技术栈**：在项目目录里运行 `npm init`、`create-next-app`、`uv init` 等。
 2. **让 Agent 填写规范**：配置文件就位后，让本地 Agent 读配置文件并填写 AGENTS.md、CONTEXT.md 和 docs/（含把 Task Handoff 里的决策落成 `docs/adr/0001-*.md`）。
 3. **提交**：`git add . && git commit -m "init: 项目脚手架 + 技术栈"`
+
+生成脚本已经做过的事（不用重来）：`git init`、`core.quotepath=false`（否则中文路径会被转义成八进制）、把 `.githooks/` 挂成 pre-commit 钩子。
+
+`core.hooksPath` 写在 `.git/config` 里，**不会随 clone 走**。clone 到别的机器后要跑一次：
+
+```bash
+git config core.hooksPath .githooks
+```
 
 完整流程见 [WORKFLOW.md](WORKFLOW.md)。
 

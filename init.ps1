@@ -89,10 +89,13 @@ if (-not (Get-Command 'git' -ErrorAction SilentlyContinue)) {
 # Redirect stderr to a file rather than 2>&1: with $ErrorActionPreference='Stop' a
 # native command's stderr wrapped into the success stream can abort the script.
 $gitErrFile = [System.IO.Path]::GetTempFileName()
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 Push-Location $TargetDir
 $gitOutput = & git init 2>$gitErrFile
 $gitCode = $LASTEXITCODE
 Pop-Location
+$ErrorActionPreference = $prevEap
 $gitErr = (Get-Content $gitErrFile -Raw -ErrorAction SilentlyContinue)
 Remove-Item $gitErrFile -Force -ErrorAction SilentlyContinue
 
@@ -110,24 +113,54 @@ if (-not (Test-Path (Join-Path $TargetDir '.git'))) {
     exit 1
 }
 
+# Run a git command inside $TargetDir; on failure report stderr and the manual command.
+# stderr goes to a file rather than 2>&1 so it does not end up in $out.
+function Invoke-Git {
+    param([string[]]$GitArgs, [string]$Manual)
+    $errFile = [System.IO.Path]::GetTempFileName()
+    # $ErrorActionPreference='Stop' turns any native command's stderr into a
+    # terminating error (NativeCommandError), even when redirected to a file — a
+    # plain `git add` warning would abort the script. Relax it for the call.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    Push-Location $TargetDir
+    $out = & git @GitArgs 2>$errFile
+    $code = $LASTEXITCODE
+    Pop-Location
+    $ErrorActionPreference = $prevEap
+    $err = (Get-Content $errFile -Raw -ErrorAction SilentlyContinue)
+    Remove-Item $errFile -Force -ErrorAction SilentlyContinue
+    if ($code -ne 0) {
+        Write-Host "Error: git $($GitArgs -join ' ') failed (exit $code)" -ForegroundColor Red
+        foreach ($line in $out) { Write-Host "  $line" -ForegroundColor Red }
+        if ($err) { Write-Host "  $err" -ForegroundColor Red }
+        Write-Host "Run it manually: cd `"$TargetDir`"; $Manual"
+        exit 1
+    }
+}
+
 # Turn off path quoting. With the default core.quotepath=true git octal-escapes and
 # quotes non-ASCII paths (this scaffold ships docs/agents/*.md with Chinese names),
 # so an agent reading `git status --short` / `git diff --name-only` would get paths
 # it cannot use as-is.
-$qpErrFile = [System.IO.Path]::GetTempFileName()
-Push-Location $TargetDir
-& git config core.quotepath false 2>$qpErrFile
-$qpCode = $LASTEXITCODE
-Pop-Location
-$qpErr = (Get-Content $qpErrFile -Raw -ErrorAction SilentlyContinue)
-Remove-Item $qpErrFile -Force -ErrorAction SilentlyContinue
+Invoke-Git @('config', 'core.quotepath', 'false') 'git config core.quotepath false'
 
-if ($qpCode -ne 0) {
-    Write-Host "Error: failed to set core.quotepath=false (exit $qpCode)" -ForegroundColor Red
-    if ($qpErr) { Write-Host "  $qpErr" -ForegroundColor Red }
-    Write-Host "Run it manually: cd `"$TargetDir`"; git config core.quotepath false"
-    exit 1
+# Enable the shipped git hooks. .git/hooks is not version controlled, so hooks live
+# in .githooks/ and core.hooksPath points there. Without this the gate check would be
+# a one-off.
+Invoke-Git @('config', 'core.hooksPath', '.githooks') 'git config core.hooksPath .githooks'
+
+# Record the hook and the checker as executable in the git index. Windows has no
+# executable bit, so `git add` would record 100644 and a later clone on Linux/macOS
+# would silently skip the hook.
+Push-Location $TargetDir
+foreach ($rel in @('scripts', '.githooks')) {
+    foreach ($f in (Get-ChildItem -Path $rel -File -Recurse -ErrorAction SilentlyContinue)) {
+        $relPath = (Resolve-Path -Relative $f.FullName).Replace('\', '/')
+        Invoke-Git @('add', '--chmod=+x', '--', $relPath) "git add --chmod=+x $relPath"
+    }
 }
+Pop-Location
 
 Write-Host ""
 Write-Host "Project '$ProjectName' created!" -ForegroundColor Green

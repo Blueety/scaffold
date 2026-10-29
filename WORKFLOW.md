@@ -453,13 +453,26 @@ tasks/2026-08-04-add-login/
 
 ### 闸门清单
 
-| 闸门 | 位置 | 判据 |
-|---|---|---|
-| 档位声明 | 3.3 | 一行，6 条信号，可被用户覆盖（`docs/agents/任务分级.md`） |
-| 闸门 A 反馈回路 | 3.3 末尾，仅修 bug | 一条**已实跑过**、能对**这个** bug 变红的命令 |
-| seam 确认 | 3.4，涉及写测试 | 书面列出要测的 seam 并确认 |
-| 闸门 B 清理 | 3.7b | `grep [DEBUG-` 无残留，一次性脚本已删 |
-| 双轴不合并 | 3.8 | Standards 与 Spec 分别出结论，不跨轴排序 |
+| 闸门 | 位置 | 判据 | 谁执行 |
+|---|---|---|---|
+| 档位声明 | 3.3 | 一行，6 条信号，可被用户覆盖（`docs/agents/任务分级.md`） | Agent 声明 + 人确认；`check-gates.sh` 验格式 |
+| 闸门 A 反馈回路 | 3.3 末尾，仅修 bug | 一条**已实跑过**、能对**这个** bug 变红的命令 | 人确认；`check-gates.sh` 验字段非空 |
+| seam 确认 | 3.4，涉及写测试 | 书面列出要测的 seam 并确认 | 人确认；`check-gates.sh` 验三行要么全填要么全空 |
+| 闸门 B 清理 | 3.7b | `grep [DEBUG-` 无残留，一次性脚本已删 | **`check-gates.sh` 自动**（临时脚本那条仍需人看） |
+| 双轴不合并 | 3.8 | Standards 与 Spec 分别出结论，不跨轴排序 | 人确认 |
+
+前三条的「已实跑过」「合理」这类判断，机器只能验字段非空，验不了内容——别把检查通过当成闸门通过。
+
+### 闸门检查器
+
+`scripts/check-gates.sh` 把能机器判定的那部分固化下来：
+
+```bash
+scripts/check-gates.sh              # 全仓库自查
+scripts/check-gates.sh --staged     # 只查已暂存内容（pre-commit 钩子用）
+```
+
+它随项目分发，并在 `git init` 后被 `core.hooksPath` 挂成 pre-commit 钩子——所以闸门 B 是**自动**过的，不靠自觉。临时绕过用 `git commit --no-verify`。
 
 ---
 
