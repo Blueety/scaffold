@@ -97,6 +97,14 @@ if [ ! -d "$TARGET_DIR/.git" ]; then
     exit 1
 fi
 
+# 关掉路径转义。core.quotepath 默认 true，git 会把非 ASCII 路径转成八进制再加引号
+# （本脚手架自带 docs/agents/架构师.md 等中文文件名），Agent 拿到这种路径没法直接用。
+if ! git config core.quotepath false; then
+    echo "错误: 设置 core.quotepath=false 失败"
+    echo "手动执行: cd $TARGET_DIR && git config core.quotepath false"
+    exit 1
+fi
+
 echo ""
 echo "项目 '$PROJECT_NAME' 创建成功!"
 echo ""

@@ -110,6 +110,25 @@ if (-not (Test-Path (Join-Path $TargetDir '.git'))) {
     exit 1
 }
 
+# Turn off path quoting. With the default core.quotepath=true git octal-escapes and
+# quotes non-ASCII paths (this scaffold ships docs/agents/*.md with Chinese names),
+# so an agent reading `git status --short` / `git diff --name-only` would get paths
+# it cannot use as-is.
+$qpErrFile = [System.IO.Path]::GetTempFileName()
+Push-Location $TargetDir
+& git config core.quotepath false 2>$qpErrFile
+$qpCode = $LASTEXITCODE
+Pop-Location
+$qpErr = (Get-Content $qpErrFile -Raw -ErrorAction SilentlyContinue)
+Remove-Item $qpErrFile -Force -ErrorAction SilentlyContinue
+
+if ($qpCode -ne 0) {
+    Write-Host "Error: failed to set core.quotepath=false (exit $qpCode)" -ForegroundColor Red
+    if ($qpErr) { Write-Host "  $qpErr" -ForegroundColor Red }
+    Write-Host "Run it manually: cd `"$TargetDir`"; git config core.quotepath false"
+    exit 1
+}
+
 Write-Host ""
 Write-Host "Project '$ProjectName' created!" -ForegroundColor Green
 Write-Host ""
