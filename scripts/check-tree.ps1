@@ -198,6 +198,22 @@ Write-Host "  tree: $($trees[0].Path):$($trees[0].Line)"
 Compare-Set 'documented files vs templates/' $docTree.Files $tplTree.Files
 Compare-Set 'documented dirs  vs templates/ + src' $expectedDirs $docTree.Dirs
 
+# templates/ must be LF-only. init.sh substitutes placeholders with sed, and MSYS sed
+# folds CRLF to LF, while init.ps1 preserves bytes - so a CR in any template would make
+# the two scripts produce different output.
+$crFiles = @()
+foreach ($f in @(Get-ChildItem -LiteralPath $TemplateDir -Recurse -File -Force)) {
+    $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+    if ($bytes -contains [byte]13) { $crFiles += $f.FullName.Substring($TemplateDir.Length + 1) }
+}
+if ($crFiles.Count -gt 0) {
+    Fail "templates/ must be LF-only, found CR in: $($crFiles -join ', ')"
+    Write-Host '         init.sh (sed) would fold CRLF to LF while init.ps1 keeps it, so the two' -ForegroundColor Red
+    Write-Host '         scripts would produce different output. Normalize the file to LF.' -ForegroundColor Red
+} else {
+    Write-Host '  ok   templates/ has no CR (both init scripts stay byte-identical)' -ForegroundColor Green
+}
+
 # ---------------------------------------------------------------- Phase B
 if (-not $SkipEndToEnd) {
     Write-Host ''

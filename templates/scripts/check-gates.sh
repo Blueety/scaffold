@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
 #
+# >>> usage
 # 闸门检查器 —— 把「能机器判定的闸门」变成可执行检查。
 #
-#   scripts/check-gates.sh                 检查全仓库（自查 / CI）
+#   scripts/check-gates.sh                 检查全仓库：tasks/ 下所有任务 + 全仓库的闸门 B
 #   scripts/check-gates.sh --staged        只检查已暂存的内容（pre-commit 钩子用）
 #   scripts/check-gates.sh tasks/2026-08-04-add-login [...]
 #
-# 只覆盖可判定的部分：
-#   - 闸门 B：非 .md 文件里没有 [DEBUG- 残留（.md 是文档，会引用这个约定）
+# 覆盖：
+#   - 闸门 B：非 .md 文件里没有 [DEBUG- 残留（大小写不敏感；.md 是文档，会引用这个约定）
 #   - plan.md：档位与类型已声明、关键字段非空、确认清单全勾、
 #              bug 任务的闸门 A 字段、bug-不可复现 必须声明 T3
-#   - journal.md：章节齐全、验证结果有内容且不写「应该可以」
+#   - journal.md：章节齐全、验证结果有内容且不写「应该可以」、改动清单已填
 #
 # 不覆盖（判断性内容，留在 skills/ 里由人确认）：
 #   双轴不合并、一次性脚本是否真删干净、命令是否真跑过。
 #
 # 退出码：0 = 通过，1 = 有违规，2 = 用法错误。
+# <<< usage
 
 set -u
 
@@ -23,14 +25,15 @@ violations=0
 
 fail() { printf '  [x] %s\n' "$*"; violations=$((violations + 1)); }
 
+# 用法说明就是文件头那段，用哨兵行圈出来 —— 写死行号会在加注释时漂移。
 usage() {
-    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '/^# >>> usage$/,/^# <<< usage$/p' "$0" | sed '1d;$d' | sed 's/^# \{0,1\}//'
 }
 
 # ---------------------------------------------------------------- markdown 解析
 
-# 去掉 markdown 注释（含跨行）。模板注释里会出现「应该可以」这类字样，
-# 不剥掉的话会误报。
+# 去掉 markdown 注释（含跨行）。模板注释里会出现「应该可以」「（从 prd.md 提取）」
+# 这类字样，不剥掉的话会误报。
 strip_comments() {
     awk '
         { line = $0
@@ -62,17 +65,18 @@ md_section() {
 }
 
 # 取 `- **标签**: 值` 这一行冒号后的内容。$2 是标签子串（避开 en dash 之类的字符）。
+# 允许前置缩进——缩进过的字段行不该被判成「未声明」。
 md_field_line() {
     awk -v lbl="$2" '
-        index($0, "- **") == 1 && index($0, lbl) > 0 { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }
+        /^[[:space:]]*- \*\*/ && index($0, lbl) > 0 { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }
     ' "$1"
 }
 
 # 取该字段行及其后续块（到下一个 `- **` 标签或标题为止）。
 md_field_block() {
     awk -v lbl="$2" '
-        /^- \*\*/ { if (found) exit; if (index($0, lbl) > 0) { found = 1; print; next } }
-        /^#/ { if (found) exit }
+        /^[[:space:]]*- \*\*/ { if (found) exit; if (index($0, lbl) > 0) { found = 1; print; next } }
+        /^[[:space:]]*#/ { if (found) exit }
         found { print }
     ' "$1"
 }
@@ -105,22 +109,14 @@ table_rows() {
 
 # ---------------------------------------------------------------- 各项检查
 
-# 闸门 B：[DEBUG- 残留。$@ = 要检查的文件（空则整个仓库）。
+# 闸门 B：[DEBUG- 残留。cwd 就是检查范围（暂存模式下是索引物化出来的临时树）。
+# 大小写不敏感：写 [debug-x] 同样是没清干净的调试埋点。
 check_gate_b() {
     local hits
-    if [ "$#" -gt 0 ]; then
-        hits="$(for f in "$@"; do
-            case "$f" in *.md) continue ;; esac
-            case "$f" in */check-gates.sh|check-gates.sh) continue ;; esac
-            [ -f "$f" ] || continue
-            grep -n '\[DEBUG-' "$f" 2>/dev/null | sed "s|^|$f:|" || true
-        done)"
-    else
-        hits="$(find . -type f \
-            ! -path './.git/*' ! -path '*/node_modules/*' \
-            ! -name '*.md' ! -name 'check-gates.sh' \
-            -exec grep -Hn '\[DEBUG-' {} + 2>/dev/null | sed 's|^\./||' || true)"
-    fi
+    hits="$(find . -type f \
+        ! -path './.git/*' ! -path '*/node_modules/*' \
+        ! -name '*.md' ! -name 'check-gates.sh' \
+        -exec grep -Hin '\[DEBUG-' {} + 2>/dev/null | sed 's|^\./||' || true)"
     if [ -n "$hits" ]; then
         printf '%s\n' "$hits" | while IFS= read -r line; do
             printf '  [x] 闸门 B: %s —— 调试标记残留\n' "$line"
@@ -129,16 +125,24 @@ check_gate_b() {
     fi
 }
 
-# plan.md：结构 + 必填字段 + 闸门 A + 档位/类型一致性
+# plan.md：先剥掉注释再查，否则注释里出现的模板字样与注释掉的 `- [ ]` 会误报。
 check_plan() {
-    local f="$1" tier type
+    local f="$1" clean
+    clean="$(mktemp)"
+    strip_comments < "$f" > "$clean"
+    plan_checks "$f" "$clean"
+    rm -f "$clean"
+}
 
-    if ! grep -q '^## 任务概要' "$f"; then
+plan_checks() {
+    local f="$1" c="$2" tier type
+
+    if ! grep -q '^## 任务概要' "$c"; then
         fail "$f: 缺「## 任务概要」一节"
         return
     fi
 
-    tier="$(md_token "$f" '档位')"
+    tier="$(md_token "$c" '档位')"
     case "$tier" in
         "") fail "$f: 档位未声明（找不到 \`- **档位**:\` 行）" ;;
         *'T?'*) fail "$f: 档位仍是模板占位符 T?" ;;
@@ -146,50 +150,54 @@ check_plan() {
         *) fail "$f: 档位 '$tier' 不是 T0–T3" ;;
     esac
 
-    type="$(md_token "$f" '类型')"
+    type="$(md_token "$c" '类型')"
     case "$type" in
         加功能|重构|bug-可复现|bug-不可复现) : ;;
         "") fail "$f: 类型未声明（找不到 \`- **类型**:\` 行）" ;;
         *) fail "$f: 类型 '$type' 不在 {加功能, 重构, bug-可复现, bug-不可复现}" ;;
     esac
 
-    field_filled "$f" '相关文件'   || fail "$f: 「相关文件」为空"
-    field_filled "$f" '验证命令'   || fail "$f: 「验证命令」为空"
+    field_filled "$c" '相关文件'   || fail "$f: 「相关文件」为空"
+    field_filled "$c" '验证命令'   || fail "$f: 「验证命令」为空"
 
-    if [ "$(table_rows "$(md_section "$f" '步骤')")" -eq 0 ]; then
+    if [ "$(table_rows "$(md_section "$c" '步骤')")" -eq 0 ]; then
         fail "$f: 「## 步骤」表里没有任何步骤"
     fi
 
-    # 确认清单必须全勾
-    local unchecked
-    unchecked="$(md_section "$f" '确认' | grep -c '^[[:space:]]*- \[ \]' || true)"
-    if [ "${unchecked:-0}" -ne 0 ]; then
-        fail "$f: 「## 确认」还有 $unchecked 项没勾"
+    # 确认清单：这一节必须存在，且里面不能有未勾的项
+    if ! grep -q '^## 确认' "$c"; then
+        fail "$f: 缺「## 确认」一节"
+    else
+        local unchecked
+        unchecked="$(md_section "$c" '确认' | grep -cE '^[[:space:]]*[-*+] \[ \]' || true)"
+        if [ "${unchecked:-0}" -ne 0 ]; then
+            fail "$f: 「## 确认」还有 $unchecked 项没勾"
+        fi
     fi
 
     # 模板提示文字残留
-    if grep -q '（从 prd.md 提取）' "$f"; then
+    if grep -q '（从 prd.md 提取）' "$c"; then
         fail "$f: 残留模板提示文字「（从 prd.md 提取）」"
     fi
 
     # 测试 Seam：要么整节不填，要么三行都填
-    local seam_filled=0
+    local seam_filled=0 lbl
     for lbl in '要测的 seam' '公开接口是什么' '为什么选这个 seam'; do
-        field_filled "$f" "$lbl" && seam_filled=$((seam_filled + 1))
+        field_filled "$c" "$lbl" && seam_filled=$((seam_filled + 1))
     done
     if [ "$seam_filled" -gt 0 ] && [ "$seam_filled" -lt 3 ]; then
         fail "$f: 「## 测试 Seam」只填了 $seam_filled/3 行"
     fi
 
-    # 类型轴 = bug：闸门 A 必填
+    # 类型轴 = bug：闸门 A 必填。只卡下界——写超过 5 条假设不是缺陷。
     case "$type" in
         bug-*)
-            field_filled "$f" '能变红的命令' || fail "$f: 闸门 A —— 「能变红的命令」为空"
-            field_filled "$f" '已实跑的输出' || fail "$f: 闸门 A —— 「已实跑的输出」为空"
+            field_filled "$c" '能变红的命令' || fail "$f: 闸门 A —— 「能变红的命令」为空"
+            field_filled "$c" '已实跑的输出' || fail "$f: 闸门 A —— 「已实跑的输出」为空"
             local hy
-            hy="$(md_field_block "$f" '排序假设' | grep -cE '^[[:space:]]*[0-9]+\.[[:space:]]*[^[:space:]]' || true)"
+            hy="$(md_field_block "$c" '排序假设' | grep -cE '^[[:space:]]*[0-9]+\.[[:space:]]*[^[:space:]]' || true)"
             if [ "${hy:-0}" -lt 3 ]; then
-                fail "$f: 闸门 A —— 排序假设只有 ${hy:-0} 条（要求 3–5 条）"
+                fail "$f: 闸门 A —— 排序假设只有 ${hy:-0} 条（至少要 3 条）"
             fi
             ;;
     esac
@@ -203,12 +211,20 @@ check_plan() {
     fi
 }
 
-# journal.md：章节齐全 + 验证结果有内容
+# journal.md：先剥掉注释再查（理由同 check_plan）
 check_journal() {
-    local f="$1" sec missing=0
+    local f="$1" clean
+    clean="$(mktemp)"
+    strip_comments < "$f" > "$clean"
+    journal_checks "$f" "$clean"
+    rm -f "$clean"
+}
+
+journal_checks() {
+    local f="$1" c="$2" sec missing=0
 
     for sec in '目标' '改动文件清单' '验证结果' '遇到的问题' '下次注意什么' '涉及的 ADR' '下一步'; do
-        if ! grep -q "^## ${sec}" "$f"; then
+        if ! grep -q "^## ${sec}" "$c"; then
             fail "$f: 缺「## ${sec}」一节"
             missing=$((missing + 1))
         fi
@@ -216,14 +232,20 @@ check_journal() {
     [ "$missing" -gt 0 ] && return
 
     local verify
-    verify="$(md_section "$f" '验证结果' | strip_comments)"
+    verify="$(md_section "$c" '验证结果')"
     if [ "$(table_rows "$verify")" -eq 0 ]; then
         fail "$f: 「## 验证结果」表里没有一行结果"
     fi
     if printf '%s' "$verify" | grep -q '应该可以'; then
         fail "$f: 「## 验证结果」里出现「应该可以」——要贴实跑的命令与输出"
     fi
-    if md_section "$f" '改动文件清单' | strip_comments | grep -q 'src/\.\.\.'; then
+
+    local changed
+    changed="$(md_section "$c" '改动文件清单')"
+    if [ "$(table_rows "$changed")" -eq 0 ]; then
+        fail "$f: 「## 改动文件清单」表里没有一行"
+    fi
+    if printf '%s' "$changed" | grep -q 'src/\.\.\.'; then
         fail "$f: 「## 改动文件清单」还留着模板占位符 src/..."
     fi
 }
@@ -249,50 +271,63 @@ main() {
     local root
     root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
     [ -n "$root" ] || root="$(cd "$(dirname "$0")/.." && pwd)"
-    cd "$root" || exit 2
 
-    # 闸门 B
     if [ "$staged" -eq 1 ]; then
-        local staged_files=()
-        while IFS= read -r f; do
-            [ -n "$f" ] && staged_files+=("$f")
-        done < <(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null)
-        if [ "${#staged_files[@]}" -gt 0 ]; then
-            check_gate_b ${staged_files[@]+"${staged_files[@]}"}
-        fi
+        # 内容必须取自索引。只拿 git diff --cached 的文件名、却读工作区，会在
+        # 「已暂存的是坏内容、工作区已修好」时放行，反方向则误拦一次合法提交。
+        #
+        # 临时目录用全局变量：EXIT trap 在 main 返回之后才执行，那时 local 已经出作用域，
+        # set -u 会把 "$check_tree_tmp" 当成未绑定变量，trap 失败 → 脚本整体非 0。
+        check_tree_tmp="$(mktemp -d)"
+        trap 'rm -rf "$check_tree_tmp"' EXIT
+        while IFS= read -r p; do
+            [ -n "$p" ] || continue
+            mkdir -p "$check_tree_tmp/$(dirname "$p")"
+            git -C "$root" show ":$p" > "$check_tree_tmp/$p" 2>/dev/null || true
+        done < <(git -C "$root" diff --cached --name-only --diff-filter=ACMR 2>/dev/null)
+        cd "$check_tree_tmp" || exit 2
     else
-        check_gate_b
+        cd "$root" || exit 2
     fi
+
+    # 闸门 B：cwd 就是检查范围
+    check_gate_b
 
     # 要检查哪些任务目录
     local dirs=()
-    local d
+    local d p rest
     if [ "${#task_args[@]}" -gt 0 ]; then
         for d in "${task_args[@]}"; do
+            case "$d" in
+                tasks/_template|tasks/_template/)
+                    printf '%s\n' "跳过 $d（模板，不是任务）"
+                    continue ;;
+            esac
             if [ -d "$d" ]; then dirs+=("$d"); else fail "找不到任务目录: $d"; fi
         done
     elif [ "$staged" -eq 1 ]; then
-        while IFS= read -r f; do
-            case "$f" in
+        while IFS= read -r p; do
+            case "$p" in
                 tasks/*/*)
-                    d="$(printf '%s' "$f" | cut -d/ -f1-2)"
+                    rest="${p#tasks/}"
+                    d="tasks/${rest%%/*}"
                     case "$d" in tasks/_template) continue ;; esac
                     dirs+=("$d") ;;
             esac
-        done < <(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null)
+        done < <(git -C "$root" diff --cached --name-only --diff-filter=ACMR 2>/dev/null)
     else
         for d in tasks/*/; do
             [ -d "$d" ] || continue
             case "$d" in tasks/_template/) continue ;; esac
-            dirs+=(""${d%/}"")
+            dirs+=("${d%/}")
         done
     fi
 
     # 去重后逐个检查
-    local seen="" d
+    local seen="|"
     for d in ${dirs[@]+"${dirs[@]}"}; do
         case "$seen" in *"|$d|"*) continue ;; esac
-        seen="$seen|$d|"
+        seen="$seen$d|"
         local any=0
         if [ -f "$d/plan.md" ]; then
             printf '%s\n' "检查 $d/plan.md"
