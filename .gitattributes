@@ -1,0 +1,7 @@
+# 锁 LF。本机系统级 gitconfig 设了 core.autocrlf=true（D:/Claude/Git/etc/gitconfig）：
+# 不锁的话，索引里仍是 LF（autocrlf=true 只转换检出方向），所以 git clone 不受影响；
+# 但任何一次检出都会把工作区文件改写成 CRLF，而本仓库的实际分发方式是
+# 直接拷贝工作目录去跑 init.sh / init.ps1，CRLF 会随模板带进目标平台。
+# Git Bash 容忍 CRLF（实测：bash init.sh 与 ./init.sh 均正常），WSL / Linux 的 bash 不容忍。
+# 锁成 LF 后工作区与索引一致，模板产物与平台无关。
+* text=auto eol=lf
