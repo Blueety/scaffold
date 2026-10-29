@@ -11,7 +11,9 @@
 #   - 闸门 B：非 .md 文件里没有 [DEBUG- 残留（大小写不敏感；.md 是文档，会引用这个约定）
 #   - plan.md：档位与类型已声明、关键字段非空、确认清单全勾、
 #              bug 任务的闸门 A 字段、bug-不可复现 必须声明 T3
-#   - journal.md：章节齐全、验证结果有内容且不写「应该可以」、改动清单已填
+#   - journal.md：章节齐全、主要提交已回填、验证结果有内容且不写「应该可以」、改动清单已填
+#   - NN-*.md（切片）：类型与状态取值合法、演示与完成标准非空、被谁挡已填、
+#                      状态 completed 时必须回填主要提交
 #
 # 不覆盖（判断性内容，留在 skills/ 里由人确认）：
 #   双轴不合并、一次性脚本是否真删干净、命令是否真跑过。
@@ -87,10 +89,18 @@ md_token() {
 }
 
 # 字段是否有实质内容：同行冒号后非空，或后续块里去掉注释/空行/纯符号后还有东西。
+# 两种「看着有内容其实没有」的值也算空：
+#   - 空反引号：模板里的 `- **X**: \`\``
+#   - 只剩模板提示：`- **X**: （一句可演示的话……）`
 field_filled() {
-    local inline
+    local inline v
     inline="$(md_field_line "$1" "$2")"
-    if [ -n "$(printf '%s' "$inline" | tr -d '[:space:]')" ]; then return 0; fi
+    v="$(printf '%s' "$inline" | tr -d '[:space:]`')"
+    case "$v" in
+        "") : ;;
+        '（'*'）') : ;;
+        *) return 0 ;;
+    esac
     local body
     body="$(md_field_block "$1" "$2" | tail -n +2 \
         | sed 's/<!--.*-->//g' \
@@ -100,9 +110,12 @@ field_filled() {
 }
 
 # 表格数据行数（跳过表头与分隔行），只算至少一个单元格非空的行。
+# $2 = 跳过前几个单元格再判断（默认 0）。步骤表的 `#` 列是自动编号，
+# 不跳过的话「模板原封不动」也会被算成有内容。
 table_rows() {
-    printf '%s\n' "$1" | grep '^|' | tail -n +3 | awk -F'|' '
-        { for (i = 2; i < NF; i++) { c = $i; gsub(/[[:space:]]/, "", c)
+    local skip="${2:-0}"
+    printf '%s\n' "$1" | grep '^|' | tail -n +3 | awk -F'|' -v skip="$skip" '
+        { for (i = 2 + skip; i < NF; i++) { c = $i; gsub(/[[:space:]]/, "", c)
             if (c != "") { n++; break } } }
         END { print n + 0 }'
 }
@@ -160,7 +173,7 @@ plan_checks() {
     field_filled "$c" '相关文件'   || fail "$f: 「相关文件」为空"
     field_filled "$c" '验证命令'   || fail "$f: 「验证命令」为空"
 
-    if [ "$(table_rows "$(md_section "$c" '步骤')")" -eq 0 ]; then
+    if [ "$(table_rows "$(md_section "$c" '步骤')" 1)" -eq 0 ]; then
         fail "$f: 「## 步骤」表里没有任何步骤"
     fi
 
@@ -223,13 +236,17 @@ check_journal() {
 journal_checks() {
     local f="$1" c="$2" sec missing=0
 
-    for sec in '目标' '改动文件清单' '验证结果' '遇到的问题' '下次注意什么' '涉及的 ADR' '下一步'; do
+    for sec in '目标' '主要提交' '改动文件清单' '验证结果' '遇到的问题' '下次注意什么' '涉及的 ADR' '下一步'; do
         if ! grep -q "^## ${sec}" "$c"; then
             fail "$f: 缺「## ${sec}」一节"
             missing=$((missing + 1))
         fi
     done
     [ "$missing" -gt 0 ] && return
+
+    if ! field_filled "$c" '主要提交'; then
+        fail "$f: 「主要提交」没回填（写工作提交的 SHA，见 tasks/README.md）"
+    fi
 
     local verify
     verify="$(md_section "$c" '验证结果')"
@@ -247,6 +264,69 @@ journal_checks() {
     fi
     if printf '%s' "$changed" | grep -q 'src/\.\.\.'; then
         fail "$f: 「## 改动文件清单」还留着模板占位符 src/..."
+    fi
+}
+
+# NN-*.md 切片 / 决策条目。类型决定哪一节必填（同 plan.md 的「修 bug 时必填」）。
+check_slice() {
+    local f="$1" clean
+    clean="$(mktemp)"
+    strip_comments < "$f" > "$clean"
+    slice_checks "$f" "$clean"
+    rm -f "$clean"
+}
+
+slice_checks() {
+    local f="$1" c="$2" type
+
+    type="$(md_token "$c" '类型')"
+    case "$type" in
+        切片|决策条目) : ;;
+        "") fail "$f: 类型未声明（找不到 \`- **类型**:\` 行，值应为 切片 或 决策条目）"; return ;;
+        *) fail "$f: 类型 '$type' 不在 {切片, 决策条目}"; return ;;
+    esac
+
+    if [ "$type" = '决策条目' ]; then
+        field_filled "$c" '问题'   || fail "$f: 决策条目 —— 「问题」为空"
+        field_filled "$c" '结论'   || fail "$f: 决策条目 —— 「结论」为空"
+        field_filled "$c" '依据'   || fail "$f: 决策条目 —— 「依据」为空"
+        return
+    fi
+
+    local tier
+    tier="$(md_token "$c" '档位')"
+    case "$tier" in
+        "") fail "$f: 档位未声明（找不到 \`- **档位**:\` 行）" ;;
+        *'T?'*) fail "$f: 档位仍是模板占位符 T?" ;;
+        T0*|T1*|T2*|T3*) : ;;
+        *) fail "$f: 档位 '$tier' 不是 T0–T3" ;;
+    esac
+
+    field_filled "$c" '完成后可以看到什么' || fail "$f: 「完成后可以看到什么」为空"
+    field_filled "$c" '完成标准'           || fail "$f: 「完成标准」为空"
+    field_filled "$c" '被谁挡'             || fail "$f: 「被谁挡」为空（没有前置就写「无」）"
+
+    local st
+    st="$(md_token "$c" '状态')"
+    case "$st" in
+        pending|in_progress|completed) : ;;
+        "") fail "$f: 状态未声明（找不到 \`- **状态**:\` 行）" ;;
+        *) fail "$f: 状态 '$st' 不在 {pending, in_progress, completed}" ;;
+    esac
+
+    # 标记完成却回填不了提交，说明这个切片的状态是假的
+    if [ "$st" = 'completed' ] && ! field_filled "$c" '主要提交'; then
+        fail "$f: 状态是 completed，但「主要提交」没回填"
+    fi
+
+    if ! grep -q '^## 确认' "$c"; then
+        fail "$f: 缺「## 确认」一节"
+    else
+        local unchecked
+        unchecked="$(md_section "$c" '确认' | grep -cE '^[[:space:]]*[-*+] \[ \]' || true)"
+        if [ "${unchecked:-0}" -ne 0 ]; then
+            fail "$f: 「## 确认」还有 $unchecked 项没勾"
+        fi
     fi
 }
 
@@ -339,7 +419,15 @@ main() {
             check_journal "$d/journal.md"
             any=1
         fi
-        [ "$any" -eq 1 ] || printf '%s\n' "跳过 $d（还没有 plan.md / journal.md）"
+        # 切片 / 决策条目：NN-*.md（见 tasks/README.md）
+        local s
+        for s in "$d"/[0-9][0-9]-*.md; do
+            [ -f "$s" ] || continue
+            printf '%s\n' "检查 $s"
+            check_slice "$s"
+            any=1
+        done
+        [ "$any" -eq 1 ] || printf '%s\n' "跳过 $d（还没有 plan.md / journal.md / NN-*.md）"
     done
 
     if [ "$violations" -eq 0 ]; then

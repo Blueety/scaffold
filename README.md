@@ -31,7 +31,7 @@ my-project-name/
 ├── .gitattributes         # 锁 LF（脚本与钩子在 Linux/macOS 上必须无 CRLF）
 ├── src/                   # 源代码目录（空）
 ├── scripts/
-│   └── check-gates.sh     # 闸门检查器（plan.md / journal.md / [DEBUG- 残留）
+│   └── check-gates.sh     # 闸门检查器（plan / journal / 切片 / [DEBUG- 残留）
 ├── .githooks/
 │   └── pre-commit         # 提交前调 check-gates.sh
 ├── docs/
@@ -49,7 +49,8 @@ my-project-name/
 │   └── _template/         # 任务模板
 │       ├── prd.md
 │       ├── plan.md
-│       └── journal.md
+│       ├── journal.md
+│       └── slice.md       # 大需求拆切片时用（也承载决策条目）
 └── skills/
     ├── bug-fix/
     │   └── SKILL.md       # Bug 修复流程（含闸门 A / B）
