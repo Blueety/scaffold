@@ -9,14 +9,18 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Validate the project name: only [A-Za-z0-9._-]. Blocks path traversal (/ and ..),
-# shell and regex metacharacters ($ \ space quotes), and .git.
+# Validate the project name.
+# Allowed: Unicode letters (Chinese included), digits, dot, underscore, hyphen.
+# Rejected: path separators, whitespace, control characters and shell/regex
+# metacharacters, plus '.', '..', '.git' and a leading '-'.
 # Keep this rule in sync with init.sh.
-if ($ProjectName -notmatch '^[A-Za-z0-9._-]+$' -or
+if ($ProjectName -notmatch '^[\w.-]+$' -or
     $ProjectName -eq '.' -or $ProjectName -eq '..' -or $ProjectName -eq '.git' -or
     $ProjectName.StartsWith('-')) {
     Write-Host "Error: invalid project name '$ProjectName'" -ForegroundColor Red
-    Write-Host "Allowed: letters, digits, dot, underscore, hyphen. Not '.', '..', '.git', or a leading '-'."
+    Write-Host "Allowed: letters (Chinese included), digits, dot, underscore, hyphen."
+    Write-Host "Not '.', '..', '.git', a leading '-', or anything containing spaces, quotes,"
+    Write-Host "path separators or shell metacharacters."
     exit 1
 }
 

@@ -13,15 +13,23 @@ fi
 
 PROJECT_NAME="$1"
 
-# 校验项目名：只允许 [A-Za-z0-9._-]。
-# 挡住路径穿越（/ 和 ..）、shell 与 sed 的元字符（& $ \ 空格 引号），以及 .git。
+# 校验项目名。
+# 允许：ASCII 字母数字、点、下划线、连字符，以及中文等非 ASCII 字节（UTF-8 原样透传）。
+# 拒绝：路径分隔符、空白、控制字符和 shell/sed 元字符——它们会破坏 cp/sed 或造成路径穿越。
+# 用 tr 做「补集删除」而不是字符类取反：不依赖 locale，LC_ALL=C 下同样正确。
+reject_project_name() {
+    echo "错误: 项目名 '$PROJECT_NAME' 非法"
+    echo '允许字母、数字、点、下划线、连字符和中文；不能是 . / .. / .git，也不能以 - 开头。'
+    echo '也不能含空格、引号、反斜杠、/ 或 & $ ` ; | < > ( ) * ? 等元字符。'
+    exit 1
+}
+
 case "$PROJECT_NAME" in
-    ""|.|..|.git|-*|*[!A-Za-z0-9._-]*)
-        echo "错误: 项目名 '$PROJECT_NAME' 非法"
-        echo "只允许字母、数字、点、下划线、连字符；不能是 . / .. / .git，也不能以 - 开头"
-        exit 1
-        ;;
+    ""|.|..|.git|-*) reject_project_name ;;
 esac
+if [ -n "$(printf '%s' "$PROJECT_NAME" | LC_ALL=C tr -d 'A-Za-z0-9._\200-\377-')" ]; then
+    reject_project_name
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET_DIR="$(pwd)/$PROJECT_NAME"
