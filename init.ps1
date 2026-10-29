@@ -33,22 +33,12 @@ New-Item -ItemType Directory -Path (Join-Path $TargetDir "src") -Force | Out-Nul
 # The list is derived from templates/ itself, never hardcoded: hardcoding Chinese
 # filenames breaks under Windows PowerShell 5.1, which reads this BOM-less script
 # with the ANSI codepage and mangles every non-ASCII literal.
-# Template files prd/plan/journal are the task templates, so they land in tasks/_template/.
-function Get-TemplateDestination([string]$Relative) {
-    switch ($Relative) {
-        "prd.md"     { return "tasks/_template/prd.md" }
-        "plan.md"    { return "tasks/_template/plan.md" }
-        "journal.md" { return "tasks/_template/journal.md" }
-        default      { return $Relative }
-    }
-}
-
+# The directory layout under templates/ matches the generated project 1:1,
+# so the script does no remapping.
 $templateFiles = Get-ChildItem -Path $TemplateDir -Recurse -File -Force
 foreach ($file in $templateFiles) {
     $relative = $file.FullName.Substring($TemplateDir.TrimEnd('\', '/').Length).TrimStart('\', '/')
-    $relative = $relative -replace '\\', '/'
-    $dst = Get-TemplateDestination $relative
-    $dstPath = Join-Path $TargetDir ($dst -replace '/', '\')
+    $dstPath = Join-Path $TargetDir $relative
     New-Item -ItemType Directory -Path (Split-Path -Parent $dstPath) -Force | Out-Null
     Copy-Item -Path $file.FullName -Destination $dstPath -Force
 }
@@ -58,18 +48,12 @@ if (-not (Test-Path (Join-Path $TargetDir "AGENTS.md"))) {
     exit 1
 }
 
-# Replace project name placeholder in files that carry it
-$placeholderFiles = @(
-    (Join-Path $TargetDir "AGENTS.md"),
-    (Join-Path $TargetDir "README.md")
-)
-
-foreach ($f in $placeholderFiles) {
-    if (Test-Path $f) {
-        $content = Get-Content $f -Raw -Encoding UTF8
-        $content = $content -replace '\{\{PROJECT_NAME\}\}', $ProjectName
-        [System.IO.File]::WriteAllText($f, $content, [System.Text.UTF8Encoding]::new($false))
-    }
+# Replace project name placeholder in every template file that carries it
+foreach ($f in (Get-ChildItem -Path $TargetDir -Recurse -File -Force)) {
+    $content = Get-Content $f.FullName -Raw -Encoding UTF8
+    if ($content -notmatch '\{\{PROJECT_NAME\}\}') { continue }
+    $content = $content -replace '\{\{PROJECT_NAME\}\}', $ProjectName
+    [System.IO.File]::WriteAllText($f.FullName, $content, [System.Text.UTF8Encoding]::new($false))
 }
 
 # Init git

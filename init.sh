@@ -36,14 +36,10 @@ mkdir -p "$TARGET_DIR/src"
 # 复制模板文件。
 # 文件清单从 templates/ 自身遍历得出，不硬编码：新增模板无需改脚本，
 # 也避免在脚本里写中文文件名（不同平台的编码/区域设置会破坏字面量）。
-# 约定: templates/ 顶层的 prd.md / plan.md / journal.md 是任务模板，落到 tasks/_template/。
+# templates/ 的目录结构与生成结果一一对应，脚本不做任何重映射。
 (cd "$TEMPLATE_DIR" && find . -type f | sed 's|^\./||' | sort) | while IFS= read -r src; do
-    case "$src" in
-        prd.md|plan.md|journal.md) dst="tasks/_template/$src" ;;
-        *)                         dst="$src" ;;
-    esac
-    mkdir -p "$TARGET_DIR/$(dirname "$dst")"
-    cp "$TEMPLATE_DIR/$src" "$TARGET_DIR/$dst"
+    mkdir -p "$TARGET_DIR/$(dirname "$src")"
+    cp "$TEMPLATE_DIR/$src" "$TARGET_DIR/$src"
 done
 
 if [ ! -f "$TARGET_DIR/AGENTS.md" ]; then
@@ -51,13 +47,11 @@ if [ ! -f "$TARGET_DIR/AGENTS.md" ]; then
     exit 1
 fi
 
-# 替换项目名占位符
-for f in "$TARGET_DIR/AGENTS.md" "$TARGET_DIR/README.md"; do
-    if [ -f "$f" ]; then
-        sed -i "s/{{PROJECT_NAME}}/$PROJECT_NAME/g" "$f" 2>/dev/null || \
-        sed -i '' "s/{{PROJECT_NAME}}/$PROJECT_NAME/g" "$f"
-    fi
-done
+# 替换项目名占位符（遍历全部模板文件，不硬编码文件名）
+while IFS= read -r f; do
+    sed -i "s/{{PROJECT_NAME}}/$PROJECT_NAME/g" "$f" 2>/dev/null || \
+    sed -i '' "s/{{PROJECT_NAME}}/$PROJECT_NAME/g" "$f"
+done < <(find "$TARGET_DIR" -type f)
 
 # 初始化 git
 cd "$TARGET_DIR"
