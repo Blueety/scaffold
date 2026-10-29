@@ -8,6 +8,18 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# Validate the project name: only [A-Za-z0-9._-]. Blocks path traversal (/ and ..),
+# shell and regex metacharacters ($ \ space quotes), and .git.
+# Keep this rule in sync with init.sh.
+if ($ProjectName -notmatch '^[A-Za-z0-9._-]+$' -or
+    $ProjectName -eq '.' -or $ProjectName -eq '..' -or $ProjectName -eq '.git' -or
+    $ProjectName.StartsWith('-')) {
+    Write-Host "Error: invalid project name '$ProjectName'" -ForegroundColor Red
+    Write-Host "Allowed: letters, digits, dot, underscore, hyphen. Not '.', '..', '.git', or a leading '-'."
+    exit 1
+}
+
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TargetDir = Join-Path (Get-Location) $ProjectName
 $TemplateDir = Join-Path $ScriptDir "templates"
@@ -52,14 +64,47 @@ if (-not (Test-Path (Join-Path $TargetDir "AGENTS.md"))) {
 foreach ($f in (Get-ChildItem -Path $TargetDir -Recurse -File -Force)) {
     $content = Get-Content $f.FullName -Raw -Encoding UTF8
     if ($content -notmatch '\{\{PROJECT_NAME\}\}') { continue }
-    $content = $content -replace '\{\{PROJECT_NAME\}\}', $ProjectName
-    [System.IO.File]::WriteAllText($f.FullName, $content, [System.Text.UTF8Encoding]::new($false))
+    try {
+        $replaced = $content -replace '\{\{PROJECT_NAME\}\}', $ProjectName
+        [System.IO.File]::WriteAllText($f.FullName, $replaced, [System.Text.UTF8Encoding]::new($false))
+    }
+    catch {
+        Write-Host "Error: failed to substitute placeholder in '$($f.FullName)': $_" -ForegroundColor Red
+        exit 1
+    }
 }
 
-# Init git
+# Init git, then assert it actually happened instead of reporting success blindly
+if (-not (Get-Command 'git' -ErrorAction SilentlyContinue)) {
+    Write-Host "Error: git not found on PATH" -ForegroundColor Red
+    Write-Host "The project files were created at '$TargetDir' but no git repository was initialized."
+    Write-Host "Install git, then run: cd `"$TargetDir`"; git init"
+    exit 1
+}
+
+# Redirect stderr to a file rather than 2>&1: with $ErrorActionPreference='Stop' a
+# native command's stderr wrapped into the success stream can abort the script.
+$gitErrFile = [System.IO.Path]::GetTempFileName()
 Push-Location $TargetDir
-git init 2>$null
+$gitOutput = & git init 2>$gitErrFile
+$gitCode = $LASTEXITCODE
 Pop-Location
+$gitErr = (Get-Content $gitErrFile -Raw -ErrorAction SilentlyContinue)
+Remove-Item $gitErrFile -Force -ErrorAction SilentlyContinue
+
+if ($gitCode -ne 0) {
+    Write-Host "Error: git init failed (exit $gitCode)" -ForegroundColor Red
+    foreach ($line in $gitOutput) { Write-Host "  $line" -ForegroundColor Red }
+    if ($gitErr) { Write-Host "  $gitErr" -ForegroundColor Red }
+    Write-Host "The project files were created at '$TargetDir' but no git repository was initialized."
+    Write-Host "Fix the cause above, then run: cd `"$TargetDir`"; git init"
+    exit 1
+}
+
+if (-not (Test-Path (Join-Path $TargetDir '.git'))) {
+    Write-Host "Error: git init reported success but '$TargetDir\.git' does not exist" -ForegroundColor Red
+    exit 1
+}
 
 Write-Host ""
 Write-Host "Project '$ProjectName' created!" -ForegroundColor Green

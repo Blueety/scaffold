@@ -12,6 +12,17 @@ if [ $# -eq 0 ]; then
 fi
 
 PROJECT_NAME="$1"
+
+# 校验项目名：只允许 [A-Za-z0-9._-]。
+# 挡住路径穿越（/ 和 ..）、shell 与 sed 的元字符（& $ \ 空格 引号），以及 .git。
+case "$PROJECT_NAME" in
+    ""|.|..|.git|-*|*[!A-Za-z0-9._-]*)
+        echo "错误: 项目名 '$PROJECT_NAME' 非法"
+        echo "只允许字母、数字、点、下划线、连字符；不能是 . / .. / .git，也不能以 - 开头"
+        exit 1
+        ;;
+esac
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET_DIR="$(pwd)/$PROJECT_NAME"
 TEMPLATE_DIR="$SCRIPT_DIR/templates"
@@ -47,15 +58,36 @@ if [ ! -f "$TARGET_DIR/AGENTS.md" ]; then
     exit 1
 fi
 
-# 替换项目名占位符（遍历全部模板文件，不硬编码文件名）
+# 替换项目名占位符（遍历全部模板文件，不硬编码文件名）。
+# 用 sed 写到临时文件再写回，避开 GNU/BSD 的 sed -i 差异，失败时能看到原因。
 while IFS= read -r f; do
-    sed -i "s/{{PROJECT_NAME}}/$PROJECT_NAME/g" "$f" 2>/dev/null || \
-    sed -i '' "s/{{PROJECT_NAME}}/$PROJECT_NAME/g" "$f"
+    tmp="$(mktemp)"
+    if ! sed "s/{{PROJECT_NAME}}/$PROJECT_NAME/g" "$f" > "$tmp"; then
+        echo "错误: 替换占位符失败: $f"
+        rm -f "$tmp"
+        exit 1
+    fi
+    if ! cat "$tmp" > "$f"; then
+        echo "错误: 写回失败: $f"
+        rm -f "$tmp"
+        exit 1
+    fi
+    rm -f "$tmp"
 done < <(find "$TARGET_DIR" -type f)
 
-# 初始化 git
+# 初始化 git。断言真的建出来了，不把失败当成功。
 cd "$TARGET_DIR"
-git init >/dev/null 2>&1
+if ! git_init_err="$(git init 2>&1 >/dev/null)"; then
+    echo "错误: git init 失败"
+    if [ -n "$git_init_err" ]; then printf '%s\n' "$git_init_err" | sed 's/^/  /'; fi
+    echo "项目文件已创建在 $TARGET_DIR，但没有初始化 git 仓库。"
+    echo "确认 git 已安装后重试: cd $TARGET_DIR && git init"
+    exit 1
+fi
+if [ ! -d "$TARGET_DIR/.git" ]; then
+    echo "错误: git init 未报错，但 $TARGET_DIR/.git 不存在"
+    exit 1
+fi
 
 echo ""
 echo "项目 '$PROJECT_NAME' 创建成功!"
