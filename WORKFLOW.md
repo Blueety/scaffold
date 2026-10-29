@@ -210,6 +210,8 @@ Agent 会读你的配置文件，写出**实际命令**，不是猜的。
 请阅读 docs/agents/执行者.md，按它的要求工作。
 ```
 
+角色和 skill 不是一回事：角色是「谁在干活」（`docs/agents/`），流程是「怎么干」（`skills/`）。所以 `pre-review` 只有 `skills/pre-review/SKILL.md`，没有对应的角色文件——它是一次审查动作，不是一个人设。
+
 ### Step 2.4: 初始提交
 
 init 脚本已创建 git 仓库，直接提交即可：

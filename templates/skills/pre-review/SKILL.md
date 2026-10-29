@@ -1,6 +1,8 @@
 ---
 name: pre-review
 description: 提交或请求人工审查前使用。对固定点以来的 diff 做双轴只读审查：Standards（是否符合仓库规范和坏味道基线）与 Spec（是否忠实实现 prd）。两轴分别报告，不合并。
+# 这一行是刻意的：审查必须只读。其余三个 skill 没有 allowed-tools，因为它们本来
+# 就要写文件、跑命令——不要照抄这一行过去。
 allowed-tools: Read, Grep, Glob
 ---
 
