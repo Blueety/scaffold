@@ -135,29 +135,36 @@ cd my-project-name
 
 ```
 my-project-name/
-├── AGENTS.md               # 项目规范（含任务分级和闸门的指针）
-├── CONTEXT.md              # 领域词表（空，等第一次术语定案时填）
-├── README.md
-├── .gitignore
-├── src/
+├── AGENTS.md              # 项目规范（含任务分级和闸门的指针）
+├── CONTEXT.md             # 领域词表（空壳，首次术语定案时填）
+├── README.md              # 项目说明
+├── .gitignore             # Git 忽略规则
+├── src/                   # 源代码目录（空）
 ├── docs/
-│   ├── architecture.md
-│   ├── commands.md
-│   ├── pitfalls.md
-│   ├── adr/                # 决策记录：为什么这么做
-│   │   └── README.md
-│   └── agents/             # 角色提示词和流程细则
-│       ├── 架构师.md
-│       ├── 执行者.md
-│       └── 任务分级.md
+│   ├── architecture.md    # 架构说明
+│   ├── commands.md        # 命令说明
+│   ├── pitfalls.md        # 易错点记录
+│   ├── adr/
+│   │   └── README.md      # 决策记录规范（为什么这么做）
+│   └── agents/
+│       ├── 架构师.md       # 架构师角色提示词
+│       ├── 执行者.md       # 执行者角色提示词
+│       └── 任务分级.md      # 档位判定：6 条信号 + 3 条升级规则
 ├── tasks/
-│   ├── README.md
-│   └── _template/          # prd / plan / journal 模板
+│   ├── README.md          # 任务目录说明
+│   └── _template/         # 任务模板
+│       ├── prd.md
+│       ├── plan.md
+│       └── journal.md
 └── skills/
-    ├── bug-fix/SKILL.md
-    ├── pre-review/SKILL.md
-    ├── research/SKILL.md
-    └── tdd/SKILL.md
+    ├── bug-fix/
+    │   └── SKILL.md       # Bug 修复流程（含闸门 A / B）
+    ├── pre-review/
+    │   └── SKILL.md       # 提交前双轴审查
+    ├── research/
+    │   └── SKILL.md       # 外查一手资料（后台子 agent + 带引用的 md）
+    └── tdd/
+        └── SKILL.md       # 测试驱动（seam 先约定）
 ```
 
 ### Step 2.2: 初始化技术栈
@@ -218,7 +225,7 @@ uv add fastapi uvicorn
 
 Agent 会读你的配置文件，写出**实际命令**，不是猜的。
 
-另外，`skills/` 目录里有三个流程模板：
+另外，`skills/` 目录里有四个流程模板：
 
 | skill | 什么时候用 |
 |---|---|
@@ -231,7 +238,7 @@ Agent 会读你的配置文件，写出**实际命令**，不是猜的。
 请参考 skills/bug-fix/SKILL.md 的流程来修这个 bug。
 ```
 
-角色提示词在 `docs/agents/` 里（`架构师.md` / `执行者.md`），不用再手动粘贴：
+角色提示词在 `docs/agents/` 里（`架构师.md` / `执行者.md` / `任务分级.md`），不用再手动粘贴：
 
 ```
 请阅读 docs/agents/执行者.md，按它的要求工作。
