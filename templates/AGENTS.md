@@ -19,6 +19,7 @@
 - 复杂任务：当前 `tasks/<日期>-<简述>/` 下的 prd.md / plan.md / journal.md。
 - 修 bug：`skills/bug-fix/SKILL.md`。
 - 写测试：`skills/tdd/SKILL.md`。
+- 重构：`skills/refactor/SKILL.md`（先造行为安全网；行为一变就不是重构）。
 - 提交前审查：`skills/pre-review/SKILL.md`。
 - 外部一手事实挡住决策时：`skills/research/SKILL.md`（派后台子 agent，只认官方文档 / 源码 / 规范，落一份带引用的 md）。
 

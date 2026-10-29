@@ -190,13 +190,14 @@ uv add fastapi uvicorn
 
 Agent 会读你的配置文件，写出**实际命令**，不是猜的。
 
-另外，`skills/` 目录里有四个流程模板：
+另外，`skills/` 目录里有流程模板（目录即清单，这里不重复计数）：
 
 | skill | 什么时候用 |
 |---|---|
 | `bug-fix` | 修 bug。核心是闸门 A：进入根因假设前必须先有一条能对**这个** bug 变红的命令 |
 | `pre-review` | 提交前审查。Standards / Spec 双轴，分开报告不合并 |
 | `tdd` | 写测试。写之前先书面列出 seam 并确认 |
+| `refactor` | 重构（行为不变只改结构）。核心是先造行为安全网；行为一变就不是重构，转 bug-fix |
 | `research` | 外部一手事实挡路（第三方 API / 规范原文 / 版本声明）。派后台子 agent，产出带引用的 md；结论进 `CONTEXT.md` / ADR，文件本身过期即删 |
 
 ```
