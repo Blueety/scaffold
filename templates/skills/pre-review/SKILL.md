@@ -49,7 +49,9 @@ git log <固定点>..HEAD --oneline
 
 ### 3. 找规范来源
 
-仓库里任何写明代码该怎么写的东西：`AGENTS.md`、`docs/architecture.md`、`docs/pitfalls.md`。
+仓库里任何写明代码该怎么写的东西：`AGENTS.md`（尤其「编码规范」段）、`docs/architecture.md`、`docs/pitfalls.md`。
+
+**硬违规只能引用写在这里的东西。** 仓库里没写明的，就只能是坏味道（判断题）。这也是为什么 `AGENTS.md` 的「编码规范」段不能留空——留空等于 Standards 轴永远报不出硬违规。
 
 在仓库文档之上，Standards 轴**始终**带着下面的坏味道基线。两条约束：
 
@@ -82,6 +84,7 @@ git log <固定点>..HEAD --oneline
 | 维度 | 检查项 |
 |---|---|
 | Correctness | 逻辑是否正确，边界是否覆盖 |
+| Performance | 循环里查库 / 发请求（N+1）、无界缓存或列表、没解绑的订阅与定时器、把线性逻辑改成 O(n²) 或整表扫描 |
 | Tests | 相关测试是否已运行，是否缺少测试 |
 | Security | 是否暴露敏感信息，是否有注入风险 |
 | Conventions | 是否符合项目命名、风格和目录约定 |
@@ -94,6 +97,17 @@ git log <固定点>..HEAD --oneline
 按 `## Standards` 和 `## Spec` 两节分别呈现两份报告。**不要合并或重排**发现，两轴是刻意分开的。
 
 最后给一行小结：每轴各有几条发现，以及**每轴各自**最严重的那条。不要挑一个跨轴的总冠军——那正是分两轴要防的重排。
+
+## 声称完成前
+
+四件事逐条确认，不能跳。这一步是补自动化闸门的缺口——`scripts/check-gates.sh` 能验字段非空，**验不了「命令是否真的跑过」**：
+
+1. **跑过相关测试**：`docs/commands.md` 里对应的那几条，不是「类似的」那几条
+2. **手动走过关键路径**：界面 / CLI 类的改动要真的打开看一眼、真的敲一遍；只读代码不算
+3. **跑过 lint / typecheck**
+4. **要改的文档已改**：README / architecture / commands / CONTEXT.md，按改动性质决定
+
+四条里有任何一条没做，就在报告里写「未运行 + 原因」，不要写成完成。
 
 ## Output Format
 
