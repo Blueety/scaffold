@@ -62,6 +62,19 @@ my-project-name/
 
 完整流程见 [WORKFLOW.md](WORKFLOW.md)。
 
+## 自检
+
+改了 `templates/` 或那两个脚本之后，跑一遍：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
+```
+
+它校验三样东西一致：`README.md` 里那棵树、`templates/` 的实际内容、`init.sh` / `init.ps1` 实际生成的结果。同时断言"全仓库只有一棵树"——`WORKFLOW.md` 只留指针，所以模板变更只需改一处。
+
+- `-SkipEndToEnd`：只跑前半段（纯文件系统对比，毫秒级）
+- `-BashPath <path>`：Git Bash 不在常见位置时手动指定
+
 ## 设计原则
 
 - 模板只写 AI 推不出来的东西。其余写成指针，指向 `docs/`

@@ -131,41 +131,7 @@ cd my-project-name
 
 此时项目只有空壳目录和模板文件，还没有源代码。
 
-生成的骨架：
-
-```
-my-project-name/
-├── AGENTS.md              # 项目规范（含任务分级和闸门的指针）
-├── CONTEXT.md             # 领域词表（空壳，首次术语定案时填）
-├── README.md              # 项目说明
-├── .gitignore             # Git 忽略规则
-├── src/                   # 源代码目录（空）
-├── docs/
-│   ├── architecture.md    # 架构说明
-│   ├── commands.md        # 命令说明
-│   ├── pitfalls.md        # 易错点记录
-│   ├── adr/
-│   │   └── README.md      # 决策记录规范（为什么这么做）
-│   └── agents/
-│       ├── 架构师.md       # 架构师角色提示词
-│       ├── 执行者.md       # 执行者角色提示词
-│       └── 任务分级.md      # 档位判定：6 条信号 + 3 条升级规则
-├── tasks/
-│   ├── README.md          # 任务目录说明
-│   └── _template/         # 任务模板
-│       ├── prd.md
-│       ├── plan.md
-│       └── journal.md
-└── skills/
-    ├── bug-fix/
-    │   └── SKILL.md       # Bug 修复流程（含闸门 A / B）
-    ├── pre-review/
-    │   └── SKILL.md       # 提交前双轴审查
-    ├── research/
-    │   └── SKILL.md       # 外查一手资料（后台子 agent + 带引用的 md）
-    └── tdd/
-        └── SKILL.md       # 测试驱动（seam 先约定）
-```
+生成的骨架见 [`README.md` 的「生成的目录结构」](README.md#生成的目录结构)——那里是**唯一**一份目录树，由 `scripts/check-tree.ps1` 校验它与 `templates/` 的实际内容一致。
 
 ### Step 2.2: 初始化技术栈
 
