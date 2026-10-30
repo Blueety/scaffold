@@ -11,15 +11,19 @@
 #   - 闸门 B：非 .md 文件里没有 [DEBUG- 残留（大小写不敏感；.md 是文档，会引用这个约定）
 #   - plan.md：档位与类型已声明、关键字段非空、确认清单全勾、
 #              bug 任务的闸门 A 字段、bug-不可复现 必须声明 T3
-#   - journal.md：章节齐全、主要提交已回填、验证结果有内容且不写「应该可以」、改动清单已填
-#   - NN-*.md（切片）：类型与状态取值合法、演示与完成标准非空、被谁挡已填、
-#                      状态 completed 时必须回填主要提交
-#   - review.md（裁决单）：档位是 T2 / T3 时必须存在；章节齐全、固定点已填、
+#   - prd.md：验收标准非空；档位行填了就必须合法（不强制存在）
+#   - journal.md：章节齐全、结束状态合法、验证结果有内容且不写「应该可以」、改动清单已填、
+#                 结束状态是 DONE / DONE_WITH_CONCERNS 时「主要提交」必须回填
+#   - NN-*.md（切片）：类型与状态取值合法、档位与优先级取值合法、演示与完成标准非空、
+#                      文件范围与被谁挡已填、状态 completed 时必须回填主要提交
+#   - review.md（裁决单）：任务档位是 T2 / T3 时必须存在（看 plan.md 与切片的声明，
+#                          不依赖 plan.md 是否存在）；章节齐全、固定点已填、
 #                          逐条处理表非空、「审查者明确未判断的」不许留空
 #   - 架构：docs/architecture.md 的模块表 vs 实际模块目录（双向，模块根默认 src）
 #
 # 不覆盖（判断性内容，留在 skills/ 里由人确认）：
-#   双轴不合并、一次性脚本是否真删干净、命令是否真跑过。
+#   双轴不合并、一次性脚本是否真删干净、命令是否真跑过、
+#   **任务是否真的收尾了**（journal.md 在提交之后才写，机器判断不了「这个任务结束了没有」）。
 #
 # 退出码：0 = 通过，1 = 有违规，2 = 用法错误。
 # <<< usage
@@ -32,7 +36,7 @@ fail() { printf '  [x] %s\n' "$*"; violations=$((violations + 1)); }
 
 # 用法说明就是文件头那段，用哨兵行圈出来 —— 写死行号会在加注释时漂移。
 usage() {
-    sed -n '/^# >>> usage$/,/^# <<< usage$/p' "$0" | sed '1d;$d' | sed 's/^# \{0,1\}//'
+    sed -n '/^# >>> usage$/,/^# <<< usage$/p' "${BASH_SOURCE[0]}" | sed '1d;$d' | sed 's/^# \{0,1\}//'
 }
 
 # ---------------------------------------------------------------- markdown 解析
@@ -71,24 +75,37 @@ md_section() {
 
 # 取 `- **标签**: 值` 这一行冒号后的内容。$2 是标签子串（避开 en dash 之类的字符）。
 # 允许前置缩进——缩进过的字段行不该被判成「未声明」。
+# 项目符号接受 `-` 和 `*`，冒号接受半角 `:` 和全角 `：`——**全角必须认**：
+# 认不出的话 `sub` 不生效，整行被当成值返回，所有 field_filled 检查会一律判「已填」（fail-open）。
 md_field_line() {
     awk -v lbl="$2" '
-        /^[[:space:]]*- \*\*/ && index($0, lbl) > 0 { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }
+        /^[[:space:]]*[-*][[:space:]]+\*\*/ && index($0, lbl) > 0 {
+            gsub(/：/, ":")                       # 全角冒号先归一化再切
+            sub(/^[^:]*:[[:space:]]*/, ""); print; exit
+        }
     ' "$1"
 }
 
 # 取该字段行及其后续块（到下一个 `- **` 标签或标题为止）。
 md_field_block() {
     awk -v lbl="$2" '
-        /^[[:space:]]*- \*\*/ { if (found) exit; if (index($0, lbl) > 0) { found = 1; print; next } }
+        /^[[:space:]]*[-*][[:space:]]+\*\*/ { if (found) exit; if (index($0, lbl) > 0) { found = 1; print; next } }
         /^[[:space:]]*#/ { if (found) exit }
         found { print }
     ' "$1"
 }
 
-# 取字段行里第一个反引号内的内容。
+# 取字段的值：优先第一个反引号里的内容；没写反引号就取冒号后第一个词。
+# 不回退的话，`- **档位**: T2`（忘了反引号）会被报成「档位未声明（找不到那一行）」——
+# 行明明在，报错文本误导，而且 T2/T3 的任务会因此躲过 review.md 的强制检查。
 md_token() {
-    md_field_line "$1" "$2" | sed -n 's/^`\([^`]*\)`.*/\1/p' | head -n 1
+    local line tok
+    line="$(md_field_line "$1" "$2")"
+    tok="$(printf '%s' "$line" | sed -n 's/^`\([^`]*\)`.*/\1/p' | head -n 1)"
+    if [ -z "$tok" ]; then
+        tok="$(printf '%s' "$line" | awk '{print $1}')"
+    fi
+    printf '%s' "$tok"
 }
 
 # 字段是否有实质内容：同行冒号后非空，或后续块里去掉注释/空行/纯符号后还有东西。
@@ -143,10 +160,56 @@ check_gate_b() {
 
 # review.md（裁决单）：只有 T2 / T3 需要。先剥注释（理由同 check_plan）——
 # 模板里那几段说明文字如果被当成内容，一个没填的裁决单会通过。
+# 任务档位是否落在 T2/T3：plan.md 与切片里任何一处声明了 T2/T3 就算。
+# 不能只看 plan.md——T1 的 plan 可省，而切片文件自己带档位。
+task_is_high_tier() {
+    local d="$1" f clean t
+    for f in "$d/plan.md" "$d"/[0-9][0-9]-*.md; do
+        [ -f "$f" ] || continue
+        clean="$(mktemp)"
+        strip_comments < "$f" > "$clean"
+        t="$(md_token "$clean" '档位')"
+        rm -f "$clean"
+        case "$t" in T2*|T3*) return 0 ;; esac
+    done
+    return 1
+}
+
+# prd.md：Spec 轴的基准。只卡两件机器能判的事——
+#   1. 「## 验收标准」非空：AGENTS.md 的 Done Means 和 pre-review 的 Spec 轴都拿它当指涉对象，
+#      缺了它两边都悬空（WORKFLOW.md 也写着「没有那一段就是没做完」）。
+#   2. 档位行：填了就必须是 T0–T3。**不要求它必须填**——prd.md 在 Step 3.2 落笔、
+#      档位在 3.3 才定，强制存在会在中途提交时误报。这里只抓「模板占位符没删」和写错值。
+prd_checks() {
+    local f="$1" c="$2" tier acc
+    tier="$(md_token "$c" '档位')"
+    case "$tier" in
+        "") : ;;
+        *'T?'*) fail "$f: 档位仍是模板占位符 T?" ;;
+        T0*|T1*|T2*|T3*) : ;;
+        *) fail "$f: 档位 '$tier' 不是 T0–T3" ;;
+    esac
+
+    acc="$(md_section "$c" '验收标准')"
+    if [ -z "$acc" ]; then
+        fail "$f: 缺「## 验收标准」一节（Spec 轴和 Done Means 都拿它当基准）"
+    elif ! printf '%s' "$acc" | grep -qE '^[[:space:]]*([-*][[:space:]]+|[0-9]+\.[[:space:]]+)[^[:space:]]'; then
+        fail "$f: 「## 验收标准」里没有条目（项目符号或编号列表都行）"
+    fi
+}
+
+check_prd() {
+    local f="$1" clean
+    clean="$(mktemp)"
+    strip_comments < "$f" > "$clean"
+    prd_checks "$f" "$clean"
+    rm -f "$clean"
+}
+
 check_review() {
     local d="$1" f="$d/review.md" clean
     if [ ! -f "$f" ]; then
-        fail "$d/plan.md: 档位是 T2/T3，但缺 $f（这两档的审查必须由独立子 agent 做，见 docs/agents/任务分级.md）"
+        fail "$d/review.md: 这个任务的档位是 T2/T3，但缺 review.md（这两档的审查必须由独立子 agent 做，见 docs/agents/任务分级.md）"
         return
     fi
     clean="$(mktemp)"
@@ -217,7 +280,7 @@ plan_checks() {
         fail "$f: 缺「## 确认」一节"
     else
         local unchecked
-        unchecked="$(md_section "$c" '确认' | grep -cE '^[[:space:]]*[-*+] \[ \]' || true)"
+        unchecked="$(md_section "$c" '确认' | grep -cE '^[[:space:]]*[-*+][[:space:]]+\[[[:space:]]?\]' || true)"
         if [ "${unchecked:-0}" -ne 0 ]; then
             fail "$f: 「## 确认」还有 $unchecked 项没勾"
         fi
@@ -228,13 +291,13 @@ plan_checks() {
         fail "$f: 残留模板提示文字「（从 prd.md 提取）」"
     fi
 
-    # 测试 Seam：要么整节不填，要么三行都填
+    # 测试 Seam：要么整节不填，要么四行都填
     local seam_filled=0 lbl
-    for lbl in '要测的 seam' '公开接口是什么' '为什么选这个 seam'; do
+    for lbl in '要测的 seam' '公开接口是什么' '错误与边界' '为什么选这个 seam'; do
         field_filled "$c" "$lbl" && seam_filled=$((seam_filled + 1))
     done
-    if [ "$seam_filled" -gt 0 ] && [ "$seam_filled" -lt 3 ]; then
-        fail "$f: 「## 测试 Seam」只填了 $seam_filled/3 行"
+    if [ "$seam_filled" -gt 0 ] && [ "$seam_filled" -lt 4 ]; then
+        fail "$f: 「## 测试 Seam」只填了 $seam_filled/4 行"
     fi
 
     # 类型轴 = bug：闸门 A 必填。只卡下界——写超过 5 条假设不是缺陷。
@@ -242,6 +305,7 @@ plan_checks() {
         bug-*)
             field_filled "$c" '能变红的命令' || fail "$f: 闸门 A —— 「能变红的命令」为空"
             field_filled "$c" '已实跑的输出' || fail "$f: 闸门 A —— 「已实跑的输出」为空"
+            field_filled "$c" '是否已最小化' || fail "$f: 闸门 A —— 「是否已最小化」为空"
             local hy
             hy="$(md_field_block "$c" '排序假设' | grep -cE '^[[:space:]]*[0-9]+\.[[:space:]]*[^[:space:]]' || true)"
             if [ "${hy:-0}" -lt 3 ]; then
@@ -279,9 +343,16 @@ journal_checks() {
     done
     [ "$missing" -gt 0 ] && return
 
-    if ! field_filled "$c" '主要提交'; then
-        fail "$f: 「主要提交」没回填（写工作提交的 SHA，见 tasks/README.md）"
-    fi
+    # 「主要提交」与「结束状态」绑定：BLOCKED / NEEDS_CONTEXT 的任务可能一次提交都没有
+    local end_state
+    end_state="$(md_token "$c" '结束状态')"
+    case "$end_state" in
+        DONE|DONE_WITH_CONCERNS)
+            field_filled "$c" '主要提交' || fail "$f: 结束状态是 $end_state，但「主要提交」没回填（写工作提交的 SHA，见 tasks/README.md）" ;;
+        BLOCKED|NEEDS_CONTEXT)
+            : ;;   # 卡住 / 缺信息的任务允许零提交
+        *) fail "$f: 「结束状态」是 '$end_state'，不在 {DONE, DONE_WITH_CONCERNS, BLOCKED, NEEDS_CONTEXT}" ;;
+    esac
 
     local verify
     verify="$(md_section "$c" '验证结果')"
@@ -299,11 +370,6 @@ journal_checks() {
     fi
     if printf '%s' "$changed" | grep -q 'src/\.\.\.'; then
         fail "$f: 「## 改动文件清单」还留着模板占位符 src/..."
-    fi
-
-    # 结束状态必须四选一（跨会话接手时靠它决定继续做还是先解决问题）
-    if ! md_section "$c" '结束状态' | grep -qE '\b(DONE_WITH_CONCERNS|DONE|BLOCKED|NEEDS_CONTEXT)\b'; then
-        fail "$f: 「## 结束状态」必须是 DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT 之一"
     fi
 }
 
@@ -342,6 +408,14 @@ slice_checks() {
         *) fail "$f: 档位 '$tier' 不是 T0–T3" ;;
     esac
 
+    local prio
+    prio="$(md_token "$c" '优先级')"
+    case "$prio" in
+        P0|P1|P2) : ;;
+        "") fail "$f: 优先级未声明（找不到 \`- **优先级**:\` 行）" ;;
+        *) fail "$f: 优先级 '$prio' 不在 {P0, P1, P2}" ;;
+    esac
+
     field_filled "$c" '完成后可以看到什么' || fail "$f: 「完成后可以看到什么」为空"
     field_filled "$c" '完成标准'           || fail "$f: 「完成标准」为空"
     field_filled "$c" '文件范围'           || fail "$f: 「文件范围」为空"
@@ -364,7 +438,7 @@ slice_checks() {
         fail "$f: 缺「## 确认」一节"
     else
         local unchecked
-        unchecked="$(md_section "$c" '确认' | grep -cE '^[[:space:]]*[-*+] \[ \]' || true)"
+        unchecked="$(md_section "$c" '确认' | grep -cE '^[[:space:]]*[-*+][[:space:]]+\[[[:space:]]?\]' || true)"
         if [ "${unchecked:-0}" -ne 0 ]; then
             fail "$f: 「## 确认」还有 $unchecked 项没勾"
         fi
@@ -418,7 +492,7 @@ check_architecture() {
             mkdir -p "$check_tree_tmp/docs"
             # 索引里有就用索引版本（这样「暂存了坏表」会被拦住）；
             # 索引里没有（例如还没 commit 过、又没 add 这个文件）就退回工作区版本。
-            git -C "$root" show ':docs/architecture.md' > "$doc" 2>/dev/null \
+            git -c core.quotepath=false -C "$root" show ':docs/architecture.md' > "$doc" 2>/dev/null \
                 || cp "$root/docs/architecture.md" "$doc" 2>/dev/null \
                 || rm -f "$doc"
         fi
@@ -484,6 +558,9 @@ main() {
     if [ "$staged" -eq 1 ]; then
         # 内容必须取自索引。只拿 git diff --cached 的文件名、却读工作区，会在
         # 「已暂存的是坏内容、工作区已修好」时放行，反方向则误拦一次合法提交。
+        # 所有 git 调用都带 -c core.quotepath=false：这个设置存在 .git/config 里，
+        # 不随 clone 走。少了它，clone 回来的仓库里中文名路径会被引号+八进制转义，
+        # git show ":$p" 失败、case 匹配也失配 —— 那些文件会静默逃过全部检查。
         #
         # 临时目录用全局变量：EXIT trap 在 main 返回之后才执行，那时 local 已经出作用域，
         # set -u 会把 "$check_tree_tmp" 当成未绑定变量，trap 失败 → 脚本整体非 0。
@@ -492,8 +569,8 @@ main() {
         while IFS= read -r p; do
             [ -n "$p" ] || continue
             mkdir -p "$check_tree_tmp/$(dirname "$p")"
-            git -C "$root" show ":$p" > "$check_tree_tmp/$p" 2>/dev/null || true
-        done < <(git -C "$root" diff --cached --name-only --diff-filter=ACMR 2>/dev/null)
+            git -c core.quotepath=false -C "$root" show ":$p" > "$check_tree_tmp/$p" 2>/dev/null || true
+        done < <(git -c core.quotepath=false -C "$root" diff --cached --name-only --diff-filter=ACMR 2>/dev/null)
         cd "$check_tree_tmp" || exit 2
     else
         cd "$root" || exit 2
@@ -526,7 +603,7 @@ main() {
                     case "$d" in tasks/_template) continue ;; esac
                     dirs+=("$d") ;;
             esac
-        done < <(git -C "$root" diff --cached --name-only --diff-filter=ACMR 2>/dev/null)
+        done < <(git -c core.quotepath=false -C "$root" diff --cached --name-only --diff-filter=ACMR 2>/dev/null)
     else
         for d in tasks/*/; do
             [ -d "$d" ] || continue
@@ -545,14 +622,17 @@ main() {
             printf '%s\n' "检查 $d/plan.md"
             check_plan "$d/plan.md"
             any=1
-            # T2 / T3 的审查必须换人做，产出裁决单（见 docs/agents/任务分级.md）
-            local pclean
-            pclean="$(mktemp)"
-            strip_comments < "$d/plan.md" > "$pclean"
-            case "$(md_token "$pclean" '档位')" in
-                T2*|T3*) check_review "$d" ;;
-            esac
-            rm -f "$pclean"
+        fi
+        if [ -f "$d/prd.md" ]; then
+            printf '%s\n' "检查 $d/prd.md"
+            check_prd "$d/prd.md"
+            any=1
+        fi
+        # T2 / T3 的审查必须换人做，产出裁决单（见 docs/agents/任务分级.md）。
+        # 独立于 plan.md 是否存在——档位也可能只写在切片里。
+        if task_is_high_tier "$d"; then
+            check_review "$d"
+            any=1
         fi
         if [ -f "$d/journal.md" ]; then
             printf '%s\n' "检查 $d/journal.md"

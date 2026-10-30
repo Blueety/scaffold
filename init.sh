@@ -34,17 +34,37 @@ esac
 # .git 不分大小写：Windows 的文件名不区分大小写，.GIT 和 .git 是同一个东西。
 # 保留设备名同理：Windows 上 CON/NUL/COM1 之类的名字建不出普通目录（Git Bash 下
 # mkdir 会留下一个设备项）。取第一个点之前的部分来判断，CON.txt 也是设备名。
+# COM0/LPT0 也算：实测 Windows 会把 com0 改名，建出来的目录不是你要的那个名字。
 lower_name="$(printf '%s' "$PROJECT_NAME" | LC_ALL=C tr 'A-Z' 'a-z')"
 case "$lower_name" in
     .|..|.git|-*|*.) reject_project_name ;;
 esac
 case "${lower_name%%.*}" in
-    con|prn|aux|nul|com[1-9]|lpt[1-9]) reject_project_name ;;
+    con|prn|aux|nul|com[0-9]|lpt[0-9]) reject_project_name ;;
 esac
 
 if [ -n "$(printf '%s' "$PROJECT_NAME" | LC_ALL=C tr -d 'A-Za-z0-9._\200-\377-')" ]; then
     reject_project_name
 fi
+
+# 不可见 / Unicode 空白：NBSP、软连字符、零宽字符（U+2000–U+200F）、行段分隔符、
+# 窄 NBSP、词连接符、表意空格、BOM。粘贴来的名字常混进这些——建出来的目录
+# 看不见，也打不回去。只要**含有**就拦，不限于整名都是它。
+# 这份集合必须与 init.ps1 的字符类一一对应。
+# 用八进制字节转义而不是 `$'\uXXXX'`：后者依赖 locale，在 LC_ALL=C 下会转出
+# 完全不同的字节（实测会把合法中文名误判为非法）。八进制是逐字节的，与 locale 无关。
+invisible=(
+    $'\302\240' $'\302\255' $'\342\200\250' $'\342\200\251' $'\342\200\257'
+    $'\342\201\237' $'\342\201\240' $'\343\200\200' $'\357\273\277'
+)
+for _i in $(seq 0 15); do
+    invisible+=("$(printf '\342\200'; printf "\\$(printf '%o' $((0200 + _i)))")")
+done
+for _ch in "${invisible[@]}"; do
+    case "$PROJECT_NAME" in
+        *"$_ch"*) reject_project_name ;;
+    esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET_DIR="$(pwd)/$PROJECT_NAME"

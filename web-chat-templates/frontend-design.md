@@ -147,4 +147,7 @@
 不要写代码。
 ```
 
-> 收尾这段直接贴进 Task Handoff 的「术语与决策」。界面名字进 prd.md 的 Context Pointers，验收清单进 Verification Plan。
+> 收尾这段的输出分三处落：
+> - **界面清单**（每屏名字 + 一句话职责）→ Task Handoff 的 `## Context Pointers`（它们是组件名和路由名的来源）
+> - **视觉 token / 组件库决定 / 已排除的方案 / 刻意偏离常规 / 看不见的约束** → Task Handoff 的 `## 术语与决策` 的对应小类
+> - **视觉验收标准** → Task Handoff 的 `## Done When`（每条要能判定，写法见 `docs/commands.md` 的「UI 变更怎么验」）

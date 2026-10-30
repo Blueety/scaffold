@@ -58,7 +58,7 @@ tasks/2026-08-04-add-login/
 
 **一个任务目录对应一个主要提交。** 多切片任务里，每个切片完成时提交一次，把 SHA 回填到该切片的「主要提交」，状态改成 `completed`。
 
-这条不只是习惯：`skills/pre-review/SKILL.md` 要「从固定点到 HEAD 的 diff」，固定点默认就是**上一个任务的主要提交**。粒度乱了，审查范围就无从确定。
+这条不只是习惯：`skills/pre-review/SKILL.md` 要「从固定点到**当前工作区**的 diff」（`git add -A` 之后 `git diff --cached <固定点>`），固定点默认就是**上一个任务的主要提交**。粒度乱了，审查范围就无从确定。
 
 ### 决策条目 vs 执行切片
 
@@ -86,7 +86,7 @@ tasks/2026-08-04-add-login/
 
 四步：
 
-1. 改 `prd.md`，把变化写进 Requirements / Out of Scope / Done When
+1. 改 `prd.md`，把变化写进 Requirements / 验收标准 / Out of Scope
 2. 检查 `plan.md` 和切片文件是否需要新增或作废
 3. 改代码和测试
 4. 重新对照完整 `prd.md` 验证旧行为没被破坏

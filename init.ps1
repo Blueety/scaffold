@@ -16,11 +16,13 @@ $ErrorActionPreference = "Stop"
 # (Chinese included). Anything else - whitespace, control characters, quotes, path
 # separators, shell metacharacters - is rejected by the character class.
 # Also rejected: '.', '..', '.git' (case-insensitive), a leading '-', a trailing '.'
-# (Windows silently strips it) and the reserved device names CON/PRN/AUX/NUL/COM1-9/LPT1-9.
+# (Windows silently strips it), the reserved device names CON/PRN/AUX/NUL/COM0-9/LPT0-9,
+# and invisible / Unicode-whitespace characters (see init.sh - the two sets must match).
 if ($ProjectName -notmatch '^([\w.-]|[^\x00-\x7F])+$' -or
     $ProjectName -eq '.' -or $ProjectName -eq '..' -or $ProjectName -eq '.git' -or
     $ProjectName.StartsWith('-') -or $ProjectName.EndsWith('.') -or
-    $ProjectName -match '^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$') {
+    $ProjectName -match '^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$' -or
+    $ProjectName -match '[\u00A0\u00AD\u2000-\u200F\u2028\u2029\u202F\u205F\u2060\u3000\uFEFF]') {
     Write-Host "Error: invalid project name '$ProjectName'" -ForegroundColor Red
     Write-Host "Allowed: letters, digits, dot, underscore, hyphen, and non-ASCII characters (Chinese included)."
     Write-Host "Not '.', '..', '.git', a leading '-', a trailing '.', a Windows device name,"

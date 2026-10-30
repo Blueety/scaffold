@@ -2,7 +2,7 @@
 name: pre-review
 description: 提交或请求人工审查前使用。对固定点以来的 diff 做双轴只读审查：Standards（是否符合仓库规范和坏味道基线）与 Spec（是否忠实实现 prd）。两轴分别报告，不合并。
 # allowed-tools 是 harness 的机制（限制这个 skill 能调用哪些工具），不是文档约定。
-# 这一行是刻意的：审查必须只读。其余四个 skill 都没有这一行，因为它们本来就要写文件、
+# 这一行是刻意的：审查必须只读。其余五个 skill 都没有这一行，因为它们本来就要写文件、
 # 跑命令——照抄过来会把它们锁死。
 # 需要更细的粒度时用 scoped 语法限定参数，例如 Bash(git diff:*)。
 allowed-tools: Read, Grep, Glob
@@ -27,13 +27,16 @@ allowed-tools: Read, Grep, Glob
 
 **T2 / T3 必须换人。** 自审的结构性问题是：审查者和被审查者是同一个——它**已经形成结论**了，而它又恰恰知道「我为什么这么写」，所以看不见「谁还在按老写法用」。
 
-**独立审查者的输入必须自包含。** 给它这几样，**不许多给**：
+**独立审查者的输入必须自包含。** 给它这几样：
 
 - `tasks/<日期>-<简述>/prd.md` 与 `plan.md`
-- diff（`git diff <固定点>...HEAD`，或打包成一个文件）
-- 相关的 `AGENTS.md` / `docs/architecture.md` / 既有测试
+- diff（`git add -A && git diff --cached <固定点>`，或打包成一个文件）
+- **它要当规范来源读的活文档**：`AGENTS.md`、`docs/architecture.md`、`docs/pitfalls.md`、`docs/commands.md`、`CONTEXT.md`、既有测试
+- **本次改动的文件清单**（`git diff --cached --stat`）——Docs 维度要判断「改动影响了哪些文档」，没有清单它判不了
 
 **不要给它主线程的会话历史、不要给它「我为什么这么改」的解释。** 给了，它就会继承主线程的结论——那只是换个地方自我确认，不叫独立审查。
+
+> 注意：上面这份清单要**给全**。少了 `pitfalls.md` / `commands.md` / `CONTEXT.md`，Standards 轴找不到全部规范来源，Docs 维度也判不了——那会让它把「我没看到」误报成「没有问题」。
 
 审查者的报告**原文**由被审查方逐字贴进 `review.md`，再按 `skills/receiving-review/SKILL.md` 逐条处理。**轮次上限 2**：两轮还有未解决的 Critical 就停下，升级给人——不要让它俩互相说服。
 
@@ -123,7 +126,7 @@ git log <固定点>..HEAD --oneline
 | Tests | 相关测试是否已运行，是否缺少测试 |
 | Security | 是否暴露敏感信息，是否有注入风险 |
 | Conventions | 是否符合项目命名、风格和目录约定 |
-| Docs | 是否需要更新 README、architecture、commands 或 CONTEXT.md |
+| Docs | 是否需要更新活文档：README、architecture、commands、CONTEXT.md、pitfalls.md、AGENTS.md |
 
 **Spec**：报告 (a) prd 要求了但缺失或只做了一半的需求；(b) diff 里没被要求的行为（范围蔓延）；(c) 看着实现了但实现方式可疑的需求；(d) **逐条验收标准 → 对应的代码或测试证据**。每条发现引用 prd 的原文。
 

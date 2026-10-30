@@ -20,6 +20,13 @@
 
 <!-- 网页对话阶段已经确认的产品行为、技术方向、边界 -->
 
+## User Stories
+
+<!-- 从 Task Brief 原样带过来——prd.md 的 `## User Stories` 就是从这里来的。
+     少了一节，Phase 3 就得凭空补，Spec 轴也没法对。没有就写「无」。 -->
+
+-
+
 ## Context Pointers
 
 <!-- 让本地 Agent 优先阅读的文件、目录、已有相似实现 -->
@@ -50,6 +57,13 @@
 <!-- 希望 Agent 运行的测试、lint、typecheck、build 或手动验证 -->
 
 - [ ]
+
+## Testing Notes
+
+<!-- 从 Task Brief 原样带过来——prd.md 的 `## Testing Decisions` 就是从这里来的。
+     没有就写「无」。 -->
+
+-
 
 ## Risks
 

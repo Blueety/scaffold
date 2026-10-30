@@ -6,4 +6,4 @@
 # 临时跳过：git commit --no-verify
 # 手动全量检查：scripts/check-gates.sh
 #
-exec "$(git rev-parse --show-toplevel)/scripts/check-gates.sh" --staged
+exec "$(git -c core.quotepath=false rev-parse --show-toplevel)/scripts/check-gates.sh" --staged

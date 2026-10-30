@@ -55,7 +55,7 @@
 
 - 先只读分析，再动手。不要把分析和实现混在一轮里。
 - 在只读分析末尾声明档位（一行），等确认后再实施。
-- 计划保存到 `tasks/<日期>-<简述>/plan.md`（日期用当天 `YYYY-MM-DD`，简述用简短英文，如 `2026-08-09-todo-title-search/plan.md`）。
+- 计划保存到 `tasks/<日期>-<简述>/plan.md`（日期用当天 `YYYY-MM-DD`，简述用简短英文，如 `2026-08-09-todo-title-search/plan.md`）。**T1 可以省**——计划在对话里给出来就行，不必落盘；T2 / T3 必须落盘。
   计划包含：目标、涉及文件、实施步骤、验证命令、测试 seam、预估 diff 范围。
 - 保持 diff 最小，不重构无关代码。
 - 不引入新依赖，除非先说明理由并等待确认。
@@ -67,18 +67,18 @@
 - 修 bug 时：进入根因假设前，必须有一条已经实跑过、能对这个 bug 变红的命令（`skills/bug-fix/SKILL.md` 闸门 A）。
 - 写测试前：先书面列出要测的 seam 并等待确认。
 - 调试日志统一加 `[DEBUG-xxxx]` 前缀，提交前 grep 清干净。
-- 提交前闸门是**自动**的：`.githooks/pre-commit` 会跑 `scripts/check-gates.sh --staged`，检查 `[DEBUG-` 残留、`docs/architecture.md` 的模块表与实际目录是否对得上、`plan.md` 的档位/类型/闸门 A 字段、`journal.md` 的章节与验证结果、**T2 / T3 的 `review.md` 是否存在且填全**。被拦下就按提示补内容，**不要**用 `git commit --no-verify` 绕过。手动全量检查：`bash scripts/check-gates.sh`。
+- 提交前闸门是**自动**的：`.githooks/pre-commit` 会跑 `scripts/check-gates.sh --staged`，检查 `[DEBUG-` 残留、`docs/architecture.md` 的模块表与实际目录是否对得上、`plan.md` 的档位/类型/闸门 A 字段、`journal.md` 的章节与验证结果、切片文件的字段、**T2 / T3 的 `review.md` 是否存在且填全**。被拦下就按提示补内容，**不要**用 `git commit --no-verify` 绕过。手动全量检查：`bash scripts/check-gates.sh`。
 - 提交前审查：T0 不审；T1 自己审；**T2 / T3 必须派一个全新的子 agent 审**（只给它 `prd.md`、`plan.md`、diff、相关规范，**不给它会话历史**），产出 `tasks/<日期>-<简述>/review.md`。轮次上限 2，超了升级给人。
 - 收到审查意见后按 `skills/receiving-review/SKILL.md` 逐条处理：改 / 不改+理由 / 不接受+反证，**没有第四种**；不能静默跳过任何一条。
 - 验证通过后，运行 `git diff` 检查改动范围。
 - 任务结束后：可复用的规则追加到 `docs/pitfalls.md`；符合 ADR 三条准入条件的决策写进 `docs/adr/NNNN-slug.md`。
-- 任务结束后：日志写进 `tasks/<日期>-<简述>/journal.md`，内容包括目标、改动文件清单、验证结果、遇到的问题、下次注意什么、涉及的 ADR 编号、下一步、结束状态。
+- 任务结束后：日志写进 `tasks/<日期>-<简述>/journal.md`，内容包括目标、主要提交的 SHA、改动文件清单、验证结果、遇到的问题、下次注意什么、涉及的 ADR 编号、下一步、结束状态。
 
 ## Done Means
 
 - 验收标准已满足。
 - **声称完成前的四件事**都做了，或清楚标注未运行（见 `skills/pre-review/SKILL.md` 的「声称完成前」）：跑过相关测试 / 手动走过关键路径 / 跑过 lint 与 typecheck / 要改的文档已改。
-- `[DEBUG-` 无残留，一次性脚本已删（提交时 `scripts/check-gates.sh` 会自动验一遍）。
+- `[DEBUG-` 无残留（提交时 `scripts/check-gates.sh` 会自动验）；**一次性脚本已删**（这一条机器验不了，靠自己看）。
 - diff 已摘要。
 - **T2 / T3**：`review.md` 已按 `skills/receiving-review/SKILL.md` 处理完——每条发现都有归类，没有一条被静默跳过，「审查者明确未判断的」已列出。
 - 风险和后续工作已列出。
