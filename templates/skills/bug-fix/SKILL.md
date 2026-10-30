@@ -20,7 +20,7 @@ description: 诊断和修复 bug。核心是闸门 A——进入根因假设之�
 1. **失败的测试**，选一个能触达该 bug 的 seam：单元 / 集成 / e2e
 2. **curl / HTTP 脚本**打向正在运行的 dev server
 3. **CLI 调用**加固定输入，stdout 与已知良好快照 diff
-4. **无头浏览器脚本**（Playwright / Puppeteer）驱动 UI，断言 DOM / console / network
+4. **无头浏览器脚本**（Playwright / Puppeteer）驱动 UI，断言 DOM / console / network，**或截图基线的视觉回归**（样式 / 布局类 bug 通常只有这条能变红）
 5. **重放捕获的 trace**：把真实的网络请求 / payload / 事件日志存盘，单独喂进代码路径
 6. **一次性 harness**：只起系统的最小子集（单服务、mock 掉依赖），一次函数调用就能走到出 bug 的代码路径
 7. **属性 / fuzz 循环**：bug 是「有时输出错」就跑 1000 组随机输入找失败模式
