@@ -482,7 +482,7 @@ tasks/2026-08-04-add-login/
   03-ui.md          # 被谁挡: 02
 ```
 
-每个切片从 `tasks/_template/slice.md` 复制，字段（档位 / 优先级 / 完成后可以看到什么 / 完成标准 / 被谁挡 / 状态 / 主要提交）在模板里，`scripts/check-gates.sh` 会校验。
+每个切片从 `tasks/_template/slice.md` 复制，字段（档位 / 优先级 / 完成后可以看到什么 / 完成标准 / 文件范围 / 被谁挡 / 状态 / 主要提交）在模板里，`scripts/check-gates.sh` 会校验。
 
 拆分时守住三条：
 

@@ -305,6 +305,7 @@ slice_checks() {
 
     field_filled "$c" '完成后可以看到什么' || fail "$f: 「完成后可以看到什么」为空"
     field_filled "$c" '完成标准'           || fail "$f: 「完成标准」为空"
+    field_filled "$c" '文件范围'           || fail "$f: 「文件范围」为空"
     field_filled "$c" '被谁挡'             || fail "$f: 「被谁挡」为空（没有前置就写「无」）"
 
     local st
