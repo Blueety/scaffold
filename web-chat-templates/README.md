@@ -6,25 +6,28 @@
 
 ```
 1. 打开网页对话（GPT / Claude / Gemini）
-2. 自由讨论你的想法；技术栈用 tech-stack-decision、前端设计用 frontend-design 逐个定下来
-3. 准备好后，贴 Task Brief 提示词 → 拿到结构化输出（含 User Stories 和术语与决策）
+2. 自由讨论：project-kickoff 理需求 → tech-stack-decision 定技术栈
+   → frontend-design 定界面（技术栈之后；纯后端 / CLI 跳过）
+   → approach-comparison 按需比较方案
+3. 讨论清楚后，贴 Task Brief 提示词 → 拿到结构化输出（形状就是 task-brief.md）
 4. 压缩成 Task Handoff —— 删讨论过程，留术语和决策
-5. 复制到项目目录: tasks/<date>-<slug>/prd.md
-6. 交给本地 Agent（Claude Code / Codex / OpenCode）执行
+5. 存到临时位置（%TEMP% / /tmp）—— 这时项目还不存在
+6. 走 WORKFLOW.md 的 Phase 2：用 init 脚本搭项目
+7. Phase 3 开始时，把交接卡粘进 tasks/<日期>-<简述>/prd.md，交给本地 Agent
 ```
 
 第 4 步的压缩规则值得单独强调：**讨论过程可以删，术语、被排除的方案、刻意反常规的地方、看不见的约束这四类不能删**。它们之后会写进项目的 `CONTEXT.md` 和 `docs/adr/`，删了就永久丢了。
 
 ## 模板
 
-| 模板 | 什么时候用 |
-|---|---|
-| [project-kickoff.md](project-kickoff.md) | 第一次聊新项目：理清想法、需求、验收标准、边界、术语 |
-| [tech-stack-decision.md](tech-stack-decision.md) | 讨论和确定技术栈 |
-| [frontend-design.md](frontend-design.md) | 技术栈定下来后，讨论界面设计、视觉方向、组件库 |
-| [approach-comparison.md](approach-comparison.md) | 比较不同实现方案 |
-| [task-brief.md](task-brief.md) | 把讨论结果整理成结构化任务 |
-| [task-handoff.md](task-handoff.md) | 压缩成交接卡，交给本地 Agent |
+| 顺序 | 模板 | 什么时候用 |
+|---|---|---|
+| 1 | [project-kickoff.md](project-kickoff.md) | 第一次聊新项目：理清想法、需求、验收标准、边界、术语 |
+| 2 | [tech-stack-decision.md](tech-stack-decision.md) | 定技术栈。也可以直接在聊天里问，不必走模板 |
+| 3 | [frontend-design.md](frontend-design.md) | 定界面。**必须在技术栈之后**；纯后端 / CLI 跳过 |
+| 按需 | [approach-comparison.md](approach-comparison.md) | 某处有几个方案拿不准，随时插进来比一比 |
+| 4 | [task-brief.md](task-brief.md) | 讨论结束后，把结果整理成结构化任务（提示词的产物形状） |
+| 5 | [task-handoff.md](task-handoff.md) | 压缩成交接卡，交给本地 Agent |
 
 ## 在网页对话中使用的提示词
 
@@ -55,7 +58,7 @@ Phase 1 是**人**在写提示词，规则不如反例好照做。三对：
 三对的共同点：
 
 1. **窄** —— 一个行为、一个接口、一个版本。「研究一下 X」这种宽问题必定回垃圾，对应 `skills/research/SKILL.md` 的「一次只问一个窄问题」
-2. **给具体值** —— 形容词没有信息量。本地 Agent 拿到「简洁大气」会自己发挥，结果就是它最熟悉的默认长相。对应 `WORKFLOW.md` 的 Step 1.2c
+2. **给具体值** —— 形容词没有信息量。本地 Agent 拿到「简洁大气」会自己发挥，结果就是它最熟悉的默认长相。对应 `WORKFLOW.md` 的 Step 1.1「讨论中要定的两件事」
 3. **可判定** —— 写得出 Given/When/Then 或阈值，才说明想清楚了。写不出来的部分老实留进「未解决 / 雾区」，别伪装成需求
 
 拿到 Task Brief 后，压缩成 Task Handoff，再交给本地 Agent。
