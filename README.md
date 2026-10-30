@@ -56,6 +56,8 @@ my-project-name/
     │   └── SKILL.md       # Bug 修复流程（含闸门 A / B）
     ├── pre-review/
     │   └── SKILL.md       # 提交前双轴审查
+    ├── receiving-review/
+    │   └── SKILL.md       # 处理审查意见（防表演式附和 / 盲从）
     ├── refactor/
     │   └── SKILL.md       # 重构：先造行为安全网，再改结构
     ├── research/

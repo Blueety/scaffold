@@ -49,6 +49,7 @@ scripts/              闸门检查器（check-gates.sh）
 - 写测试走 `skills/tdd/SKILL.md`：先书面列 seam 并确认，再动手。
 - 重构走 `skills/refactor/SKILL.md`：先造行为安全网，再改结构；行为一变就不是重构。
 - 提交前走 `skills/pre-review/SKILL.md`：Standards / Spec 两轴分开报告。
+- 收到审查意见走 `skills/receiving-review/SKILL.md`：每条发现落到「改 / 不改 + 理由 / 不接受 + 反证」，改完重跑验证。
 - 提交时闸门自动跑：`.githooks/pre-commit` 调 `scripts/check-gates.sh`，检查 `[DEBUG-` 残留、`plan.md` 的档位/类型/闸门 A 字段、`journal.md` 的章节与验证结果。手动全量：`bash scripts/check-gates.sh`；临时绕过：`git commit --no-verify`（别习惯性用）。
   clone 到新机器后要跑一次 `git config core.hooksPath .githooks`——这个设置在 `.git/config` 里，不随仓库走。
 - 要查外部一手事实走 `skills/research/SKILL.md`：派后台子 agent，产出带引用的 `tasks/<日期>-<简述>/research/<slug>.md`；结论进 `CONTEXT.md` / `docs/adr/`，文件本身过期即删。

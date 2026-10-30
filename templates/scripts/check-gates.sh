@@ -237,7 +237,7 @@ check_journal() {
 journal_checks() {
     local f="$1" c="$2" sec missing=0
 
-    for sec in '目标' '主要提交' '改动文件清单' '验证结果' '遇到的问题' '下次注意什么' '涉及的 ADR' '下一步'; do
+    for sec in '目标' '主要提交' '改动文件清单' '验证结果' '遇到的问题' '下次注意什么' '涉及的 ADR' '下一步' '结束状态'; do
         if ! grep -q "^## ${sec}" "$c"; then
             fail "$f: 缺「## ${sec}」一节"
             missing=$((missing + 1))
@@ -265,6 +265,11 @@ journal_checks() {
     fi
     if printf '%s' "$changed" | grep -q 'src/\.\.\.'; then
         fail "$f: 「## 改动文件清单」还留着模板占位符 src/..."
+    fi
+
+    # 结束状态必须四选一（跨会话接手时靠它决定继续做还是先解决问题）
+    if ! md_section "$c" '结束状态' | grep -qE '\b(DONE_WITH_CONCERNS|DONE|BLOCKED|NEEDS_CONTEXT)\b'; then
+        fail "$f: 「## 结束状态」必须是 DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT 之一"
     fi
 }
 
