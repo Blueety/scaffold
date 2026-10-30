@@ -13,7 +13,8 @@
 # Phase B (end to end, skipped with -SkipEndToEnd):
 #   - run init.sh and init.ps1 into two temp directories
 #   - each output tree equals the documented tree
-#   - both outputs are identical to each other
+#   - both outputs are identical to each other, byte for byte
+#   - every output file is byte-identical to its template with {{PROJECT_NAME}} replaced
 #   - no {{PROJECT_NAME}} placeholder survives, and .git was created
 #
 # The source stays pure ASCII on purpose: Windows PowerShell 5.1 reads a BOM-less
@@ -126,6 +127,91 @@ function Compare-Set([string]$Label, $Expected, $Actual) {
     Fail $Label
     foreach ($m in $missing) { Write-Host "         missing: $m" -ForegroundColor Red }
     foreach ($e in $extra)   { Write-Host "         extra:   $e" -ForegroundColor Red }
+}
+
+function Report-Diffs([string]$Label, $Diffs, [string]$Unit) {
+    if ($Diffs.Count -eq 0) {
+        Write-Host "  ok   $Label ($Unit, byte-identical)" -ForegroundColor Green
+        return
+    }
+    Fail "$Label - $($Diffs.Count) $Unit differ"
+    foreach ($d in ($Diffs | Select-Object -First 10)) { Write-Host "         $d" -ForegroundColor Red }
+    if ($Diffs.Count -gt 10) { Write-Host "         ... and $($Diffs.Count - 10) more" -ForegroundColor Red }
+}
+
+function Get-Sha256([string]$Path) {
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+}
+
+# Byte-for-byte comparison of two generated trees. Compare-Set only checks the file
+# NAMES, so a divergence in content (an extra newline, a different encoding, a
+# substitution that only one script performs) used to pass the self-check silently.
+function Compare-Content([string]$Label, [string]$DirA, [string]$DirB, $Files) {
+    $diffs = @()
+    foreach ($rel in ($Files | Sort-Object)) {
+        $a = Join-Path $DirA ($rel -replace '/', '\')
+        $b = Join-Path $DirB ($rel -replace '/', '\')
+        if (-not (Test-Path -LiteralPath $a) -or -not (Test-Path -LiteralPath $b)) {
+            $diffs += "$rel (missing on one side)"
+            continue
+        }
+        if ((Get-Sha256 $a) -ne (Get-Sha256 $b)) {
+            $diffs += ('{0} (A={1}B B={2}B)' -f $rel,
+                       (Get-Item -LiteralPath $a).Length, (Get-Item -LiteralPath $b).Length)
+        }
+    }
+    Report-Diffs $Label $diffs "$($Files.Count) files"
+}
+
+# Same, but the expected bytes are the template with {{PROJECT_NAME}} replaced.
+# This catches anything the copy step does to a file that is not the placeholder:
+# CRLF folding, encoding damage, a stray byte appended by one of the scripts.
+function Get-TemplateBytes([string]$Path, [string]$Name) {
+    $bytes  = [System.IO.File]::ReadAllBytes($Path)
+    $needle = [System.Text.Encoding]::UTF8.GetBytes('{{PROJECT_NAME}}')
+    $repl   = [System.Text.Encoding]::UTF8.GetBytes($Name)
+    $out    = New-Object 'System.Collections.Generic.List[byte]'
+    $i = 0
+    while ($i -lt $bytes.Length) {
+        $hit = $false
+        if ($i + $needle.Length -le $bytes.Length) {
+            $hit = $true
+            for ($j = 0; $j -lt $needle.Length; $j++) {
+                if ($bytes[$i + $j] -ne $needle[$j]) { $hit = $false; break }
+            }
+        }
+        if ($hit) {
+            foreach ($b in $repl) { [void]$out.Add($b) }
+            $i += $needle.Length
+        }
+        else {
+            [void]$out.Add($bytes[$i]); $i++
+        }
+    }
+    return ,$out.ToArray()
+}
+
+function Compare-TemplateContent([string]$Label, [string]$TemplateRoot, [string]$ProjectDir,
+                                 [string]$Name, $Files) {
+    $diffs = @()
+    foreach ($rel in ($Files | Sort-Object)) {
+        $tpl = Join-Path $TemplateRoot ($rel -replace '/', '\')
+        $gen = Join-Path $ProjectDir  ($rel -replace '/', '\')
+        if (-not (Test-Path -LiteralPath $gen)) { $diffs += "$rel (not generated)"; continue }
+        $want = Get-TemplateBytes $tpl $Name
+        $got  = [System.IO.File]::ReadAllBytes($gen)
+        if ($want.Length -ne $got.Length) {
+            $diffs += ('{0} (template-with-name={1}B generated={2}B)' -f $rel, $want.Length, $got.Length)
+            continue
+        }
+        for ($k = 0; $k -lt $want.Length; $k++) {
+            if ($want[$k] -ne $got[$k]) {
+                $diffs += ('{0} (first differing byte at offset {1})' -f $rel, $k)
+                break
+            }
+        }
+    }
+    Report-Diffs $Label $diffs "$($Files.Count) files"
 }
 
 function Find-Bash {
@@ -244,6 +330,10 @@ if (-not $SkipEndToEnd) {
             $ps = Get-RelativeTree (Join-Path $tmpPs $ProbeName)
             Compare-Set 'init.sh vs init.ps1 files' $sh.Files $ps.Files
             Compare-Set 'init.sh vs init.ps1 dirs ' $sh.Dirs  $ps.Dirs
+            Compare-Content 'init.sh vs init.ps1 content' `
+                (Join-Path $tmpSh $ProbeName) (Join-Path $tmpPs $ProbeName) $sh.Files
+            Compare-TemplateContent 'templates/ vs init.sh output' `
+                $TemplateDir (Join-Path $tmpSh $ProbeName) $ProbeName $tplTree.Files
         }
         finally {
             Remove-Item -LiteralPath $tmpSh, $tmpPs -Recurse -Force -ErrorAction SilentlyContinue

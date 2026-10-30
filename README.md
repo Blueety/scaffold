@@ -91,7 +91,9 @@ git config core.hooksPath .githooks
 powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
 ```
 
-它校验三样东西一致：`README.md` 里那棵树、`templates/` 的实际内容、`init.sh` / `init.ps1` 实际生成的结果。同时断言"全仓库只有一棵树"——`WORKFLOW.md` 只留指针，所以模板变更只需改一处。
+它校验四样东西一致：`README.md` 里那棵树、`templates/` 的实际内容、`init.sh` / `init.ps1` 实际生成的结果，以及**两个脚本产出的文件逐字节相同**（并断言每个产物与其模板「把占位符换成项目名」后逐字节相同）。同时断言"全仓库只有一棵树"——`WORKFLOW.md` 只留指针，所以模板变更只需改一处。
+
+只比文件名集合是不够的：一个多写的换行、一次编码损坏、只有一边做了的替换，都能让两个脚本产出不同的项目而文件名完全一致。这类差异靠 SHA256 逐文件比。
 
 - `-SkipEndToEnd`：只跑前半段（纯文件系统对比，毫秒级）
 - `-BashPath <path>`：Git Bash 不在常见位置时手动指定
