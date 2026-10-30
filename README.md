@@ -35,7 +35,7 @@ my-project-name/
 ├── .githooks/
 │   └── pre-commit         # 提交前调 check-gates.sh
 ├── docs/
-│   ├── architecture.md    # 架构说明
+│   ├── architecture.md    # 架构说明（活文档：模块/接口/数据模型/数据流）
 │   ├── commands.md        # 命令说明
 │   ├── pitfalls.md        # 易错点记录
 │   ├── adr/
@@ -43,7 +43,7 @@ my-project-name/
 │   └── agents/
 │       ├── 架构师.md       # 架构师角色提示词
 │       ├── 执行者.md       # 执行者角色提示词
-│       └── 任务分级.md      # 档位判定：6 条信号 + 3 条升级规则
+│       └── 任务分级.md      # 档位判定：6 条信号 + 4 条升级规则
 ├── tasks/
 │   ├── README.md          # 任务目录说明
 │   └── _template/         # 任务模板
