@@ -50,6 +50,7 @@ my-project-name/
 │       ├── prd.md
 │       ├── plan.md
 │       ├── journal.md
+│       ├── review.md      # 审查裁决单（T2 / T3 必填）
 │       └── slice.md       # 大需求拆切片时用（也承载决策条目）
 └── skills/
     ├── bug-fix/

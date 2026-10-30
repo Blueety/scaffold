@@ -8,17 +8,20 @@
 tasks/<日期>-<简述>/
   prd.md          需求文档
   plan.md         实施计划
+  review.md       审查裁决单（只有 T2 / T3 需要）
   journal.md      执行日志
 ```
 
 ## 模板目录
 
-`tasks/_template/` 里有四个空白模板。新建任务时从这里复制：
+`tasks/_template/` 里有五个空白模板。新建任务时从这里复制：
 
 ```bash
 cp tasks/_template/prd.md tasks/2026-08-04-add-login/prd.md
 cp tasks/_template/plan.md tasks/2026-08-04-add-login/plan.md
 cp tasks/_template/journal.md tasks/2026-08-04-add-login/journal.md
+# 档位是 T2 / T3 时必须（审查由独立子 agent 做，见 docs/agents/任务分级.md）
+cp tasks/_template/review.md tasks/2026-08-04-add-login/review.md
 # 只有需要拆成多个切片时才用（见下）
 cp tasks/_template/slice.md tasks/2026-08-04-add-login/01-schema.md
 ```

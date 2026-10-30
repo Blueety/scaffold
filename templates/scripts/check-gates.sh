@@ -14,6 +14,8 @@
 #   - journal.md：章节齐全、主要提交已回填、验证结果有内容且不写「应该可以」、改动清单已填
 #   - NN-*.md（切片）：类型与状态取值合法、演示与完成标准非空、被谁挡已填、
 #                      状态 completed 时必须回填主要提交
+#   - review.md（裁决单）：档位是 T2 / T3 时必须存在；章节齐全、固定点已填、
+#                          逐条处理表非空、「审查者明确未判断的」不许留空
 #   - 架构：docs/architecture.md 的模块表 vs 实际模块目录（双向，模块根默认 src）
 #
 # 不覆盖（判断性内容，留在 skills/ 里由人确认）：
@@ -136,6 +138,38 @@ check_gate_b() {
             printf '  [x] 闸门 B: %s —— 调试标记残留\n' "$line"
         done
         violations=$((violations + $(printf '%s\n' "$hits" | wc -l)))
+    fi
+}
+
+# review.md（裁决单）：只有 T2 / T3 需要。先剥注释（理由同 check_plan）——
+# 模板里那几段说明文字如果被当成内容，一个没填的裁决单会通过。
+check_review() {
+    local d="$1" f="$d/review.md" clean
+    if [ ! -f "$f" ]; then
+        fail "$d/plan.md: 档位是 T2/T3，但缺 $f（这两档的审查必须由独立子 agent 做，见 docs/agents/任务分级.md）"
+        return
+    fi
+    clean="$(mktemp)"
+    strip_comments < "$f" > "$clean"
+    review_checks "$f" "$clean"
+    rm -f "$clean"
+}
+
+review_checks() {
+    local f="$1" c="$2"
+
+    for sec in '审查范围' '审查者原文' '逐条处理' '审查者明确未判断的' '结论'; do
+        if ! grep -q "^## ${sec}" "$c"; then
+            fail "$f: 缺「## ${sec}」一节"
+        fi
+    done
+
+    field_filled "$c" '固定点' || fail "$f: 「固定点」为空"
+    if [ "$(table_rows "$(md_section "$c" '逐条处理')" 1)" -eq 0 ]; then
+        fail "$f: 「## 逐条处理」表里没有任何条目"
+    fi
+    if [ -z "$(md_section "$c" '审查者明确未判断的' | tr -d '[:space:]')" ]; then
+        fail "$f: 「## 审查者明确未判断的」留空了（一条都没有就写「无」）——把「没判断」显式化，人才能看出盲区在哪"
     fi
 }
 
@@ -511,6 +545,14 @@ main() {
             printf '%s\n' "检查 $d/plan.md"
             check_plan "$d/plan.md"
             any=1
+            # T2 / T3 的审查必须换人做，产出裁决单（见 docs/agents/任务分级.md）
+            local pclean
+            pclean="$(mktemp)"
+            strip_comments < "$d/plan.md" > "$pclean"
+            case "$(md_token "$pclean" '档位')" in
+                T2*|T3*) check_review "$d" ;;
+            esac
+            rm -f "$pclean"
         fi
         if [ -f "$d/journal.md" ]; then
             printf '%s\n' "检查 $d/journal.md"
