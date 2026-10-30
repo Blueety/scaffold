@@ -2,7 +2,7 @@
 name: pre-review
 description: 提交或请求人工审查前使用。对固定点以来的 diff 做双轴只读审查：Standards（是否符合仓库规范和坏味道基线）与 Spec（是否忠实实现 prd）。两轴分别报告，不合并。
 # allowed-tools 是 harness 的机制（限制这个 skill 能调用哪些工具），不是文档约定。
-# 这一行是刻意的：审查必须只读。其余五个 skill 都没有这一行，因为它们本来就要写文件、
+# 这一行是刻意的：审查必须只读。其余六个 skill 都没有这一行，因为它们本来就要写文件、
 # 跑命令——照抄过来会把它们锁死。
 # 需要更细的粒度时用 scoped 语法限定参数，例如 Bash(git diff:*)。
 allowed-tools: Read, Grep, Glob

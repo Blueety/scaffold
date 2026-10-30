@@ -12,7 +12,7 @@
 #   - plan.md：档位与类型已声明、关键字段非空、确认清单全勾、
 #              bug 任务的闸门 A 字段、bug-不可复现 必须声明 T3
 #   - prd.md：验收标准非空；档位行填了就必须合法（不强制存在）
-#   - journal.md：章节齐全、结束状态合法、验证结果有内容且不写「应该可以」、改动清单已填、
+#   - journal.md：章节齐全（含雾区变化 / 一致性走查）、结束状态合法、验证结果有内容且不写「应该可以」、改动清单已填、
 #                 结束状态是 DONE / DONE_WITH_CONCERNS 时「主要提交」必须回填
 #   - NN-*.md（切片）：类型与状态取值合法、档位与优先级取值合法、演示与完成标准非空、
 #                      文件范围与被谁挡已填、状态 completed 时必须回填主要提交
@@ -20,6 +20,7 @@
 #                          不依赖 plan.md 是否存在）；章节齐全、固定点已填、
 #                          逐条处理表非空、「审查者明确未判断的」不许留空
 #   - 架构：docs/architecture.md 的模块表 vs 实际模块目录（双向，模块根默认 src）
+#          表里全是宽声明（模块根本身或它的祖先）时，全量自查会提示一句：新增子目录不会被检查
 #
 # 不覆盖（判断性内容，留在 skills/ 里由人确认）：
 #   双轴不合并、一次性脚本是否真删干净、命令是否真跑过、
@@ -33,6 +34,10 @@ set -u
 violations=0
 
 fail() { printf '  [x] %s\n' "$*"; violations=$((violations + 1)); }
+
+# 提示，不是失败：计入输出，不影响退出码。用于「检查器当前覆盖不到」这类
+# 需要人知道、但项目现状本身没错的情况。
+note() { printf '  [!] %s\n' "$*"; }
 
 # 用法说明就是文件头那段，用哨兵行圈出来 —— 写死行号会在加注释时漂移。
 usage() {
@@ -335,7 +340,7 @@ check_journal() {
 journal_checks() {
     local f="$1" c="$2" sec missing=0
 
-    for sec in '目标' '主要提交' '改动文件清单' '验证结果' '遇到的问题' '下次注意什么' '涉及的 ADR' '下一步' '结束状态'; do
+    for sec in '目标' '主要提交' '改动文件清单' '验证结果' '遇到的问题' '下次注意什么' '涉及的 ADR' '下一步' '雾区变化' '一致性走查' '结束状态'; do
         if ! grep -q "^## ${sec}" "$c"; then
             fail "$f: 缺「## ${sec}」一节"
             missing=$((missing + 1))
@@ -531,6 +536,23 @@ check_architecture() {
         [ "$covered" -eq 1 ] \
             || fail "「$d」是 $MODULE_ROOT 下的模块目录，但 docs/architecture.md 的模块表里没有它"
     done < <(arch_module_dirs "$root")
+
+    # 提示（不是失败）：表里全是宽声明时，规则 2 永远不触发——新增模块目录不会被检查。
+    # 只在全量自查时报；--staged 每次提交都跑，不适合反复提示。
+    if [ "$staged" -eq 0 ]; then
+        local specific=0
+        while IFS= read -r p; do
+            [ -n "$p" ] || continue
+            p="${p%/}"          # `src/` 与 `src` 是同一种声明，先去掉尾斜杠
+            case "$p" in
+                "$MODULE_ROOT"/*) specific=1; break ;;
+            esac
+        done <<< "$declared"
+        if [ "$specific" -eq 0 ]; then
+            note "模块表只声明了宽路径（$MODULE_ROOT 本身或它的祖先），所以「$MODULE_ROOT 下新增子目录」这条检查当前不会触发。"
+            note "项目长大之后，把表拆成具体子模块（如 $MODULE_ROOT/auth、$MODULE_ROOT/billing），让这条检查生效。"
+        fi
+    fi
 }
 
 # ---------------------------------------------------------------- 主流程

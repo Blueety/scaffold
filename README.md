@@ -59,6 +59,8 @@ my-project-name/
     │   └── SKILL.md       # 提交前双轴审查
     ├── receiving-review/
     │   └── SKILL.md       # 处理审查意见（防表演式附和 / 盲从）
+    ├── self-audit/
+    │   └── SKILL.md       # 一致性走查（活文档 vs 现实）
     ├── refactor/
     │   └── SKILL.md       # 重构：先造行为安全网，再改结构
     ├── research/

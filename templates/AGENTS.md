@@ -23,6 +23,7 @@
 - 提交前审查：`skills/pre-review/SKILL.md`（T2 / T3 必须派**独立子 agent** 执行）。
 - 处理审查意见：`skills/receiving-review/SKILL.md`（每条发现落到「改 / 不改+理由 / 不接受+反证」）。
 - 外部一手事实挡住决策时：`skills/research/SKILL.md`（派后台子 agent，只认官方文档 / 源码 / 规范，落一份带引用的 md）。
+- 长期项目的定期走查：`skills/self-audit/SKILL.md`（T3 任务结束 / 每 10 个任务 / 用户说「查一下」时做，逐条实跑活文档）。
 
 ## Commands
 

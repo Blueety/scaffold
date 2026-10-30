@@ -224,6 +224,7 @@ Agent 会读你的配置文件，写出**实际命令**，不是猜的。
 | `bug-fix` | 修 bug。核心是闸门 A：进入根因假设前必须先有一条能对**这个** bug 变红的命令 |
 | `pre-review` | 提交前审查。Standards / Spec 双轴，分开报告不合并。**T2 / T3 由独立子 agent 执行**，产出 `review.md` |
 | `receiving-review` | 处理审查意见。每条发现落到「改 / 不改+理由 / 不接受+反证」，没有第四种 |
+| `self-audit` | **一致性走查**：逐条实跑活文档里写的东西，看和仓库现实还对得上吗。触发：T3 任务结束 / 每 10 个任务 / 你说「查一下」 |
 | `tdd` | 写测试。写之前先书面列出 seam 并确认 |
 | `refactor` | 重构（行为不变只改结构）。核心是先造行为安全网；行为一变就不是重构，转 bug-fix |
 | `research` | 外部一手事实挡路（第三方 API / 规范原文 / 版本声明）。派后台子 agent，产出带引用的 md；结论进 `CONTEXT.md` / ADR，文件本身过期即删 |
@@ -529,6 +530,8 @@ git commit -m "feat: 添加 XXX 功能"
 4. Agent 实现 → 跑检查（含 docs/commands.md）→ 过闸门 B（清理）
 5. 审 diff —— T1 自审；**T2 / T3 派独立子 agent 审，产出 `review.md`** → 你读裁决单
 6. commit → 记录经验（pitfalls / ADR）→ 写 journal.md
+7. 到了走查触发条件就做一次（T3 任务结束 / 每 10 个任务 / 你说「查一下」）：
+   按 skills/self-audit/SKILL.md 逐条实跑活文档，产出不一致清单 → 结论写回 journal.md
 ```
 
 ### 无人值守 / 自动循环
