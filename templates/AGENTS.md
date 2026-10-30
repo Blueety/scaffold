@@ -80,4 +80,5 @@
 - **声称完成前的四件事**都做了，或清楚标注未运行（见 `skills/pre-review/SKILL.md` 的「声称完成前」）：跑过相关测试 / 手动走过关键路径 / 跑过 lint 与 typecheck / 要改的文档已改。
 - `[DEBUG-` 无残留，一次性脚本已删（提交时 `scripts/check-gates.sh` 会自动验一遍）。
 - diff 已摘要。
+- **T2 / T3**：`review.md` 已按 `skills/receiving-review/SKILL.md` 处理完——每条发现都有归类，没有一条被静默跳过，「审查者明确未判断的」已列出。
 - 风险和后续工作已列出。
