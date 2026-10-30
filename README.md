@@ -31,7 +31,7 @@ my-project-name/
 ├── .gitattributes         # 锁 LF（脚本与钩子在 Linux/macOS 上必须无 CRLF）
 ├── src/                   # 源代码目录（空）
 ├── scripts/
-│   └── check-gates.sh     # 闸门检查器（plan / journal / 切片 / [DEBUG- 残留）
+│   └── check-gates.sh     # 闸门检查器（plan / journal / 切片 / 架构 / [DEBUG- 残留）
 ├── .githooks/
 │   └── pre-commit         # 提交前调 check-gates.sh
 ├── docs/

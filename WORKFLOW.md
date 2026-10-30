@@ -505,7 +505,7 @@ tasks/2026-08-04-add-login/
 | 模式 | 是什么 | 本流程里有哪些 | 怎么对待 |
 |---|---|---|---|
 | **快照**（Spec-first） | 写下当时的决定，之后不再改。价值是「当时怎么想的」 | `tasks/<日期>-<简述>/` 下的 `prd.md`、`plan.md`、`journal.md`、`research/*.md` | 任务结束即冻结。**过期不是缺陷**，不要去「修」它 |
-| **活文档**（Spec-anchored） | 必须和代码一致，不一致就是 bug | `docs/architecture.md`、`CONTEXT.md`、`docs/commands.md`、`docs/pitfalls.md`、`AGENTS.md` | 改动时同步更新。`pre-review` 的 Docs 维度会查 |
+| **活文档**（Spec-anchored） | 必须和代码一致，不一致就是 bug | `docs/architecture.md`、`CONTEXT.md`、`docs/commands.md`、`docs/pitfalls.md`、`AGENTS.md` | 改动时同步更新。`pre-review` 的 Docs 维度会查；`architecture.md` 的模块表还有 `check-gates.sh` 自动双向比对 |
 
 判断标准一句话：**这份文档过期了会不会误导人？** 会 → 活文档；不会（它就是某次任务的历史记录）→ 快照。
 

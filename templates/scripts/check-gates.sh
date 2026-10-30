@@ -14,6 +14,7 @@
 #   - journal.md：章节齐全、主要提交已回填、验证结果有内容且不写「应该可以」、改动清单已填
 #   - NN-*.md（切片）：类型与状态取值合法、演示与完成标准非空、被谁挡已填、
 #                      状态 completed 时必须回填主要提交
+#   - 架构：docs/architecture.md 的模块表 vs 实际模块目录（双向，模块根默认 src）
 #
 # 不覆盖（判断性内容，留在 skills/ 里由人确认）：
 #   双轴不合并、一次性脚本是否真删干净、命令是否真跑过。
@@ -330,6 +331,94 @@ slice_checks() {
     fi
 }
 
+# ---------------------------------------------------------------- 架构
+
+# 模块根：这个目录的直接子目录就是模块。项目布局不同时改这里，
+# 或用环境变量覆盖：MODULE_ROOT=app bash scripts/check-gates.sh
+MODULE_ROOT="${MODULE_ROOT:-src}"
+
+# `## 模块划分` 表第 2 列声明的路径，去掉反引号与尾斜杠。
+declared_module_paths() {
+    md_section "$1" '模块划分' | awk -F'|' '
+        /^[[:space:]]*\|/ {
+            p = $3
+            gsub(/`/, "", p)
+            sub(/^[[:space:]]+/, "", p); sub(/[[:space:]]+$/, "", p)
+            sub(/\/+$/, "", p)
+            if (p == "" || p == "路径" || p ~ /^-+$/) next
+            print p
+        }' | sort -u
+}
+
+# 目录与路径一律以**工作区**为准，不取索引：索引里没有「空目录」这个概念，
+# 而 src/ 恰恰是空的 —— 只看索引会在首次提交时误报「src 不存在」。
+# 表的内容则取索引版本（见 check_architecture）。
+arch_module_dirs() {
+    ( cd "$1" 2>/dev/null || exit 0
+      [ -d "$MODULE_ROOT" ] || exit 0
+      find "$MODULE_ROOT" -mindepth 1 -maxdepth 1 -type d | sort -u )
+}
+
+arch_path_exists() { [ -e "$1/$2" ]; }
+
+# 模块表 vs 实际目录，双向比对。防两件事：模块被改名 / 移动 / 删除而表没跟着改，
+# 以及新加了模块目录却没进表。
+#
+# 覆盖语义：声明的路径覆盖它自己、它的祖先和它的后代。所以表里写 `src` 等于
+# 「整个 src 当一个模块」，子目录不再逐个要求；写具体子目录，则新加的子目录必须进表。
+check_architecture() {
+    local staged="$1" root="$2"
+    local doc="docs/architecture.md"
+
+    if [ "$staged" -eq 1 ]; then
+        # 暂存模式下 cwd 是索引物化出的临时树，只含这次改动的文件；
+        # 表不在这次改动里时，单独从索引取出来。
+        doc="$check_tree_tmp/docs/architecture.md"
+        if [ ! -f "$doc" ]; then
+            mkdir -p "$check_tree_tmp/docs"
+            # 索引里有就用索引版本（这样「暂存了坏表」会被拦住）；
+            # 索引里没有（例如还没 commit 过、又没 add 这个文件）就退回工作区版本。
+            git -C "$root" show ':docs/architecture.md' > "$doc" 2>/dev/null \
+                || cp "$root/docs/architecture.md" "$doc" 2>/dev/null \
+                || rm -f "$doc"
+        fi
+    fi
+
+    if [ ! -f "$doc" ]; then
+        fail "docs/architecture.md 不存在"
+        return
+    fi
+
+    local declared
+    declared="$(declared_module_paths "$doc")"
+    if [ -z "$declared" ]; then
+        fail "docs/architecture.md 的「## 模块划分」表里没有声明任何模块"
+        return
+    fi
+
+    # 规则 1：声明的路径必须真实存在
+    local p
+    while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        arch_path_exists "$root" "$p" \
+            || fail "docs/architecture.md 声明了模块「$p」，但它不存在"
+    done <<< "$declared"
+
+    # 规则 2：$MODULE_ROOT 下的直接子目录必须被某个声明覆盖
+    local d covered q
+    while IFS= read -r d; do
+        [ -n "$d" ] || continue
+        covered=0
+        while IFS= read -r q; do
+            [ -n "$q" ] || continue
+            case "$q/" in "$d/"*) covered=1; break ;; esac
+            case "$d/" in "$q/"*) covered=1; break ;; esac
+        done <<< "$declared"
+        [ "$covered" -eq 1 ] \
+            || fail "「$d」是 $MODULE_ROOT 下的模块目录，但 docs/architecture.md 的模块表里没有它"
+    done < <(arch_module_dirs "$root")
+}
+
 # ---------------------------------------------------------------- 主流程
 
 main() {
@@ -372,6 +461,9 @@ main() {
 
     # 闸门 B：cwd 就是检查范围
     check_gate_b
+
+    # 架构：模块表 vs 实际目录。仓库状态不变量，两种模式都跑
+    check_architecture "$staged" "$root"
 
     # 要检查哪些任务目录
     local dirs=()
