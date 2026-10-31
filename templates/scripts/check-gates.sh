@@ -10,19 +10,26 @@
 #   scripts/check-gates.sh tasks/2026-08-04-add-login [...]
 #
 # 覆盖：
-#   - 闸门 B：非 .md 文件里没有 [DEBUG- 残留（大小写不敏感；.md 是文档，会引用这个约定）
-#   - plan.md：档位与类型已声明、关键字段非空、确认清单全勾、
-#              bug 任务的闸门 A 字段、bug-不可复现 必须声明 T3
-#   - prd.md：验收标准非空；档位行填了就必须合法（不强制存在）
-#   - journal.md：章节齐全（含雾区变化 / 一致性走查）、结束状态合法、验证结果有内容且不写「应该可以」、改动清单已填、
+#   - 闸门 B：非 .md 文件里没有 [DEBUG- 残留（大小写不敏感；.md 是文档，会引用这个约定）。
+#              排除 scripts/check-gates.sh 自身、node_modules/、二进制文件；
+#              全量模式还排除 .gitignore 命中的本地文件（那是数据不是代码）
+#   - plan.md：档位与类型已声明、相关文件 / 验证命令非空、步骤表非空、确认清单全勾、
+#              没有残留模板提示「（从 prd.md 提取）」、测试 Seam 四行要么全填要么全空、
+#              bug 任务的闸门 A 字段（含 ≥3 条排序假设）、bug-不可复现 必须声明 T3
+#   - prd.md：验收标准非空且有条目；档位行填了就必须合法（不强制存在）
+#   - journal.md：章节齐全（含雾区变化 / 一致性走查）、结束状态合法、验证结果有内容且不写「应该可以」、
+#                 改动清单已填且没留模板占位符 src/...、
 #                 结束状态是 DONE / DONE_WITH_CONCERNS 时「主要提交」必须回填
 #   - NN-*.md（切片）：类型与状态取值合法、档位与优先级取值合法、演示与完成标准非空、
-#                      文件范围与被谁挡已填、状态 completed 时必须回填主要提交
-#   - review.md（裁决单）：任务档位是 T2 / T3 时必须存在（看 plan.md 与切片的声明，
-#                          不依赖 plan.md 是否存在）；章节齐全、固定点已填、
-#                          逐条处理表非空、「审查者明确未判断的」不许留空
-#   - 架构：docs/architecture.md 的模块表 vs 实际模块目录（双向，模块根默认 src）
-#          表里全是宽声明（模块根本身或它的祖先）时，全量自查会提示一句：新增子目录不会被检查
+#                      文件范围与被谁挡已填、确认清单全勾、状态 completed 时必须回填主要提交；
+#                      决策条目则要求问题 / 结论 / 依据三字段非空
+#   - review.md（裁决单）：任务档位是 T2 / T3 时必须存在——plan.md / prd.md / 切片里
+#                          **任何一处**声明了 T2/T3 就算，不依赖 plan.md 是否存在；
+#                          章节齐全、固定点已填、逐条处理表非空、「审查者明确未判断的」不许留空
+#   - 架构：docs/architecture.md 的模块表 vs 实际模块目录（双向，模块根默认 src）。
+#          表里全是宽声明（模块根本身或它的祖先）时，全量自查会提示一句：新增子目录不会被检查。
+#          git 不跟踪的目录（被 .gitignore 命中的、点目录）不算模块；模块根本身不查存在性
+#          （空目录进不了 git，clone 之后它会消失）
 #
 # 不覆盖（判断性内容，留在 skills/ 里由人确认）：
 #   双轴不合并、一次性脚本是否真删干净、命令是否真跑过、
@@ -68,10 +75,20 @@ check_gate_b() {
             ':(exclude)*.md' ':(exclude)*check-gates.sh' \
             ':(exclude)node_modules/*' ':(exclude)*/node_modules/*' 2>/dev/null || true)"
     else
-        hits="$(find . -type f \
-            ! -path './.git/*' ! -path '*/node_modules/*' \
-            ! -name '*.md' ! -name 'check-gates.sh' \
-            -exec grep -H -I -i -n '\[DEBUG-' {} + 2>/dev/null | sed 's|^\./||' || true)"
+        # 全量扫工作区。优先用 git：`--untracked --exclude-standard` = 已跟踪 +
+        # 未跟踪但**不含 .gitignore 命中的**。那些是本地数据/缓存，不是要提交的
+        # 代码，扫出 [DEBUG- 只会误报（全量自查常年红，人就开始无视它）。
+        # 不在 git 仓库里时退回 find。
+        if git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
+            hits="$(git -C "$root" grep --untracked --exclude-standard -I -i -n -e '\[DEBUG-' -- \
+                ':(exclude)*.md' ':(exclude)*check-gates.sh' \
+                ':(exclude)node_modules/*' ':(exclude)*/node_modules/*' 2>/dev/null || true)"
+        else
+            hits="$(find . -type f \
+                ! -path './.git/*' ! -path '*/node_modules/*' \
+                ! -name '*.md' ! -name 'check-gates.sh' \
+                -exec grep -H -I -i -n '\[DEBUG-' {} + 2>/dev/null | sed 's|^\./||' || true)"
+        fi
     fi
     if [ -n "$hits" ]; then
         printf '%s\n' "$hits" | while IFS= read -r line; do
@@ -111,12 +128,13 @@ check_review() {
     run_check review "$f"
 }
 
-# 任务档位是否落在 T2/T3：plan.md 与切片里任何一处声明了 T2/T3 就算。
-# 不能只看 plan.md——T1 的 plan 可省，而切片文件自己带档位。
+# 任务档位是否落在 T2/T3：plan.md / prd.md / 切片里任何一处声明了 T2/T3 就算。
+# 不能只看 plan.md——T1 的 plan 可省，而切片文件自己带档位；
+# prd.md 的档位行也是同一个字段，只写在那里时同样得认。
 task_is_high_tier() {
     local d="$1" f
     local files=()
-    for f in "$d/plan.md" "$d"/[0-9][0-9]-*.md; do
+    for f in "$d/plan.md" "$d/prd.md" "$d"/[0-9]*-*.md; do
         [ -f "$f" ] && files+=("$f")
     done
     [ "${#files[@]}" -gt 0 ] || return 1
@@ -139,10 +157,31 @@ declared_module_paths() {
 # 目录与路径一律以**工作区**为准，不取索引：索引里没有「空目录」这个概念，
 # 而 src/ 恰恰是空的 —— 只看索引会在首次提交时误报「src 不存在」。
 # 表的内容则取索引版本（见 check_architecture）。
+#
+# 但要排掉 git 根本不会跟踪的目录（.gitignore 命中的、点目录）：它们进不了索引，
+# 也不该进模块表 —— src/.cache 这种目录会让每次提交都失败，而写进表又会被规则 1
+# 判「声明了却不存在」，两头堵死。
 arch_module_dirs() {
-    ( cd "$1" 2>/dev/null || exit 0
-      [ -d "$MODULE_ROOT" ] || exit 0
-      find "$MODULE_ROOT" -mindepth 1 -maxdepth 1 -type d | sort -u )
+    local d ignored=""
+    local -a cand=()
+    while IFS= read -r d; do
+        [ -n "$d" ] || continue
+        case "${d##*/}" in .*) continue ;; esac        # 点目录不是模块
+        cand+=("$d")
+    done < <( cd "$1" 2>/dev/null && [ -d "$MODULE_ROOT" ] && \
+              find "$MODULE_ROOT" -mindepth 1 -maxdepth 1 -type d | sort -u )
+
+    [ "${#cand[@]}" -gt 0 ] || return 0
+
+    # 一次 check-ignore 把所有候选喂进去，它只吐被忽略的那些。
+    # 不在 git 仓库里时它整体失败 → ignored 为空 → 全都要查（退回旧行为）。
+    ignored="$(printf '%s\n' "${cand[@]}" \
+        | git -C "$1" -c core.quotepath=false check-ignore --stdin 2>/dev/null || true)"
+
+    for d in "${cand[@]}"; do
+        case $'\n'"$ignored"$'\n' in *$'\n'"$d"$'\n'*) continue ;; esac
+        printf '%s\n' "$d"
+    done
 }
 
 arch_path_exists() { [ -e "$1/$2" ]; }
@@ -179,10 +218,14 @@ check_architecture() {
         return
     fi
 
-    # 规则 1：声明的路径必须真实存在
+    # 规则 1：声明的路径必须真实存在。
+    # 例外：模块根本身（及它的祖先）不查 —— `src/` 是空目录，git 不跟踪空目录，
+    # clone 之后它就不在了，而 Phase 2 的模块表正要求写宽路径 `src`。
+    # 这条要是报错，新 clone 的仓库会卡到「所有提交都过不去」。
     local p
     while IFS= read -r p; do
         [ -n "$p" ] || continue
+        case "$MODULE_ROOT/" in "$p/"*) continue ;; esac
         arch_path_exists "$root" "$p" \
             || fail "docs/architecture.md 声明了模块「$p」，但它不存在"
     done <<< "$declared"
@@ -290,6 +333,8 @@ main() {
             if [ -d "$d" ]; then dirs+=("$d"); else fail "找不到任务目录: $d"; fi
         done
     elif [ "$staged" -eq 1 ]; then
+        # D 也要算：只删 review.md 的那次提交同样得查那个任务目录，
+        # 不然「T2/T3 必须有 review.md」在删除路径上是空的。
         while IFS= read -r p; do
             case "$p" in
                 # 归档过的任务在 tasks/_archive/<任务>/ 下，比在飞的深一层。
@@ -303,7 +348,7 @@ main() {
                     case "$d" in tasks/_template) continue ;; esac
                     dirs+=("$d") ;;
             esac
-        done < <(git -c core.quotepath=false -C "$root" diff --cached --name-only --diff-filter=ACMR 2>/dev/null)
+        done < <(git -c core.quotepath=false -C "$root" diff --cached --name-only --diff-filter=ACMRD 2>/dev/null)
     else
         for d in tasks/*/; do
             [ -d "$d" ] || continue
@@ -344,7 +389,7 @@ main() {
         fi
         # 切片 / 决策条目：NN-*.md（见 tasks/README.md）
         local s
-        for s in "$d"/[0-9][0-9]-*.md; do
+        for s in "$d"/[0-9]*-*.md; do
             [ -f "$s" ] || continue
             printf '%s\n' "检查 $s"
             check_slice "$s"

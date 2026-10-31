@@ -107,13 +107,16 @@ tasks/2026-08-04-add-login/
 任务 `结束状态` 是 `DONE` 且已经提交之后，把它移进 `tasks/_archive/`：
 
 ```bash
+mkdir -p tasks/_archive
 git mv tasks/2026-08-04-add-login tasks/_archive/
 git commit -m "chore: 归档 add-login"
 ```
 
+**先 `mkdir -p`**：目录不存在时 `git mv` 会把任务目录**改名成** `_archive`——文件被拍平到 `tasks/_archive/` 底下，任务名那层没了。更糟的是拍平之后 `tasks/_archive/` 会被全量自查当归档目录整个跳过，那些文件就再没有全量检查兜着了。
+
 **单独提交，别混进实现提交**——否则 `pre-review` 的 diff 里会多出一堆重命名，掩盖真正的改动。
 
-`tasks/` 只放**在飞的**任务。原因不是整洁，是成本：全量自查逐个任务目录扫，一个任务目录约 3 秒（本机），而 `tasks/` 只增不减——跑到第 100 个任务，全量自查就是分钟级。
+`tasks/` 只放**在飞的**任务。原因不是整洁，是成本：全量自查逐个任务目录扫，成本随目录数线性增长（本机 20 个目录约 6 秒），而 `tasks/` 只增不减。
 
 归档的语义：
 
@@ -121,7 +124,7 @@ git commit -m "chore: 归档 add-login"
 - **`--staged` 不跳过**：改到归档里的文件，照样按正常闸门查
 - 显式点名也照查：`sh scripts/check-gates.sh tasks/_archive/2026-08-04-add-login`
 
-`_archive/` 不用预建，第一次 `git mv` 会自己建出来。
+`_archive/` 自己不是一个任务目录，它下面的子目录才是——所以往它顶层直接放文件不会被当成任务。
 
 ## 命名规范
 

@@ -59,11 +59,13 @@ BEGIN {
     }
     gsub(/\t/, " ", line)
 
-    # 档位：plan.md 与切片里任何一处声明了 T2/T3 就算。
-    # 不能只看 plan.md —— T1 的 plan 可省，而切片文件自己带档位。
+    # 档位：plan.md / prd.md / 切片里**任何一处**声明了 T2/T3 就算。
+    # 不能只看第一条声明：同一文件里先写 T1、后面补一条 T3 也算；多个切片里
+    # 最后一个才是 T3 也算。只看第一条会让这类任务躲过 review.md 的强制检查。
+    # （awk 的变量是全局的，`awk plan.md 01-a.md` 一次进程跑多个文件——
+    #  所以这里不能有「找到就停」的状态，否则只有第一个文件会被看到。）
     if (kind == "tier") {
-        if (!tier_found && line ~ /^[[:space:]]*[-*][[:space:]]+\*\*/ && index(line, "档位") > 0) {
-            tier_found = 1
+        if (line ~ /^[[:space:]]*[-*][[:space:]]+\*\*/ && index(line, "档位") > 0) {
             if (token_of(field_value_of(line)) ~ /^T[23]/) high = 1
         }
         next
@@ -182,6 +184,16 @@ function field_block_text(lbl,   n, i, out) {
     return out
 }
 
+# 字段块**去掉字段行本身**之后的部分。要数条目时用这个：字段行自己也是
+# `- **…**`，混进去会被当成一条。
+function field_block_body(lbl,   n, i, out) {
+    n = field_block(lbl)
+    out = ""
+    for (i = 2; i <= n; i++) out = out (i > 2 ? "\n" : "") B[i]
+    sub(/\n+$/, "", out)
+    return out
+}
+
 # 字段是否有实质内容：同行冒号后非空，或后续块里去掉注释/空行/纯符号后还有东西。
 # 两种「看着有内容其实没有」的值也算空：
 #   - 空反引号：模板里的 `- **X**: \`\``
@@ -239,11 +251,13 @@ function count_listitems(text,   n, i, c) {
     return c
 }
 
-# `1. xxx`（排序假设用）
-function count_numbered(text,   n, i, c) {
+# 列表条目数：编号（`1. xxx`）和项目符号（`- xxx`）都算。
+# 排序假设那一栏只关心「写了几条」，不该因为用了项目符号就判成 0 条
+# ——prd.md 的「验收标准」两种都收，两处口径要一致。
+function count_items(text,   n, i, c) {
     n = split(text, ROWS, "\n"); c = 0
     for (i = 1; i <= n; i++)
-        if (ROWS[i] ~ /^[[:space:]]*[0-9]+\.[[:space:]]*[^[:space:]]/) c++
+        if (ROWS[i] ~ /^[[:space:]]*([0-9]+\.[[:space:]]*|[-*+][[:space:]]+)[^[:space:]]/) c++
     return c
 }
 
@@ -307,7 +321,7 @@ function plan_check(   tier, type, n, filled, hy) {
         if (!field_filled("能变红的命令")) V("闸门 A —— 「能变红的命令」为空")
         if (!field_filled("已实跑的输出")) V("闸门 A —— 「已实跑的输出」为空")
         if (!field_filled("是否已最小化")) V("闸门 A —— 「是否已最小化」为空")
-        hy = count_numbered(field_block_text("排序假设"))
+        hy = count_items(field_block_body("排序假设"))
         if (hy < 3) V("闸门 A —— 排序假设只有 " hy " 条（至少要 3 条）")
     }
 
