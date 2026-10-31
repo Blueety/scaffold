@@ -126,7 +126,7 @@ git commit -m "chore: 归档 add-login"
 - **`--staged` 不跳过**：改到归档里的文件，照样按正常闸门查
 - 显式点名也照查：`sh scripts/check-gates.sh tasks/_archive/2026-08-04-add-login`
 
-`_archive/` 自己不是一个任务目录，它下面的子目录才是——所以往它顶层直接放文件不会被当成任务。
+`_archive/` 自己不是一个任务目录，它下面的子目录才是——往它顶层直接放文件会被 `check-gates.sh` 报错（那正是上面「改名成 `_archive`」的后果）。
 
 ## 命名规范
 
