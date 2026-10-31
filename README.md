@@ -2,6 +2,8 @@
 
 一键生成 Vibe Coding 开发系统所需的目录结构和规范文件。
 
+> 改这个仓库之前先读 [`AGENTS.md`](AGENTS.md)：`templates/` 的 LF 约束、两个 init 脚本必须等价、README 树是唯一真源。生成出来的项目另有一份自己的 `AGENTS.md`，规则不同。
+
 ## 用法
 
 ### Windows (PowerShell)
@@ -97,7 +99,19 @@ powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
 
 只比文件名集合是不够的：一个多写的换行、一次编码损坏、只有一边做了的替换，都能让两个脚本产出不同的项目而文件名完全一致。这类差异靠 SHA256 逐文件比。
 
-- `-SkipEndToEnd`：只跑前半段（纯文件系统对比，毫秒级）
+### 自动跑
+
+本仓库的 `.githooks/pre-commit` 会在提交前跑同一份**全量**检查（约 20 秒），不一致就拦下提交——这条不变量不该只靠人记得跑。被拦下就修，别习惯性 `git commit --no-verify`。
+
+`core.hooksPath` 存在 `.git/config` 里，**不随 clone 走**。clone 到新机器后要跑一次，否则钩子根本不执行：
+
+```bash
+git config core.hooksPath .githooks
+```
+
+非 Windows 机器上没装 `pwsh` 时，钩子会跳过并提示一句（本仓库暂无 POSIX 版检查器）。
+
+- `-SkipEndToEnd`：只跑前半段（纯文件系统对比，毫秒级）——给手动排查用，提交闸门不用它
 - `-BashPath <path>`：Git Bash 不在常见位置时手动指定
 
 ## 设计原则

@@ -220,14 +220,21 @@ function Find-Bash {
         (Join-Path ${env:ProgramFiles(x86)} 'Git\bin\bash.exe'),
         (Join-Path $env:LOCALAPPDATA 'Programs\Git\bin\bash.exe')
     )
-    # Git for Windows may live elsewhere; derive its root from git.exe itself
-    # (<root>\cmd\git.exe -> <root>).
+    # Git for Windows may live elsewhere; derive its root from git.exe itself.
+    # Do NOT assume <root>\cmd\git.exe and take the two-level parent: under Git's own
+    # sh (which is where the pre-commit hook runs) PATH resolves git.exe to
+    # <root>\mingw64\bin\git.exe, and that parent is <root>\mingw64, which has no
+    # bin\bash.exe - the check then fails on a clean tree. Walk the ancestors and take
+    # the first that actually holds a bash.
     $git = Get-Command 'git.exe' -ErrorAction SilentlyContinue
     if (-not $git) { $git = Get-Command 'git' -ErrorAction SilentlyContinue }
     if ($git -and $git.Source) {
-        $root = Split-Path -Parent (Split-Path -Parent $git.Source)
-        $candidates += (Join-Path $root 'bin\bash.exe')
-        $candidates += (Join-Path $root 'usr\bin\bash.exe')
+        $dir = Split-Path -Parent $git.Source
+        for ($i = 0; $i -lt 4 -and $dir; $i++) {
+            $candidates += (Join-Path $dir 'bin\bash.exe')
+            $candidates += (Join-Path $dir 'usr\bin\bash.exe')
+            $dir = Split-Path -Parent $dir
+        }
     }
     foreach ($c in $candidates) { if ($c -and (Test-Path $c)) { return $c } }
     # The WSL stub at %SystemRoot%\System32\bash.exe is deliberately rejected: it

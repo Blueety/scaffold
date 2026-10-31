@@ -1,0 +1,65 @@
+#!/bin/sh
+#
+# 脚手架仓库自己的提交前闸门。
+#
+# 校验 README.md 里那棵树 == templates/ == init.sh / init.ps1 的真实产物，
+# 且两个脚本产出的文件逐字节相同。检查器：scripts/check-tree.ps1。
+#
+# 为什么这个仓库需要它：整套东西的立论是「闸门必须机器强制」，而它自己那条
+# 不变量（README 树 == templates/ == 生成结果 == 逐字节相同）之前只靠人记得
+# 跑。这是唯一一个反向破口。
+#
+# 注意与生成项目里的钩子区分：那个跑的是 templates/scripts/check-gates.sh。
+#
+# 临时跳过：git commit --no-verify
+# 手动全量：powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
+#
+# 非 Windows 机器上没装 PowerShell 时**不拦**（本仓库暂无 POSIX 版检查器），
+# 只提示一句；装了 pwsh 就会自动跑起来。
+
+set -u
+
+root="$(git -c core.quotepath=false rev-parse --show-toplevel 2>/dev/null)" || {
+    echo "pre-commit: 不在 git 仓库里，跳过" >&2
+    exit 0
+}
+cd "$root" || exit 0
+
+checker="$root/scripts/check-tree.ps1"
+if [ ! -f "$checker" ]; then
+    echo "pre-commit: 找不到 $checker，跳过脚手架自检" >&2
+    exit 0
+fi
+
+if command -v pwsh >/dev/null 2>&1; then
+    ps_cmd="pwsh"
+    ps_args="-NoProfile -File"
+elif command -v powershell.exe >/dev/null 2>&1; then
+    ps_cmd="powershell.exe"
+    ps_args="-NoProfile -ExecutionPolicy Bypass -File"
+elif command -v powershell >/dev/null 2>&1; then
+    ps_cmd="powershell"
+    ps_args="-NoProfile -ExecutionPolicy Bypass -File"
+else
+    echo "pre-commit: 没找到 PowerShell，跳过脚手架自检（scripts/check-tree.ps1）" >&2
+    echo "           装了 pwsh 就会自动跑；否则手动确认 README 树 == templates/ == init 产物" >&2
+    exit 0
+fi
+
+echo "pre-commit: 跑 scripts/check-tree.ps1（全量，约 20 秒）..."
+
+# 清掉 git 给钩子导出的环境变量再跑：检查器会在临时目录里 git init / git add /
+# git config，若继承 GIT_INDEX_FILE / GIT_DIR，那些命令会打到**本仓库**的索引或
+# 对象库上（例如把临时项目的文件加进这次提交）。
+env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_PREFIX \
+    -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+    "$ps_cmd" $ps_args "$checker"
+rc=$?
+
+if [ "$rc" -ne 0 ]; then
+    echo "" >&2
+    echo "pre-commit: 脚手架自检失败 —— README 树 / templates/ / init 产物 已经不一致。" >&2
+    echo "           按上面的 FAIL 行修好再提交。确实要先提交：git commit --no-verify" >&2
+fi
+
+exit $rc
