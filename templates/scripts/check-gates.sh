@@ -46,236 +46,12 @@ usage() {
     sed -n '/^# >>> usage$/,/^# <<< usage$/p' "${BASH_SOURCE[0]}" | sed '1d;$d' | sed 's/^# \{0,1\}//'
 }
 
-# ---------------------------------------------------------------- markdown 解析
-
-# 一次 awk 把整个文件解析成一份「记录流」存进全局 MD；之后所有查询都是纯 bash
-# 字符串操作，不再起外部进程。
-#
-# 为什么：本机起一个外部进程约 27ms。改之前一个任务目录要起 144 个
-# （awk / sed / tr / grep / tail / head…），光解析层就占 119 个，于是全量自查
-# 约 3 秒/任务目录，而 tasks/ 只增不减。现在解析层是每个文件 1 个 awk。
-#
-# 记录格式（TAB 分隔，一行一条；正文里的 TAB 在解析时换成空格）：
-#   H<TAB>小节序号<TAB>标题原文        一个 `## ` 标题行
-#   S<TAB>小节序号<TAB>正文            某个小节里的一行
-#   F<TAB>字段序号<TAB>原文<TAB>值     一条 `- **标签**: 值`
-#   B<TAB>字段序号<TAB>正文            该字段的后续块行
-#
-# 解析时顺手剥掉 markdown 注释（含跨行）：模板注释里会出现「应该可以」
-# 「（从 prd.md 提取）」这类字样，不剥掉的话会误报。
-MD=""
-MD_FILE=""
-md_load() {
-    [ "$MD_FILE" = "$1" ] && return 0
-    MD_FILE="$1"
-    MD="$(awk '
-        { line = $0
-          while (1) {
-              if (incom) {
-                  p = index(line, "-->")
-                  if (p == 0) { line = ""; break }
-                  line = substr(line, p + 3); incom = 0
-              } else {
-                  p = index(line, "<!--")
-                  if (p == 0) break
-                  head = substr(line, 1, p - 1)
-                  rest = substr(line, p + 4)
-                  q = index(rest, "-->")
-                  if (q == 0) { line = head; incom = 1; break }
-                  line = head substr(rest, q + 3)
-              }
-          }
-          gsub(/\t/, " ", line)
-
-          # 任何标题都结束当前字段块（同 md_field_block 的语义）；只有 `## ` 开小节。
-          if (line ~ /^##[[:space:]]/) { sec++; print "H\t" sec "\t" line; curfid = 0; next }
-          if (line ~ /^[[:space:]]*#/) curfid = 0
-          if (line ~ /^[[:space:]]*[-*][[:space:]]+\*\*/) {
-              nfid++
-              v = line
-              gsub(/：/, ":", v)
-              sub(/^[^:]*:[[:space:]]*/, "", v)
-              print "F\t" nfid "\t" line "\t" v
-              print "S\t" sec "\t" line        # 字段行也在小节正文里
-              curfid = nfid
-              next
-          }
-          print "S\t" sec "\t" line            # sec 可能是 0（第一个 `## ` 之前的内容）
-          if (curfid > 0) print "B\t" curfid "\t" line
-        }' "$1")"
-}
-
-# 取 `## 标题` 一节的正文（到下一个 ## 标题为止）。$2 是标题的子串，只取第一个匹配的小节。
-md_section() {
-    md_load "$1"
-    local want="$2" sec="" rest out="" line
-    while IFS= read -r line; do
-        case "$line" in
-            H$'\t'*)
-                [ -n "$sec" ] && break                 # 下一个 `## ` 标题：小节结束
-                rest="${line#H$'\t'}"
-                case "${rest#*$'\t'}" in *"$want"*) sec="${rest%%$'\t'*}" ;; esac ;;
-            S$'\t'*)
-                [ -n "$sec" ] || continue
-                rest="${line#S$'\t'}"
-                [ "${rest%%$'\t'*}" = "$sec" ] || continue
-                out="$out${rest#*$'\t'}"$'\n' ;;
-        esac
-    done <<< "$MD"
-    printf '%s' "$out"
-}
-
-# 是否存在以 `## <标题>` 开头的行（$2 从 `## ` 之后开始比）。
-md_has_section() {
-    md_load "$1"
-    local want="$2" line
-    while IFS= read -r line; do
-        case "$line" in
-            H$'\t'*)
-                line="${line#H$'\t'}"
-                case "${line#*$'\t'}" in '## '"$want"*) return 0 ;; esac ;;
-        esac
-    done <<< "$MD"
-    return 1
-}
-
-# 整份文件（剥掉注释后）里是否出现过这段字面文本。用来替代 grep -q '字面串' 文件。
-md_has_text() {
-    md_load "$1"
-    local want="$2" line rest
-    while IFS= read -r line; do
-        rest="${line#?$'\t'}"          # 去掉类型前缀
-        rest="${rest#*$'\t'}"          # 去掉序号
-        case "$rest" in *"$want"*) return 0 ;; esac
-    done <<< "$MD"
-    return 1
-}
-
-# 文本里匹配 ERE 的行数。$1 = 文本，$2 = ERE（沿用 grep -cE 的写法，不改正则）。
-count_lines_matching() {
-    local n=0 line
-    while IFS= read -r line; do
-        [[ "$line" =~ $2 ]] && n=$((n + 1))
-    done <<< "$1"
-    printf '%s' "$n"
-}
-
-# 取 `- **标签**: 值` 这一行冒号后的内容。$2 是标签子串（避开 en dash 之类的字符）。
-# 允许前置缩进——缩进过的字段行不该被判成「未声明」。
-# 项目符号接受 `-` 和 `*`，冒号接受半角 `:` 和全角 `：`——**全角必须认**：
-# 认不出的话 `sub` 不生效，整行被当成值返回，所有 field_filled 检查会一律判「已填」（fail-open）。
-# （归一化与切分在 md_load 的 awk 里做，这里只按原文里是否含标签挑第一条。）
-md_field_line() {
-    md_load "$1"
-    local lbl="$2" rest line
-    while IFS= read -r line; do
-        case "$line" in
-            F$'\t'*)
-                rest="${line#F$'\t'}"
-                rest="${rest#*$'\t'}"                  # 原文<TAB>值
-                case "${rest%%$'\t'*}" in *"$lbl"*) printf '%s' "${rest#*$'\t'}"; return ;; esac ;;
-        esac
-    done <<< "$MD"
-}
-
-# 取该字段行及其后续块（到下一个 `- **` 标签或标题为止）。
-md_field_block() {
-    md_load "$1"
-    local lbl="$2" fid="" rest out="" line
-    while IFS= read -r line; do
-        case "$line" in
-            F$'\t'*)
-                [ -n "$fid" ] && break                 # 下一个字段行：块结束
-                rest="${line#F$'\t'}"
-                case "${rest#*$'\t'}" in
-                    *"$lbl"*)
-                        fid="${rest%%$'\t'*}"
-                        rest="${rest#*$'\t'}"
-                        out="${rest%%$'\t'*}"$'\n' ;;
-                esac ;;
-            B$'\t'*)
-                [ -n "$fid" ] || continue
-                rest="${line#B$'\t'}"
-                [ "${rest%%$'\t'*}" = "$fid" ] || continue
-                out="$out${rest#*$'\t'}"$'\n' ;;
-        esac
-    done <<< "$MD"
-    printf '%s' "$out"
-}
-
-# 取字段的值：优先第一个反引号里的内容；没写反引号就取冒号后第一个词。
-# 不回退的话，`- **档位**: T2`（忘了反引号）会被报成「档位未声明（找不到那一行）」——
-# 行明明在，报错文本误导，而且 T2/T3 的任务会因此躲过 review.md 的强制检查。
-md_token() {
-    local line tok
-    line="$(md_field_line "$1" "$2")"
-    case "$line" in
-        '`'*'`'*) tok="${line#\`}"; tok="${tok%%\`*}" ;;
-        # 同 awk 的 `{print $1}`：按空白取第一个词。
-        # 这里**不能**用 [[:space:]] —— 本机 locale 下 0xA0 也算空白，
-        # 会把中文（UTF-8 里含 0xA0 字节的字）从中间切坏。
-        *) read -r tok _ <<< "$line" ;;
-    esac
-    printf '%s' "$tok"
-}
-
-# 字段是否有实质内容：同行冒号后非空，或后续块里去掉注释/空行/纯符号后还有东西。
-# 两种「看着有内容其实没有」的值也算空：
-#   - 空反引号：模板里的 `- **X**: \`\``
-#   - 只剩模板提示：`- **X**: （一句可演示的话……）`
-field_filled() {
-    local inline v body out="" l
-    inline="$(md_field_line "$1" "$2")"
-    v="${inline//[[:space:]]/}"
-    v="${v//\`/}"
-    case "$v" in
-        "") : ;;
-        '（'*'）') : ;;
-        *) return 0 ;;
-    esac
-    body="$(md_field_block "$1" "$2")"
-    case "$body" in
-        *$'\n'*) body="${body#*$'\n'}" ;;              # 去掉字段行本身（同 tail -n +2）
-        *) body="" ;;                                  # 块里只有字段行
-    esac
-    while IFS= read -r l; do
-        while [[ "$l" == *'<!--'*'-->'* ]]; do          # 去掉行内注释（同 sed 's/<!--.*-->//g'）
-            l="${l%%<!--*}${l#*-->}"
-        done
-        l="${l#"${l%%[![:space:]]*}"}"                  # 去行首空白
-        case "$l" in
-            [-*]*) l="${l#?}"; l="${l#"${l%%[![:space:]]*}"}" ;;   # 去项目符号与其后的空白
-        esac
-        out="$out${l//[[:space:]]/}"
-    done <<< "$body"
-    [ -n "$out" ]
-}
-
-# 表格数据行数（跳过表头与分隔行），只算至少一个单元格非空的行。
-# $2 = 跳过前几个单元格再判断（默认 0）。步骤表的 `#` 列是自动编号，
-# 不跳过的话「模板原封不动」也会被算成有内容。
-table_rows() {
-    local skip="${2:-0}" line n=0 seen=0 j nf
-    local -a cells
-    while IFS= read -r line; do
-        case "$line" in '|'*) ;; *) continue ;; esac
-        seen=$((seen + 1))
-        [ "$seen" -le 2 ] && continue                  # 跳过表头与分隔行（同 tail -n +3）
-        cells=()
-        IFS='|' read -r -a cells <<< "$line"
-        nf=${#cells[@]}
-        case "$line" in *'|') nf=$((nf + 1)) ;; esac   # bash 丢掉末尾空字段，awk 的 NF 不丢
-        for ((j = 1 + skip; j < nf - 1; j++)); do      # awk 的 $2+skip .. $NF-1
-            case "${cells[j]//[[:space:]]/}" in
-                "") : ;;
-                *) n=$((n + 1)); break ;;
-            esac
-        done
-    done <<< "$1"
-    printf '%s' "$n"
-}
-
 # ---------------------------------------------------------------- 各项检查
+#
+# 逐文件的判定逻辑整体在 check-gates.awk 里。为什么搬过去：本机起一个外部进程
+# 约 27ms，而判定要做的字符串扫描（一个任务目录 40 来次、每次上百行）在 bash 里
+# 约 13.7ms/120 行。两者叠加让全量自查变成分钟级；搬进 awk 后每个文件一次进程，
+# 循环在 C 里跑。这里只负责挑文件、起进程、把违规行打出来并计数。
 
 # 闸门 B：[DEBUG- 残留。
 #   --staged：直接查索引（git grep --cached）。范围 = 这次提交后的仓库，和全量自查对齐；
@@ -305,263 +81,46 @@ check_gate_b() {
     fi
 }
 
-# review.md（裁决单）：只有 T2 / T3 需要。先剥注释（理由同 check_plan）——
-# 模板里那几段说明文字如果被当成内容，一个没填的裁决单会通过。
-# 任务档位是否落在 T2/T3：plan.md 与切片里任何一处声明了 T2/T3 就算。
-# 不能只看 plan.md——T1 的 plan 可省，而切片文件自己带档位。
-task_is_high_tier() {
-    local d="$1" f t
-    for f in "$d/plan.md" "$d"/[0-9][0-9]-*.md; do
-        [ -f "$f" ] || continue
-        t="$(md_token "$f" '档位')"
-        case "$t" in T2*|T3*) return 0 ;; esac
-    done
-    return 1
+# 把 awk 的输出原样打印，并把行数计进 violations。
+# 不用 wc：$() 会吃掉尾换行，「行数 = 换行数 + 1」容易写错；违规行本来就少，
+# 循环数一遍最省事，也不起进程。
+emit_violations() {
+    [ -n "$1" ] || return 0
+    printf '%s\n' "$1"
+    local n=0 l
+    while IFS= read -r l; do n=$((n + 1)); done <<< "$1"
+    violations=$((violations + n))
 }
 
-# prd.md：Spec 轴的基准。只卡两件机器能判的事——
-#   1. 「## 验收标准」非空：AGENTS.md 的 Done Means 和 pre-review 的 Spec 轴都拿它当指涉对象，
-#      缺了它 Spec 轴悬空。
-#   2. 档位行：填了就必须是 T0–T3。**不要求它必须填**——prd.md 在 Step 3.2 落笔、
-#      档位在 3.3 才定，强制存在会在中途提交时误报。这里只抓「模板占位符没删」和写错值。
-check_prd() {
-    local f="$1" tier acc
-    tier="$(md_token "$f" '档位')"
-    case "$tier" in
-        "") : ;;
-        *'T?'*) fail "$f: 档位仍是模板占位符 T?" ;;
-        T0*|T1*|T2*|T3*) : ;;
-        *) fail "$f: 档位 '$tier' 不是 T0–T3" ;;
-    esac
+# $1 = 判定种类（plan / prd / journal / slice / review），$2 = 文件
+run_check() { emit_violations "$(awk -v kind="$1" -v fpath="$2" -f "$AWK_PROG" "$2")"; }
 
-    acc="$(md_section "$f" '验收标准')"
-    if [ -z "$acc" ]; then
-        fail "$f: 缺「## 验收标准」一节（Spec 轴和 Done Means 都拿它当基准）"
-    elif [ "$(count_lines_matching "$acc" '^[[:space:]]*([-*][[:space:]]+|[0-9]+\.[[:space:]]+)[^[:space:]]')" -eq 0 ]; then
-        fail "$f: 「## 验收标准」里没有条目（项目符号或编号列表都行）"
-    fi
-}
+check_plan()    { run_check plan    "$1"; }
+check_prd()     { run_check prd     "$1"; }
+check_journal() { run_check journal "$1"; }
+check_slice()   { run_check slice   "$1"; }
 
+# review.md（裁决单）：只有 T2 / T3 需要。
+# 「文件在不在」的判断留在 bash —— 文件都不在的时候，awk 没机会开口。
 check_review() {
     local d="$1" f="$d/review.md"
     if [ ! -f "$f" ]; then
-        fail "$d/review.md: 这个任务的档位是 T2/T3，但缺 review.md（这两档的审查必须由独立子 agent 做，见 docs/agents/任务分级.md）"
+        fail "$f: 这个任务的档位是 T2/T3，但缺 review.md（这两档的审查必须由独立子 agent 做，见 docs/agents/任务分级.md）"
         return
     fi
-    review_checks "$f"
+    run_check review "$f"
 }
 
-review_checks() {
-    local f="$1"
-
-    for sec in '审查范围' '审查者原文' '逐条处理' '审查者明确未判断的' '结论'; do
-        if ! md_has_section "$f" "$sec"; then
-            fail "$f: 缺「## ${sec}」一节"
-        fi
+# 任务档位是否落在 T2/T3：plan.md 与切片里任何一处声明了 T2/T3 就算。
+# 不能只看 plan.md——T1 的 plan 可省，而切片文件自己带档位。
+task_is_high_tier() {
+    local d="$1" f
+    local files=()
+    for f in "$d/plan.md" "$d"/[0-9][0-9]-*.md; do
+        [ -f "$f" ] && files+=("$f")
     done
-
-    field_filled "$f" '固定点' || fail "$f: 「固定点」为空"
-    if [ "$(table_rows "$(md_section "$f" '逐条处理')" 1)" -eq 0 ]; then
-        fail "$f: 「## 逐条处理」表里没有任何条目"
-    fi
-    local undecided
-    undecided="$(md_section "$f" '审查者明确未判断的')"
-    if [ -z "${undecided//[[:space:]]/}" ]; then
-        fail "$f: 「## 审查者明确未判断的」留空了（一条都没有就写「无」）——把「没判断」显式化，人才能看出盲区在哪"
-    fi
-}
-
-# plan.md。解析层已经剥掉注释（见 md_load），否则注释里出现的模板字样
-# 与注释掉的 `- [ ]` 会误报。
-check_plan() {
-    local f="$1" tier type
-
-    if ! md_has_section "$f" '任务概要'; then
-        fail "$f: 缺「## 任务概要」一节"
-        return
-    fi
-
-    tier="$(md_token "$f" '档位')"
-    case "$tier" in
-        "") fail "$f: 档位未声明（找不到 \`- **档位**:\` 行）" ;;
-        *'T?'*) fail "$f: 档位仍是模板占位符 T?" ;;
-        T0*|T1*|T2*|T3*) : ;;
-        *) fail "$f: 档位 '$tier' 不是 T0–T3" ;;
-    esac
-
-    type="$(md_token "$f" '类型')"
-    case "$type" in
-        加功能|重构|bug-可复现|bug-不可复现) : ;;
-        "") fail "$f: 类型未声明（找不到 \`- **类型**:\` 行）" ;;
-        *) fail "$f: 类型 '$type' 不在 {加功能, 重构, bug-可复现, bug-不可复现}" ;;
-    esac
-
-    field_filled "$f" '相关文件'   || fail "$f: 「相关文件」为空"
-    field_filled "$f" '验证命令'   || fail "$f: 「验证命令」为空"
-
-    if [ "$(table_rows "$(md_section "$f" '步骤')" 1)" -eq 0 ]; then
-        fail "$f: 「## 步骤」表里没有任何步骤"
-    fi
-
-    # 确认清单：这一节必须存在，且里面不能有未勾的项
-    if ! md_has_section "$f" '确认'; then
-        fail "$f: 缺「## 确认」一节"
-    else
-        local unchecked
-        unchecked="$(count_lines_matching "$(md_section "$f" '确认')" '^[[:space:]]*[-*+][[:space:]]+\[[[:space:]]?\]')"
-        if [ "${unchecked:-0}" -ne 0 ]; then
-            fail "$f: 「## 确认」还有 $unchecked 项没勾"
-        fi
-    fi
-
-    # 模板提示文字残留
-    if md_has_text "$f" '（从 prd.md 提取）'; then
-        fail "$f: 残留模板提示文字「（从 prd.md 提取）」"
-    fi
-
-    # 测试 Seam：要么整节不填，要么四行都填
-    local seam_filled=0 lbl
-    for lbl in '要测的 seam' '公开接口是什么' '错误与边界' '为什么选这个 seam'; do
-        field_filled "$f" "$lbl" && seam_filled=$((seam_filled + 1))
-    done
-    if [ "$seam_filled" -gt 0 ] && [ "$seam_filled" -lt 4 ]; then
-        fail "$f: 「## 测试 Seam」只填了 $seam_filled/4 行"
-    fi
-
-    # 类型轴 = bug：闸门 A 必填。只卡下界——写超过 5 条假设不是缺陷。
-    case "$type" in
-        bug-*)
-            field_filled "$f" '能变红的命令' || fail "$f: 闸门 A —— 「能变红的命令」为空"
-            field_filled "$f" '已实跑的输出' || fail "$f: 闸门 A —— 「已实跑的输出」为空"
-            field_filled "$f" '是否已最小化' || fail "$f: 闸门 A —— 「是否已最小化」为空"
-            local hy
-            hy="$(count_lines_matching "$(md_field_block "$f" '排序假设')" '^[[:space:]]*[0-9]+\.[[:space:]]*[^[:space:]]')"
-            if [ "${hy:-0}" -lt 3 ]; then
-                fail "$f: 闸门 A —— 排序假设只有 ${hy:-0} 条（至少要 3 条）"
-            fi
-            ;;
-    esac
-
-    # 任务分级.md：bug 不可复现强制 T3
-    if [ "$type" = 'bug-不可复现' ]; then
-        case "$tier" in
-            T3*) : ;;
-            *) fail "$f: 类型 bug-不可复现 必须声明 T3（现在写的是 '$tier'）" ;;
-        esac
-    fi
-}
-
-# journal.md（注释由解析层剥掉，理由同 check_plan）
-check_journal() {
-    local f="$1" sec missing=0
-
-    for sec in '目标' '主要提交' '改动文件清单' '验证结果' '遇到的问题' '下次注意什么' '涉及的 ADR' '下一步' '雾区变化' '一致性走查' '结束状态'; do
-        if ! md_has_section "$f" "$sec"; then
-            fail "$f: 缺「## ${sec}」一节"
-            missing=$((missing + 1))
-        fi
-    done
-    [ "$missing" -gt 0 ] && return
-
-    # 「结束状态」没填 = 这个任务还没收尾（journal.md 按设计在 Step 3.11 才写，
-    # 而 Step 3.9 的 `git add .` 会先把一份空模板扫进提交）。这时不查收尾字段——
-    # 和 prd.md 的档位同理：填了才校验，没填不算违规。
-    if ! field_filled "$f" '结束状态'; then
-        return
-    fi
-
-    # 「主要提交」与「结束状态」绑定：BLOCKED / NEEDS_CONTEXT 的任务可能一次提交都没有
-    local end_state
-    end_state="$(md_token "$f" '结束状态')"
-    case "$end_state" in
-        DONE|DONE_WITH_CONCERNS)
-            field_filled "$f" '主要提交' || fail "$f: 结束状态是 $end_state，但「主要提交」没回填（写工作提交的 SHA，见 tasks/README.md）" ;;
-        BLOCKED|NEEDS_CONTEXT)
-            : ;;   # 卡住 / 缺信息的任务允许零提交
-        *) fail "$f: 「结束状态」是 '$end_state'，不在 {DONE, DONE_WITH_CONCERNS, BLOCKED, NEEDS_CONTEXT}" ;;
-    esac
-
-    local verify
-    verify="$(md_section "$f" '验证结果')"
-    if [ "$(table_rows "$verify")" -eq 0 ]; then
-        fail "$f: 「## 验证结果」表里没有一行结果"
-    fi
-    if [[ "$verify" == *'应该可以'* ]]; then
-        fail "$f: 「## 验证结果」里出现「应该可以」——要贴实跑的命令与输出"
-    fi
-
-    local changed
-    changed="$(md_section "$f" '改动文件清单')"
-    if [ "$(table_rows "$changed")" -eq 0 ]; then
-        fail "$f: 「## 改动文件清单」表里没有一行"
-    fi
-    if [[ "$changed" == *'src/...'* ]]; then
-        fail "$f: 「## 改动文件清单」还留着模板占位符 src/..."
-    fi
-}
-
-# NN-*.md 切片 / 决策条目。类型决定哪一节必填（同 plan.md 的「修 bug 时必填」）。
-check_slice() {
-    local f="$1" type
-
-    type="$(md_token "$f" '类型')"
-    case "$type" in
-        切片|决策条目) : ;;
-        "") fail "$f: 类型未声明（找不到 \`- **类型**:\` 行，值应为 切片 或 决策条目）"; return ;;
-        *) fail "$f: 类型 '$type' 不在 {切片, 决策条目}"; return ;;
-    esac
-
-    if [ "$type" = '决策条目' ]; then
-        field_filled "$f" '问题'   || fail "$f: 决策条目 —— 「问题」为空"
-        field_filled "$f" '结论'   || fail "$f: 决策条目 —— 「结论」为空"
-        field_filled "$f" '依据'   || fail "$f: 决策条目 —— 「依据」为空"
-        return
-    fi
-
-    local tier
-    tier="$(md_token "$f" '档位')"
-    case "$tier" in
-        "") fail "$f: 档位未声明（找不到 \`- **档位**:\` 行）" ;;
-        *'T?'*) fail "$f: 档位仍是模板占位符 T?" ;;
-        T0*|T1*|T2*|T3*) : ;;
-        *) fail "$f: 档位 '$tier' 不是 T0–T3" ;;
-    esac
-
-    local prio
-    prio="$(md_token "$f" '优先级')"
-    case "$prio" in
-        P0|P1|P2) : ;;
-        "") fail "$f: 优先级未声明（找不到 \`- **优先级**:\` 行）" ;;
-        *) fail "$f: 优先级 '$prio' 不在 {P0, P1, P2}" ;;
-    esac
-
-    field_filled "$f" '完成后可以看到什么' || fail "$f: 「完成后可以看到什么」为空"
-    field_filled "$f" '完成标准'           || fail "$f: 「完成标准」为空"
-    field_filled "$f" '文件范围'           || fail "$f: 「文件范围」为空"
-    field_filled "$f" '被谁挡'             || fail "$f: 「被谁挡」为空（没有前置就写「无」）"
-
-    local st
-    st="$(md_token "$f" '状态')"
-    case "$st" in
-        pending|in_progress|completed) : ;;
-        "") fail "$f: 状态未声明（找不到 \`- **状态**:\` 行）" ;;
-        *) fail "$f: 状态 '$st' 不在 {pending, in_progress, completed}" ;;
-    esac
-
-    # 标记完成却回填不了提交，说明这个切片的状态是假的
-    if [ "$st" = 'completed' ] && ! field_filled "$f" '主要提交'; then
-        fail "$f: 状态是 completed，但「主要提交」没回填"
-    fi
-
-    if ! md_has_section "$f" '确认'; then
-        fail "$f: 缺「## 确认」一节"
-    else
-        local unchecked
-        unchecked="$(count_lines_matching "$(md_section "$f" '确认')" '^[[:space:]]*[-*+][[:space:]]+\[[[:space:]]?\]')"
-        if [ "${unchecked:-0}" -ne 0 ]; then
-            fail "$f: 「## 确认」还有 $unchecked 项没勾"
-        fi
-    fi
+    [ "${#files[@]}" -gt 0 ] || return 1
+    [ "$(awk -v kind=tier -f "$AWK_PROG" "${files[@]}")" = "yes" ]
 }
 
 # ---------------------------------------------------------------- 架构
@@ -571,16 +130,10 @@ check_slice() {
 MODULE_ROOT="${MODULE_ROOT:-src}"
 
 # `## 模块划分` 表第 2 列声明的路径，去掉反引号与尾斜杠。
+# 表本身的解析在 check-gates.awk 的 kind=modules 里——和逐文件检查共用同一套
+# 注释剥离，省得两处对「注释算不算内容」有不同看法。
 declared_module_paths() {
-    md_section "$1" '模块划分' | awk -F'|' '
-        /^[[:space:]]*\|/ {
-            p = $3
-            gsub(/`/, "", p)
-            sub(/^[[:space:]]+/, "", p); sub(/[[:space:]]+$/, "", p)
-            sub(/\/+$/, "", p)
-            if (p == "" || p == "路径" || p ~ /^-+$/) next
-            print p
-        }' | sort -u
+    awk -v kind=modules -f "$AWK_PROG" "$1" | sort -u
 }
 
 # 目录与路径一律以**工作区**为准，不取索引：索引里没有「空目录」这个概念，
@@ -687,6 +240,14 @@ main() {
     local root
     root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
     [ -n "$root" ] || root="$(cd "$(dirname "$0")/.." && pwd)"
+
+    # 判定逻辑在 check-gates.awk，与本脚本同目录。脚本自身始终取工作区版本
+    # （钩子调的也是工作区的 scripts/check-gates.sh），所以要在 cd 进临时树之前解析。
+    AWK_PROG="$(cd "$(dirname "$0")" && pwd)/check-gates.awk"
+    if [ ! -f "$AWK_PROG" ]; then
+        printf '找不到 %s —— 它与 check-gates.sh 必须放在一起\n' "$AWK_PROG" >&2
+        exit 2
+    fi
 
     if [ "$staged" -eq 1 ]; then
         # 内容必须取自索引。只拿 git diff --cached 的文件名、却读工作区，会在
