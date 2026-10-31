@@ -4,7 +4,8 @@
 # 闸门检查器 —— 把「能机器判定的闸门」变成可执行检查。
 #
 #   scripts/check-gates.sh                 检查全仓库：tasks/ 下所有任务 + 全仓库的闸门 B
-#   scripts/check-gates.sh --staged        只检查已暂存的内容（pre-commit 钩子用）
+#   scripts/check-gates.sh --staged        检查索引内容（= 这次提交后的仓库状态；
+#                                          任务目录只挑这次改动涉及的，pre-commit 钩子用）
 #   scripts/check-gates.sh tasks/2026-08-04-add-login [...]
 #
 # 覆盖：
@@ -147,7 +148,8 @@ table_rows() {
 
 # ---------------------------------------------------------------- 各项检查
 
-# 闸门 B：[DEBUG- 残留。cwd 就是检查范围（暂存模式下是索引物化出来的临时树）。
+# 闸门 B：[DEBUG- 残留。cwd 就是检查范围 —— 暂存模式下是索引物化出的整棵树，
+# 也就是「这次提交之后仓库里的样子」，和全量自查同范围。
 # 大小写不敏感：写 [debug-x] 同样是没清干净的调试埋点。
 check_gate_b() {
     local hits
@@ -182,7 +184,7 @@ task_is_high_tier() {
 
 # prd.md：Spec 轴的基准。只卡两件机器能判的事——
 #   1. 「## 验收标准」非空：AGENTS.md 的 Done Means 和 pre-review 的 Spec 轴都拿它当指涉对象，
-#      缺了它两边都悬空（WORKFLOW.md 也写着「没有那一段就是没做完」）。
+#      缺了它 Spec 轴悬空。
 #   2. 档位行：填了就必须是 T0–T3。**不要求它必须填**——prd.md 在 Step 3.2 落笔、
 #      档位在 3.3 才定，强制存在会在中途提交时误报。这里只抓「模板占位符没删」和写错值。
 prd_checks() {
@@ -348,6 +350,13 @@ journal_checks() {
     done
     [ "$missing" -gt 0 ] && return
 
+    # 「结束状态」没填 = 这个任务还没收尾（journal.md 按设计在 Step 3.11 才写，
+    # 而 Step 3.9 的 `git add .` 会先把一份空模板扫进提交）。这时不查收尾字段——
+    # 和 prd.md 的档位同理：填了才校验，没填不算违规。
+    if ! field_filled "$c" '结束状态'; then
+        return
+    fi
+
     # 「主要提交」与「结束状态」绑定：BLOCKED / NEEDS_CONTEXT 的任务可能一次提交都没有
     local end_state
     end_state="$(md_token "$c" '结束状态')"
@@ -490,16 +499,13 @@ check_architecture() {
     local doc="docs/architecture.md"
 
     if [ "$staged" -eq 1 ]; then
-        # 暂存模式下 cwd 是索引物化出的临时树，只含这次改动的文件；
-        # 表不在这次改动里时，单独从索引取出来。
+        # 暂存模式下 cwd 是索引物化出的整棵树，表进了索引就是索引版本
+        # （所以「暂存了坏表」会被拦住）。没进索引（还没 commit 过、又没 add 过它）
+        # 才退回工作区版本——否则会把「文件明明在仓库里」报成不存在。
         doc="$check_tree_tmp/docs/architecture.md"
         if [ ! -f "$doc" ]; then
             mkdir -p "$check_tree_tmp/docs"
-            # 索引里有就用索引版本（这样「暂存了坏表」会被拦住）；
-            # 索引里没有（例如还没 commit 过、又没 add 这个文件）就退回工作区版本。
-            git -c core.quotepath=false -C "$root" show ':docs/architecture.md' > "$doc" 2>/dev/null \
-                || cp "$root/docs/architecture.md" "$doc" 2>/dev/null \
-                || rm -f "$doc"
+            cp "$root/docs/architecture.md" "$doc" 2>/dev/null || rm -f "$doc"
         fi
     fi
 
@@ -580,19 +586,20 @@ main() {
     if [ "$staged" -eq 1 ]; then
         # 内容必须取自索引。只拿 git diff --cached 的文件名、却读工作区，会在
         # 「已暂存的是坏内容、工作区已修好」时放行，反方向则误拦一次合法提交。
-        # 所有 git 调用都带 -c core.quotepath=false：这个设置存在 .git/config 里，
-        # 不随 clone 走。少了它，clone 回来的仓库里中文名路径会被引号+八进制转义，
-        # git show ":$p" 失败、case 匹配也失配 —— 那些文件会静默逃过全部检查。
+        #
+        # 物化的是**整个索引**，不是这次改动的那几个文件：检查会问「某个这次没动的
+        # 文件在不在」（T2/T3 的 review.md、plan.md 里的档位都是这种），只物化 diff
+        # 会让这类问题一律得到「文件不存在」——该拦的漏掉，不该拦的拦住。
+        #
+        # 凡是**列文件名**的 git 调用都带 -c core.quotepath=false：这个设置存在
+        # .git/config 里，不随 clone 走。少了它，clone 回来的仓库里中文名路径会被
+        # 引号+八进制转义，case 匹配失配 —— 那些文件会静默逃过全部检查。
         #
         # 临时目录用全局变量：EXIT trap 在 main 返回之后才执行，那时 local 已经出作用域，
         # set -u 会把 "$check_tree_tmp" 当成未绑定变量，trap 失败 → 脚本整体非 0。
         check_tree_tmp="$(mktemp -d)"
         trap 'rm -rf "$check_tree_tmp"' EXIT
-        while IFS= read -r p; do
-            [ -n "$p" ] || continue
-            mkdir -p "$check_tree_tmp/$(dirname "$p")"
-            git -c core.quotepath=false -C "$root" show ":$p" > "$check_tree_tmp/$p" 2>/dev/null || true
-        done < <(git -c core.quotepath=false -C "$root" diff --cached --name-only --diff-filter=ACMR 2>/dev/null)
+        git -C "$root" checkout-index -a --prefix="$check_tree_tmp/" 2>/dev/null || true
         cd "$check_tree_tmp" || exit 2
     else
         cd "$root" || exit 2

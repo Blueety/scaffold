@@ -37,6 +37,18 @@
 
 - （暂无）
 
+### Windows 上 `bash scripts/check-gates.sh` 根本没跑到脚本
+
+- **现象**: 输出一串 `?????`，退出码 1——看着像「闸门有违规」，其实命令没执行到脚本
+- **原因**: PATH 里排第一的 `bash.exe` 是 `C:\Windows\System32\bash.exe`（WSL 的桩），它不认识 Windows 路径
+- **解决**: 用 Git 自带的 sh（同名桩没有顶掉它）：`sh scripts/check-gates.sh`；或在 Git Bash 里跑 `bash scripts/check-gates.sh`
+
+### PowerShell 里 `git commit` 的闸门提示是乱码
+
+- **现象**: 提交被钩子拦下，但 `check-gates.sh` 的中文提示显示成 `闂搁棬妫€鏌ュけ璐ワ細`，看不出挂了哪一条
+- **原因**: 钩子里的脚本按 UTF-8 输出，PowerShell 按控制台的 ANSI 代码页（中文系统是 936 / GBK）解码。管道里没有这个问题，只有写进控制台才会
+- **解决**: 在按 UTF-8 渲染的终端里提交——Git Bash 里直接 `git commit -m "..."`；非要用 PowerShell，就先把控制台切到 UTF-8（`chcp 65001`）**再重开** PowerShell
+
 ## 历史教训
 
 <!-- 从 tasks/ 复盘中提炼的稳定教训 -->

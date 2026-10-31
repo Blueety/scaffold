@@ -61,14 +61,14 @@
 - 保持 diff 最小，不重构无关代码。
 - 不引入新依赖，除非先说明理由并等待确认。
 - 不修改 `.env`、生产配置、生成文件。
-- **不可逆的外部动作一律先报告、等确认**，不管档位多低：部署到生产、花钱、删改数据、改权限与密钥、隐私数据的读写与对外传输、会改变第三方状态的对外请求、申请新账号或新服务。清单见 `WORKFLOW.md` 的「人必到节点」。
+- **不可逆的外部动作一律先报告、等确认**，不管档位多低：部署到生产、花钱、删改数据、改权限与密钥、隐私数据的读写与对外传输、会改变第三方状态的对外请求、申请新账号或新服务。
 - 需求不清楚时先问，不要猜。
 - 每完成一个逻辑步骤后运行验证命令，不接受「应该可以」——必须实际运行。
 - 如有失败，先解释原因再修复，不要绕过问题。
 - 修 bug 时：进入根因假设前，必须有一条已经实跑过、能对这个 bug 变红的命令（`skills/bug-fix/SKILL.md` 闸门 A）。
 - 写测试前：先书面列出要测的 seam 并等待确认。
 - 调试日志统一加 `[DEBUG-xxxx]` 前缀，提交前 grep 清干净。
-- 提交前闸门是**自动**的：`.githooks/pre-commit` 会跑 `scripts/check-gates.sh --staged`，检查 `[DEBUG-` 残留、`docs/architecture.md` 的模块表与实际目录是否对得上、`plan.md` 的档位/类型/闸门 A 字段、`journal.md` 的章节与验证结果、切片文件的字段、**T2 / T3 的 `review.md` 是否存在且填全**。被拦下就按提示补内容，**不要**用 `git commit --no-verify` 绕过。手动全量检查：`bash scripts/check-gates.sh`。
+- 提交前闸门是**自动**的：`.githooks/pre-commit` 会跑 `scripts/check-gates.sh --staged`，检查 `[DEBUG-` 残留、`docs/architecture.md` 的模块表与实际目录是否对得上、`plan.md` 的档位/类型/闸门 A 字段、`journal.md` 的章节与验证结果、切片文件的字段、**T2 / T3 的 `review.md` 是否存在且填全**。被拦下就按提示补内容，**不要**用 `git commit --no-verify` 绕过。手动全量检查：`bash scripts/check-gates.sh`（Windows 上 `bash` 可能指向 WSL 的桩，改用 `sh scripts/check-gates.sh`）。
 - 提交前审查：T0 不审；T1 自己审；**T2 / T3 必须派一个全新的子 agent 审**（只给它 `prd.md`、`plan.md`、diff、相关规范，**不给它会话历史**），产出 `tasks/<日期>-<简述>/review.md`。轮次上限 2，超了升级给人。
 - 收到审查意见后按 `skills/receiving-review/SKILL.md` 逐条处理：改 / 不改+理由 / 不接受+反证，**没有第四种**；不能静默跳过任何一条。
 - 验证通过后，运行 `git diff` 检查改动范围。

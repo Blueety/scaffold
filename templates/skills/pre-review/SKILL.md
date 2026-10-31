@@ -4,8 +4,9 @@ description: 提交或请求人工审查前使用。对固定点以来的 diff �
 # allowed-tools 是 harness 的机制（限制这个 skill 能调用哪些工具），不是文档约定。
 # 这一行是刻意的：审查必须只读。其余六个 skill 都没有这一行，因为它们本来就要写文件、
 # 跑命令——照抄过来会把它们锁死。
-# 需要更细的粒度时用 scoped 语法限定参数，例如 Bash(git diff:*)。
-allowed-tools: Read, Grep, Glob
+# 用 scoped 语法只放开「读 diff / 读历史」这两件事：第 1、2 步要跑它们，
+# 不放行的话审查者按 skill 走会直接卡在第一步。
+allowed-tools: Read, Grep, Glob, Bash(git diff:*), Bash(git log:*)
 ---
 
 # 提交前审查
@@ -56,11 +57,14 @@ allowed-tools: Read, Grep, Glob
 用户给的固定点就是固定点（commit SHA、分支名、tag、`main`、`HEAD~5`）。没给就问。
 
 ```
-git diff <固定点>...HEAD      # 三点，与 merge-base 比较
+git add -A                        # 先暂存，未跟踪的新文件才会进 diff
+git diff --cached <固定点>         # 固定点 → 索引，就是「当前工作区」的改动
 git log <固定点>..HEAD --oneline
 ```
 
 先确认固定点能解析、diff 非空。引用错或空 diff 应该在这里失败，而不是在两条审查里失败。
+
+**不要用 `git diff <固定点>...HEAD`**：本任务的改动要到提交那一步才落盘，那时 `HEAD` 还停在固定点上，三点写法审出来是空 diff。只有要审的东西**已经提交**了（复审、回溯审查）才用它。
 
 ### 2. 出改动摘要
 
@@ -71,7 +75,7 @@ git log <固定点>..HEAD --oneline
 摘要不是复述 diff，是意图层面的图景：哪些模块被动了、有没有引入新概念、有没有动公开接口或数据形状。
 
 ```
-git diff <固定点>...HEAD --stat
+git diff --cached <固定点> --stat
 git log <固定点>..HEAD --oneline
 ```
 

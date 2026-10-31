@@ -19,7 +19,7 @@ description: 一致性走查——逐条核对活文档写的东西和仓库现�
 
 ## 走查什么
 
-**只查活文档**（`WORKFLOW.md` 的「文档的生命周期」那张表）。快照文档（`prd` / `plan` / `journal` / `review` / 切片）过期不是缺陷，不要去「修」。
+**只查活文档**（`AGENTS.md` / `CONTEXT.md` / `docs/architecture.md` / `docs/commands.md` / `docs/pitfalls.md`）。快照文档（`prd` / `plan` / `journal` / `review` / `research` / 切片）过期不是缺陷，不要去「修」。
 
 逐条**实跑**，不要读一遍觉得「应该没问题」：
 

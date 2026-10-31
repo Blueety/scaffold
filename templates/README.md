@@ -60,7 +60,7 @@ scripts/              闸门检查器（check-gates.sh）
 - 提交前走 `skills/pre-review/SKILL.md`：Standards / Spec 两轴分开报告。**T2 / T3 必须派独立子 agent 审**，产出 `tasks/<日期>-<简述>/review.md`；T1 自己审。提交时 `scripts/check-gates.sh --staged` 会拦 `[DEBUG-` 残留、`plan.md` / `journal.md` / 切片 / `review.md` 的字段、以及 `architecture.md` 模块表与实际目录的偏差。
 - 收到审查意见走 `skills/receiving-review/SKILL.md`：每条发现落到「改 / 不改 + 理由 / 不接受 + 反证」，改完重跑验证。
 - **长期项目定期走查**走 `skills/self-audit/SKILL.md`：逐条实跑 `docs/commands.md` 的命令、逐条对 `architecture.md` 的接口契约与数据模型、逐个 grep `CONTEXT.md` 的术语、逐条实跑 `docs/pitfalls.md` 的解决命令。触发：T3 任务结束 / 每 10 个任务 / 你说「查一下」。产出不一致清单，每条落到「改文档 / 改代码 / 删掉」。
-- 提交时闸门自动跑（`core.hooksPath` 指向 `.githooks`）。手动全量：`bash scripts/check-gates.sh`；临时绕过：`git commit --no-verify`（别习惯性用）。
+- 提交时闸门自动跑（`core.hooksPath` 指向 `.githooks`）。手动全量：`bash scripts/check-gates.sh`（Windows 上 `bash` 可能指向 WSL 的桩，改用 `sh scripts/check-gates.sh`）；临时绕过：`git commit --no-verify`（别习惯性用）。
   clone 到新机器后要跑一次 `git config core.hooksPath .githooks`——这个设置在 `.git/config` 里，不随仓库走。
 - 要查外部一手事实走 `skills/research/SKILL.md`：派后台子 agent，产出带引用的 `tasks/<日期>-<简述>/research/<slug>.md`；结论进 `CONTEXT.md` / `docs/adr/`，文件本身过期即删。
 - 复杂任务先写 `tasks/<日期>-<简述>/prd.md`。
