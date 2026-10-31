@@ -29,8 +29,9 @@
 #                          章节齐全、固定点已填、逐条处理表非空、「审查者明确未判断的」不许留空
 #   - 架构：docs/architecture.md 的模块表 vs 实际模块目录（双向，模块根默认 src）。
 #          表里全是宽声明（模块根本身或它的祖先）时，全量自查会提示一句：新增子目录不会被检查。
-#          git 不跟踪的目录（被 .gitignore 命中的、点目录）不算模块；模块根本身不查存在性
-#          （空目录进不了 git，clone 之后它会消失）
+#          模块目录 = 模块根下**非空**的直接子目录（含还没 git add 的），点目录和被
+#          .gitignore 命中的除外；空目录不算——git 不跟踪空目录，声明它反而会卡住提交。
+#          模块根本身不查存在性（空目录进不了 git，clone 之后它会消失）
 #
 # 不覆盖（判断性内容，留在 skills/ 里由人确认）：
 #   双轴不合并、一次性脚本是否真删干净、命令是否真跑过、
@@ -118,15 +119,28 @@ check_prd()     { run_check prd     "$1"; }
 check_journal() { run_check journal "$1"; }
 check_slice()   { run_check slice   "$1"; }
 
+# 任务是否已经「开工」——决定 T2/T3 的裁决单要不要。
+# 判据是「任务目录里除了 prd.md / journal.md / review.md 还有没有别的文件」，
+# 而不是「有没有 plan.md 或 NN-*.md」：后者能被改名绕过去（切片叫 `01_a.md`、
+# 或把档位只写在 prd 里再补一份 DONE 的 journal，就整条免检了）。
+# journal 宣告 DONE 也算开工——任务都收尾了，不能再拿「还没写计划」当挡箭牌。
+task_has_started() {
+    local d="$1" p
+    for p in "$d"/*.md; do
+        [ -f "$p" ] || continue
+        case "${p##*/}" in prd.md|journal.md|review.md) ;; *) return 0 ;; esac
+    done
+    [ -f "$d/journal.md" ] || return 1
+    [ "$(awk -v kind=status -v fpath="$d/journal.md" -f "$AWK_PROG" "$d/journal.md")" = "DONE" ]
+}
+
 # review.md（裁决单）：只有 T2 / T3 需要。
 # 「文件在不在」的判断留在 bash —— 文件都不在的时候，awk 没机会开口。
 check_review() {
     local d="$1" f="$d/review.md"
-    # 只有 prd.md 的任务不要求裁决单：那时还没进 3.3（3.2 落 prd、3.3 定档位与计划、
-    # 3.8 出裁决单），没有可审的东西。不加这一条，T2/T3 任务连「先把 prd 提交一次」
-    # 都做不了。但只要有了 plan.md 或任何切片，就必须有裁决单——不能拿「还没写计划」
-    # 当借口把审查整条绕过去。
-    [ -f "$d/plan.md" ] || ls "$d"/[0-9]*-*.md >/dev/null 2>&1 || return 0
+    # 还没开工的任务（3.2 落 prd、3.3 定档位与计划、3.8 出裁决单）不要求裁决单，
+    # 否则 T2/T3 任务连「先把 prd 提交一次」都做不到。
+    task_has_started "$d" || return 0
     if [ ! -f "$f" ]; then
         fail "$f: 这个任务的档位是 T2/T3，但缺 review.md（这两档的审查必须由独立子 agent 做，见 docs/agents/任务分级.md）"
         return
@@ -140,7 +154,7 @@ check_review() {
 task_is_high_tier() {
     local d="$1" f
     local files=()
-    for f in "$d/plan.md" "$d/prd.md" "$d"/[0-9]*-*.md; do
+    for f in "$d/plan.md" "$d/prd.md" "$d"/[0-9][-_]*.md "$d"/[0-9][0-9][-_]*.md; do
         [ -f "$f" ] && files+=("$f")
     done
     [ "${#files[@]}" -gt 0 ] || return 1
@@ -162,33 +176,22 @@ declared_module_paths() {
 
 # 目录与路径的**存在性**以工作区为准，不取索引：索引里没有「空目录」这个概念，
 # 而 src/ 恰恰是空的 —— 只看索引会在首次提交时误报「src 不存在」。
-# 表的内容取索引版本（见 check_architecture）；实际有哪些模块目录见下面
-# arch_module_dirs（那个用索引，理由在它的注释里）。
-# 模块根下的**已跟踪**目录。用索引而不是扫工作区：
-#   - 未跟踪的目录要么还没 git add（还不该要求声明），要么是空的 ——
-#     而 git 不跟踪空目录，声明它又会被规则 1 判「声明了却不存在」，两头堵死。
-#   - 索引在暂存模式下正好是「这次提交后的样子」，两种模式口径一致。
-# 不在 git 仓库里（或索引读不出来）时退回扫工作区，那时排掉点目录和被 .gitignore 命中的。
+# 表的内容取索引版本（见 check_architecture）。
+# 模块根下的子目录。在**哪棵树**里找，由调用方决定：全量模式 cd 在仓库里，
+# 暂存模式 cd 在索引物化出的临时树里 —— 各自看各自该看的那份内容。
+# 只算**非空**目录：
+#   - 空目录 git 根本不跟踪，声明它会被规则 1 判「声明了却不存在」，
+#     不声明又违反规则 2 —— 两头堵死。它本来也不是模块。
+# 点目录和被 .gitignore 命中的不算：src/.cache 既进不了提交，也不该进模块表。
 arch_module_dirs() {
-    local root="$1" d tracked
-    if tracked="$(git -C "$root" -c core.quotepath=false ls-files 2>/dev/null)"; then
-        printf '%s\n' "$tracked" | awk -v mr="$MODULE_ROOT" '
-            index($0, mr "/") == 1 {
-                rest = substr($0, length(mr) + 2)
-                i = index(rest, "/")
-                if (i > 0) print mr "/" substr(rest, 1, i - 1)
-            }
-        ' | LC_ALL=C sort -u
-        return
-    fi
-
-    local ignored="" cand=()
+    local root="$1" d ignored="" cand=()
     while IFS= read -r d; do
         [ -n "$d" ] || continue
         case "${d##*/}" in .*) continue ;; esac        # 点目录不是模块
         cand+=("$d")
     done < <( cd "$root" 2>/dev/null && [ -d "$MODULE_ROOT" ] && \
-              find "$MODULE_ROOT" -mindepth 1 -maxdepth 1 -type d | sort -u )
+              find "$MODULE_ROOT" -mindepth 1 -maxdepth 1 -type d \
+                   ! -empty 2>/dev/null | sort -u )
 
     [ "${#cand[@]}" -gt 0 ] || return 0
 
@@ -299,8 +302,13 @@ main() {
     while [ "$#" -gt 0 ]; do task_args+=("$1"); shift; done
 
     local root
+    # 调用时的 cwd：命令行里点名的任务目录按它解析（脚本随后会 cd 到仓库根/临时树）。
+    invoke_pwd="$(pwd)"
     root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
     [ -n "$root" ] || root="$(cd "$(dirname "$0")/.." && pwd)"
+    # git 给的是 `D:/…`，bash 的 pwd 给的是 `/d/…` —— 两种写法不能直接比前缀。
+    # 统一成 bash 的写法，下面把点名路径折成仓库相对路径时才不会漏。
+    root_pwd="$(cd "$root" && pwd)"
 
     # 判定逻辑在 check-gates.awk，与本脚本同目录。脚本自身始终取工作区版本
     # （钩子调的也是工作区的 scripts/check-gates.sh），所以要在 cd 进临时树之前解析。
@@ -347,13 +355,24 @@ main() {
     local dirs=()
     local d p rest
     if [ "${#task_args[@]}" -gt 0 ]; then
-        for d in "${task_args[@]}"; do
-            case "$d" in
+        # 参数按**调用时**的 cwd 解析。脚本后面会 cd 到仓库根，
+        # 从子目录用相对路径点名（`cd docs && ../scripts/check-gates.sh ../tasks/x`）
+        # 就会找不到——那时 ../tasks/x 是相对 docs 的，不是相对仓库根。
+        local a rel
+        for a in "${task_args[@]}"; do
+            case "$a" in
+                /*|[A-Za-z]:[/\\]*) rel="$a" ;;
+                *) rel="$invoke_pwd/$a" ;;
+            esac
+            case "$rel" in
+                "$root_pwd"/*) rel="${rel#"$root_pwd"/}" ;;
+            esac
+            case "$rel" in
                 tasks/_template|tasks/_template/)
-                    printf '%s\n' "跳过 $d（模板，不是任务）"
+                    printf '%s\n' "跳过 $rel（模板，不是任务）"
                     continue ;;
             esac
-            if [ -d "$d" ]; then dirs+=("$d"); else fail "找不到任务目录: $d"; fi
+            if [ -d "$rel" ]; then dirs+=("$rel"); else fail "找不到任务目录: $a"; fi
         done
     elif [ "$staged" -eq 1 ]; then
         # D 也要算：只删 review.md 的那次提交同样得查那个任务目录，
@@ -373,6 +392,15 @@ main() {
             esac
         done < <(git -c core.quotepath=false -C "$root" diff --cached --name-only --diff-filter=ACMRD 2>/dev/null)
     else
+        # `tasks/_archive/` 里**直接躺着 .md 文件**说明归档方式用错了：
+        # `git mv tasks/x tasks/_archive/` 在 _archive 不存在时会把任务目录改名成
+        # `_archive`，文件被拍平到这一层。拍平之后全量自查会把它整个跳过——
+        # 那些文件从此不在任何全量检查的覆盖里（--staged 碰到才会查）。
+        for f in tasks/_archive/*.md; do
+            [ -f "$f" ] || continue
+            fail "$f: tasks/_archive/ 顶层不该有文件——归档要 `mkdir -p tasks/_archive` 之后再 git mv，见 tasks/README.md 的「归档」"
+            break
+        done
         for d in tasks/*/; do
             [ -d "$d" ] || continue
             # _template 是模板；_archive 是已完成并归档的（tasks/ 只放在飞的）。
@@ -410,9 +438,11 @@ main() {
             check_journal "$d/journal.md"
             any=1
         fi
-        # 切片 / 决策条目：NN-*.md（见 tasks/README.md）
+        # 切片 / 决策条目：NN-*.md，NN 是 1–2 位数字（见 tasks/README.md）。
+        # 同时认下划线分隔（`01_a.md`）——只认短横线的话，改个名字就整条免检了。
+        # 两位数字的上限把 `2026-10-31-调研.md` 这类笔记排除在外（那是笔记不是切片）。
         local s
-        for s in "$d"/[0-9]*-*.md; do
+        for s in "$d"/[0-9][-_]*.md "$d"/[0-9][0-9][-_]*.md; do
             [ -f "$s" ] || continue
             printf '%s\n' "检查 $s"
             check_slice "$s"

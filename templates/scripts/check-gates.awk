@@ -59,23 +59,33 @@ BEGIN {
     }
     gsub(/\t/, " ", line)
 
+    L[++NL] = line
+}
+
+END {
     # 档位：plan.md / prd.md / 切片里**任何一处**声明了 T2/T3 就算。
     # 不能只看第一条声明：同一文件里先写 T1、后面补一条 T3 也算；多个切片里
     # 最后一个才是 T3 也算。只看第一条会让这类任务躲过 review.md 的强制检查。
     # （awk 的变量是全局的，`awk plan.md 01-a.md` 一次进程跑多个文件——
     #  所以这里不能有「找到就停」的状态，否则只有第一个文件会被看到。）
+    # 放在 END 里而不是读行循环里：要等整个文件读完才能看「值换行写在下一行」。
     if (kind == "tier") {
-        if (line ~ /^[[:space:]]*[-*][[:space:]]+\*\*/ && index(line, "档位") > 0) {
-            if (token_of(field_value_of(line)) ~ /^T[23]/) high = 1
+        for (i = 1; i <= NL; i++) {
+            if (L[i] !~ /^[[:space:]]*[-*+][[:space:]]+\*\*/ || index(L[i], "档位") == 0) continue
+            v = field_value_of(L[i])
+            if (v == "") {
+                j = i
+                while (++j <= NL) {
+                    if (L[j] ~ /^[[:space:]]*[-*+][[:space:]]+\*\*/) break
+                    if (L[j] ~ /^[[:space:]]*#/) break
+                    if (L[j] !~ /^[[:space:]]*$/) { v = L[j]; break }
+                }
+            }
+            if (token_of(v) ~ /^T[23]/) high = 1
         }
-        next
+        print (high ? "yes" : "no"); exit
     }
-
-    L[++NL] = line
-}
-
-END {
-    if (kind == "tier")    { print (high ? "yes" : "no"); exit }
+    if (kind == "status")  { print md_token("结束状态"); exit }
     if (kind == "modules") { modules_dump(); exit }
     if      (kind == "plan")    plan_check()
     else if (kind == "prd")     prd_check()
@@ -102,15 +112,30 @@ function heading_level(s,   n) {
 }
 
 # 一个标题开一节（`### <标题>` 也算——模板不一定只用两级），
-# 到下一个**同级或更高级**的标题为止。取第一个标题里含 want 的。
+# 到下一个**同级或更高级**的标题为止。取第一个标题匹配 want 的（见 title_matches）。
 # 这样 `### 步骤` 能被当成节，而节里更深的 `###` 子标题不会把它切断。
-function md_section(want,   i, insec, lvl, hl, n) {
+# 标题是否就是 want（或 want 后面紧跟括号/冒号/空格，如 `## 确认（可选）`）。
+# 用「前缀 + 分隔符」而不是「含 want」：后者会让 `## 待确认事项` 顶替 `## 确认`，
+# 一个已勾项的干扰节就能把真正的确认节挡在外面。
+function title_matches(title, want,   c) {
+    if (title == want) return 1
+    if (substr(title, 1, length(want)) != want) return 0
+    c = substr(title, length(want) + 1, 1)
+    return (c == " " || c == "（" || c == "(" || c == ":" || c == "：")
+}
+
+function md_section(want,   i, insec, lvl, hl, n, t) {
     n = 0; insec = 0; lvl = 0
     for (i = 1; i <= NL; i++) {
         hl = heading_level(L[i])
         if (hl > 0) {
             if (insec && hl <= lvl) break
-            if (!insec && index(L[i], want) > 0) { insec = 1; lvl = hl }
+            if (!insec) {
+                t = L[i]
+                sub(/^#+[[:space:]]+/, "", t)
+                sub(/[[:space:]]+$/, "", t)
+                if (title_matches(t, want)) { insec = 1; lvl = hl }
+            }
             continue
         }
         if (insec) S[++n] = L[i]
@@ -127,15 +152,17 @@ function section_text(want,   n, i, out) {
     return out
 }
 
-# 是否存在**以 want 开头**的标题行（任意级别，`## 步骤` 和 `### 步骤` 都算）。
-# 注意与 md_section 的区别：这里要求标题以 want 开头，那里只要求含 want。
+# 是否存在匹配 want 的标题行（任意级别，`## 步骤` 和 `### 步骤` 都算）。
+# 和 md_section 用同一个 title_matches——两边口径不一致时，
+# 「有没有这个节」和「这个节里写了什么」会各看各的。
 function has_section(want,   i, hl, t) {
     for (i = 1; i <= NL; i++) {
         hl = heading_level(L[i])
         if (hl == 0) continue
         t = L[i]
         sub(/^#+[[:space:]]+/, "", t)
-        if (substr(t, 1, length(want)) == want) return 1
+        sub(/[[:space:]]+$/, "", t)
+        if (title_matches(t, want)) return 1
     }
     return 0
 }
@@ -147,9 +174,11 @@ function has_text(want,   i) {
 }
 
 # `- **标签**: 值` 行的原文（第一次出现）。没找到返回空串。
+# `-` / `*` / `+` 三种列表符号都认：只认前两种的话，用 `+` 写的档位会被判「未声明」，
+# 而 task_is_high_tier 也看不见它——T2/T3 任务就此躲过 review.md。
 function field_raw(lbl,   i) {
     for (i = 1; i <= NL; i++)
-        if (L[i] ~ /^[[:space:]]*[-*][[:space:]]+\*\*/ && index(L[i], lbl) > 0) return L[i]
+        if (L[i] ~ /^[[:space:]]*[-*+][[:space:]]+\*\*/ && index(L[i], lbl) > 0) return L[i]
     return ""
 }
 
@@ -161,7 +190,23 @@ function field_value_of(r,   v) {
     sub(/^[^:]*:[[:space:]]*/, "", v)
     return v
 }
-function field_value(lbl) { return field_value_of(field_raw(lbl)) }
+function field_value(lbl,   i, v) {
+    for (i = 1; i <= NL; i++) {
+        if (L[i] !~ /^[[:space:]]*[-*+][[:space:]]+\*\*/ || index(L[i], lbl) == 0) continue
+        v = field_value_of(L[i])
+        if (v != "") return v
+        # 同行是空的：值可能换行写在下一行（`- **档位**:` 换行再写 `` `T3` — … ``）。
+        # 不认的话档位判「未声明」，而 task_is_high_tier 也就看不见它——
+        # T2/T3 任务会因此躲过 review.md。遇到下一个字段行或标题行就停。
+        while (++i <= NL) {
+            if (L[i] ~ /^[[:space:]]*[-*+][[:space:]]+\*\*/) return ""
+            if (L[i] ~ /^[[:space:]]*#/) return ""
+            if (L[i] !~ /^[[:space:]]*$/) return L[i]
+        }
+        return ""
+    }
+    return ""
+}
 
 # 取值的 token：有反引号就取**第一对反引号里的第一个词**，没写反引号就取第一个词。
 # 不回退的话 `- **档位**: T2`（忘了反引号）会被报成「档位未声明」，
@@ -171,13 +216,13 @@ function field_value(lbl) { return field_value_of(field_raw(lbl)) }
 # 切词用 [ \t] 而不是 [[:space:]]：本机 locale 下 0xA0 也算空白，
 # 而中文（UTF-8 里含 0xA0 字节的字）会被从中间切坏。
 function token_of(v,   s, p) {
-    if (substr(v, 1, 1) == "`" && index(substr(v, 2), "`") > 0) {
-        s = substr(v, 2)
+    s = v
+    sub(/^[ \t]+/, "", s)      # 值可能换行写在下一行，带着缩进进来
+    if (substr(s, 1, 1) == "`" && index(substr(s, 2), "`") > 0) {
+        s = substr(s, 2)
         s = substr(s, 1, index(s, "`") - 1)
-    } else {
-        s = v
+        sub(/^[ \t]+/, "", s)
     }
-    sub(/^[ \t]+/, "", s)
     p = match(s, /[ \t]/)
     return p ? substr(s, 1, p - 1) : s
 }
@@ -187,7 +232,7 @@ function md_token(lbl) { return token_of(field_value(lbl)) }
 function field_block(lbl,   i, n, found) {
     n = 0; found = 0
     for (i = 1; i <= NL; i++) {
-        if (L[i] ~ /^[[:space:]]*[-*][[:space:]]+\*\*/) {
+        if (L[i] ~ /^[[:space:]]*[-*+][[:space:]]+\*\*/) {
             if (found) break
             if (index(L[i], lbl) > 0) { found = 1; B[++n] = L[i]; continue }
         } else if (L[i] ~ /^[[:space:]]*#/) {
@@ -215,16 +260,31 @@ function field_block_body(lbl,   n, i, out) {
     return out
 }
 
-# 字段是否有实质内容：同行冒号后非空，或后续块里去掉注释/空行/纯符号后还有东西。
+# 整行只是「还没填」的标记。要精确，不能宽：
+# `（npm test）` 这种全角括号里装着真内容是**合法值**，判成占位符会卡住用户；
+# 反过来 `TODO` / `(待补)` / 单个 `-` 是最常见的偷懒写法，得算没填。
+# 括号里的字用 `（` `）` 当字面量而不是塞进方括号——方括号是按字节比的，
+# 多字节字符放进去会匹配到半个字。
+function is_placeholder(s) {
+    if (s == "（）" || s == "()") return 1
+    if (s ~ /^（.*）$/ && s ~ /占位|待补|待填|待定|placeholder/) return 1
+    if (s ~ /^\(.*\)$/ && s ~ /占位|待补|待填|待定|placeholder/) return 1
+    if (s == "TODO" || s == "TBD" || s == "N/A" || s == "NA" || s == "XXX") return 1
+    if (s == "-" || s == "--" || s == "—" || s == "…" || s == "...") return 1
+    return 0
+}
+
+# 字段是否有实质内容：同行冒号后非空（或换行写在下一行），
+# 或后续块里去掉注释/空行/纯符号后还有东西。
 # 两种「看着有内容其实没有」的值也算空：
 #   - 空反引号：模板里的 `- **X**: \`\``
-#   - 只剩模板提示：`- **X**: （一句可演示的话……）`
+#   - 只剩模板提示：`- **X**: （占位）`
 function field_filled(lbl,   s, n, j, l, body) {
     s = field_value(lbl)
     gsub(/[[:space:]]/, "", s)
     gsub(/`/, "", s)
     if (s == "") { }
-    else if (s ~ /^（.*）$/) { }
+    else if (is_placeholder(s)) { }
     else return 1
 
     n = field_block(lbl)
@@ -232,11 +292,11 @@ function field_filled(lbl,   s, n, j, l, body) {
     for (j = 2; j <= n; j++) {          # 跳过字段行本身（同 tail -n +2）
         l = B[j]
         gsub(/<!--.*-->/, "", l)
-        sub(/^[[:space:]]*[-*][[:space:]]*/, "", l)
+        sub(/^[[:space:]]*[-*+][[:space:]]*/, "", l)
         gsub(/[[:space:]]/, "", l)
         if (l == "") continue
-        if (l ~ /^（.*）$/) continue     # 整行只是模板提示（占位）→ 不算内容
-        if (l ~ /^`+$/) continue        # 整行只是空反引号 → 不算内容
+        if (is_placeholder(l)) continue  # 整行只是模板提示（占位）→ 不算内容
+        if (l ~ /^`+$/) continue         # 整行只是空反引号 → 不算内容
         body = body l
     }
     return (body != "")
@@ -248,7 +308,8 @@ function table_rows(text, skip,   n, i, seen, cells, nf, j, c, cnt) {
     n = split(text, ROWS, "\n")
     cnt = 0; seen = 0
     for (i = 1; i <= n; i++) {
-        if (substr(ROWS[i], 1, 1) != "|") continue
+        # 允许最多 3 个前导空格：CommonMark 里缩进 3 格的表格仍是表格。
+        if (ROWS[i] !~ /^[[:space:]]*\|/) continue
         seen++
         if (seen <= 2) continue
         nf = split(ROWS[i], cells, "|")
@@ -260,27 +321,48 @@ function table_rows(text, skip,   n, i, seen, cells, nf, j, c, cnt) {
     return cnt
 }
 
-# 未勾选的 `- [ ]`
-function count_checkboxes(text,   n, i, c) {
-    n = split(text, ROWS, "\n"); c = 0
-    for (i = 1; i <= n; i++) if (ROWS[i] ~ /^[[:space:]]*[-*+][[:space:]]+\[[[:space:]]?\]/) c++
+# 未勾选的 `- [ ]`。跳过代码围栏内的行：把复选框包进 ``` 里就能同时骗过
+# 「还有几项没勾」和「一条确认项都没有」——两条都只看行首，看不出那是个代码块。
+function count_checkboxes(text,   n, i, c, fence) {
+    n = split(text, ROWS, "\n"); c = 0; fence = 0
+    for (i = 1; i <= n; i++) {
+        if (ROWS[i] ~ /^[[:space:]]*(```|~~~)/) { fence = !fence; continue }
+        if (fence) continue
+        if (ROWS[i] ~ /^[[:space:]]*[-*+][[:space:]]+\[[[:space:]]?\]/) c++
+    }
     return c
 }
 
 # 全部复选框（勾了没勾都算）。用来区分「全勾完了」和「一条确认项都没写」——
 # 后者是 fail-open：没有复选框，上面那个「还有几项没勾」自然是 0。
-function count_all_checkboxes(text,   n, i, c) {
-    n = split(text, ROWS, "\n"); c = 0
-    for (i = 1; i <= n; i++)
+function count_all_checkboxes(text,   n, i, c, fence) {
+    n = split(text, ROWS, "\n"); c = 0; fence = 0
+    for (i = 1; i <= n; i++) {
+        if (ROWS[i] ~ /^[[:space:]]*(```|~~~)/) { fence = !fence; continue }
+        if (fence) continue
         if (ROWS[i] ~ /^[[:space:]]*[-*+][[:space:]]+\[[ xX]\]/) c++
+    }
     return c
 }
 
-# 项目符号或编号列表项
+# 项目符号或编号列表项。编号同时认 `1.` 和中文顿号 `1、`——只认半角点的话，
+# 用顿号编号的验收标准会被判成「没有条目」。
 function count_listitems(text,   n, i, c) {
     n = split(text, ROWS, "\n"); c = 0
     for (i = 1; i <= n; i++)
-        if (ROWS[i] ~ /^[[:space:]]*([-*][[:space:]]+|[0-9]+\.[[:space:]]+)[^[:space:]]/) c++
+        if (ROWS[i] ~ /^[[:space:]]*([-*+][[:space:]]+|[0-9]+[.、][[:space:]]*)[^[:space:]]/) c++
+    return c
+}
+
+# 结果条目：列表项，但**不是标签行**——`- 未运行的检查及原因:` 这种以冒号结尾的是
+# 让人去填的小标题，不是一条结果。只看「有没有列表项」会被模板里这一行骗过去。
+function count_result_items(text,   n, i, c) {
+    n = split(text, ROWS, "\n"); c = 0
+    for (i = 1; i <= n; i++) {
+        if (ROWS[i] !~ /^[[:space:]]*([-*+][[:space:]]+|[0-9]+[.、][[:space:]]*)[^[:space:]]/) continue
+        if (ROWS[i] ~ /[:：][[:space:]]*$/) continue
+        c++
+    }
     return c
 }
 
@@ -290,7 +372,7 @@ function count_listitems(text,   n, i, c) {
 function count_items(text,   n, i, c) {
     n = split(text, ROWS, "\n"); c = 0
     for (i = 1; i <= n; i++)
-        if (ROWS[i] ~ /^[[:space:]]*([0-9]+\.[[:space:]]*|[-*+][[:space:]]+)[^[:space:]]/) c++
+        if (ROWS[i] ~ /^[[:space:]]*([0-9]+[.、][[:space:]]*|[-*+][[:space:]]+)[^[:space:]]/) c++
     return c
 }
 
@@ -342,7 +424,8 @@ function plan_check(   tier, type, n, filled, hy, t) {
         if (n != 0) V("「## 确认」还有 " n " 项没勾")
     }
 
-    if (has_text("（从 prd.md 提取）")) V("残留模板提示文字「（从 prd.md 提取）」")
+    # 「（从 prd.md 提取）」这类模板提示现在放在注释里（读入时已被剥掉），
+    # 所以这里不再单独查它——目标没写就是空的，field_filled 已经管住了。
 
     # 测试 Seam：要么整节不填，要么四行都填
     filled = 0
@@ -380,8 +463,9 @@ function prd_check(   tier, acc) {
     else if (tier !~ /^T[0-3]$/)    V("档位 '" tier "' 不是 T0–T3")
 
     acc = section_text("验收标准")
-    if (acc == "") V("缺「## 验收标准」一节（Spec 轴和 Done Means 都拿它当基准）")
-    else if (count_listitems(acc) == 0) V("「## 验收标准」里没有条目（项目符号或编号列表都行）")
+    if (!has_section("验收标准")) V("缺「## 验收标准」一节（Spec 轴和 Done Means 都拿它当基准）")
+    else if (count_listitems(acc) == 0 && table_rows(acc, 0) == 0)
+        V("「## 验收标准」里没有条目（列表或表格都行；节里只剩注释不算）")
 }
 
 # ---------------------------------------------------------------- journal.md
@@ -413,12 +497,16 @@ function journal_check(   i, missing, end_state, verify, changed) {
     }
 
     verify = section_text("验证结果")
-    if (table_rows(verify, 0) == 0) V("「## 验证结果」表里没有一行结果")
+    if (table_rows(verify, 0) == 0 && count_result_items(verify) == 0)
+        V("「## 验证结果」里没有一行结果（表格或项目符号列表都行）")
     if (index(verify, "应该可以") > 0) V("「## 验证结果」里出现「应该可以」——要贴实跑的命令与输出")
 
     changed = section_text("改动文件清单")
     if (table_rows(changed, 0) == 0) V("「## 改动文件清单」表里没有一行")
-    if (index(changed, "src/...") > 0 || changed ~ /<[^>]*>/)
+    # 只认「整个单元格就是一个占位符」的行。之前是「出现任何 <...> 就算」——
+    # 那样 `Map<string, number>`、`<script>`、URL 里的尖括号都会被误判成残留占位符。
+    if (changed ~ /src\/[.．][.．][.．]/ || changed ~ /src\/…/ \
+        || changed ~ /\|[[:space:]]*`?<[^>]*>`?[[:space:]]*\|/)
         V("「## 改动文件清单」还留着模板占位符（src/... 或 <...>）")
 }
 
