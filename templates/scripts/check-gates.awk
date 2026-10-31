@@ -163,17 +163,20 @@ function field_value_of(r,   v) {
 }
 function field_value(lbl) { return field_value_of(field_raw(lbl)) }
 
-# 取值的 token：优先第一个反引号里的内容；没写反引号就取第一个词。
+# 取值的 token：有反引号就取**第一对反引号里的第一个词**，没写反引号就取第一个词。
 # 不回退的话 `- **档位**: T2`（忘了反引号）会被报成「档位未声明」，
 # 而且 T2/T3 的任务会因此躲过 review.md 的强制检查。
-# 第一个词用 [ \t] 而不是 [[:space:]]：本机 locale 下 0xA0 也算空白，
+# 反引号里再切一个词：模板给的形状是 `` `T1 — 2 文件 / 0 调用方 / …` ``
+# —— 整段都在反引号里，不切的话整行都会被当成档位值。
+# 切词用 [ \t] 而不是 [[:space:]]：本机 locale 下 0xA0 也算空白，
 # 而中文（UTF-8 里含 0xA0 字节的字）会被从中间切坏。
 function token_of(v,   s, p) {
     if (substr(v, 1, 1) == "`" && index(substr(v, 2), "`") > 0) {
         s = substr(v, 2)
-        return substr(s, 1, index(s, "`") - 1)
+        s = substr(s, 1, index(s, "`") - 1)
+    } else {
+        s = v
     }
-    s = v
     sub(/^[ \t]+/, "", s)
     p = match(s, /[ \t]/)
     return p ? substr(s, 1, p - 1) : s

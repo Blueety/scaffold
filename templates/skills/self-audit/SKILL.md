@@ -23,6 +23,15 @@ description: 一致性走查——逐条核对活文档写的东西和仓库现�
 
 逐条**实跑**，不要读一遍觉得「应该没问题」：
 
+### 0. 闸门真的在跑吗
+
+```bash
+git config core.hooksPath        # 要输出 .githooks
+```
+
+clone 出来的仓库这里多半是空的——`.git/config` 不随仓库走，钩子不挂上，下面所有闸门
+**静默失效**，而且没有任何提示。补：`git config core.hooksPath .githooks`。
+
 ### 1. `docs/commands.md` —— 每条命令真的能跑
 
 ```bash

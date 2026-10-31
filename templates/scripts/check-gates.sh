@@ -122,6 +122,11 @@ check_slice()   { run_check slice   "$1"; }
 # 「文件在不在」的判断留在 bash —— 文件都不在的时候，awk 没机会开口。
 check_review() {
     local d="$1" f="$d/review.md"
+    # 只有 prd.md 的任务不要求裁决单：那时还没进 3.3（3.2 落 prd、3.3 定档位与计划、
+    # 3.8 出裁决单），没有可审的东西。不加这一条，T2/T3 任务连「先把 prd 提交一次」
+    # 都做不了。但只要有了 plan.md 或任何切片，就必须有裁决单——不能拿「还没写计划」
+    # 当借口把审查整条绕过去。
+    [ -f "$d/plan.md" ] || ls "$d"/[0-9]*-*.md >/dev/null 2>&1 || return 0
     if [ ! -f "$f" ]; then
         fail "$f: 这个任务的档位是 T2/T3，但缺 review.md（这两档的审查必须由独立子 agent 做，见 docs/agents/任务分级.md）"
         return
@@ -155,29 +160,41 @@ declared_module_paths() {
     awk -v kind=modules -f "$AWK_PROG" "$1" | sort -u
 }
 
-# 目录与路径一律以**工作区**为准，不取索引：索引里没有「空目录」这个概念，
+# 目录与路径的**存在性**以工作区为准，不取索引：索引里没有「空目录」这个概念，
 # 而 src/ 恰恰是空的 —— 只看索引会在首次提交时误报「src 不存在」。
-# 表的内容则取索引版本（见 check_architecture）。
-#
-# 但要排掉 git 根本不会跟踪的目录（.gitignore 命中的、点目录）：它们进不了索引，
-# 也不该进模块表 —— src/.cache 这种目录会让每次提交都失败，而写进表又会被规则 1
-# 判「声明了却不存在」，两头堵死。
+# 表的内容取索引版本（见 check_architecture）；实际有哪些模块目录见下面
+# arch_module_dirs（那个用索引，理由在它的注释里）。
+# 模块根下的**已跟踪**目录。用索引而不是扫工作区：
+#   - 未跟踪的目录要么还没 git add（还不该要求声明），要么是空的 ——
+#     而 git 不跟踪空目录，声明它又会被规则 1 判「声明了却不存在」，两头堵死。
+#   - 索引在暂存模式下正好是「这次提交后的样子」，两种模式口径一致。
+# 不在 git 仓库里（或索引读不出来）时退回扫工作区，那时排掉点目录和被 .gitignore 命中的。
 arch_module_dirs() {
-    local d ignored=""
-    local -a cand=()
+    local root="$1" d tracked
+    if tracked="$(git -C "$root" -c core.quotepath=false ls-files 2>/dev/null)"; then
+        printf '%s\n' "$tracked" | awk -v mr="$MODULE_ROOT" '
+            index($0, mr "/") == 1 {
+                rest = substr($0, length(mr) + 2)
+                i = index(rest, "/")
+                if (i > 0) print mr "/" substr(rest, 1, i - 1)
+            }
+        ' | LC_ALL=C sort -u
+        return
+    fi
+
+    local ignored="" cand=()
     while IFS= read -r d; do
         [ -n "$d" ] || continue
         case "${d##*/}" in .*) continue ;; esac        # 点目录不是模块
         cand+=("$d")
-    done < <( cd "$1" 2>/dev/null && [ -d "$MODULE_ROOT" ] && \
+    done < <( cd "$root" 2>/dev/null && [ -d "$MODULE_ROOT" ] && \
               find "$MODULE_ROOT" -mindepth 1 -maxdepth 1 -type d | sort -u )
 
     [ "${#cand[@]}" -gt 0 ] || return 0
 
     # 一次 check-ignore 把所有候选喂进去，它只吐被忽略的那些。
-    # 不在 git 仓库里时它整体失败 → ignored 为空 → 全都要查（退回旧行为）。
     ignored="$(printf '%s\n' "${cand[@]}" \
-        | git -C "$1" -c core.quotepath=false check-ignore --stdin 2>/dev/null || true)"
+        | git -C "$root" -c core.quotepath=false check-ignore --stdin 2>/dev/null || true)"
 
     for d in "${cand[@]}"; do
         case $'\n'"$ignored"$'\n' in *$'\n'"$d"$'\n'*) continue ;; esac
