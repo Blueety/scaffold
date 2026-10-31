@@ -125,13 +125,22 @@ check_slice()   { run_check slice   "$1"; }
 # 或把档位只写在 prd 里再补一份 DONE 的 journal，就整条免检了）。
 # journal 宣告 DONE 也算开工——任务都收尾了，不能再拿「还没写计划」当挡箭牌。
 task_has_started() {
-    local d="$1" p
-    for p in "$d"/*.md; do
-        [ -f "$p" ] || continue
+    local d="$1" p st
+    # 目录里除了这三份「任何任务都可能有的」文件之外还有别的东西 → 已经开工。
+    # 文件、目录、非 .md 都算：`handoff.md` 和 `research/` 同样说明这个任务在推进。
+    for p in "$d"/*; do
+        [ -e "$p" ] || continue
         case "${p##*/}" in prd.md|journal.md|review.md) ;; *) return 0 ;; esac
     done
+    # 裁决单本身在（哪怕还空着）也算开工：它出现就说明任务已经走到 3.8 了。
+    # 少了这一条，`prd + journal(状态空) + 空 review.md` 会因为「没开工」跳过
+    # 整份裁决单检查——空裁决单直接放行。
+    [ -f "$d/review.md" ] && return 0
+    # journal 记了结束状态 → 任务至少跑到收尾了。任何非空状态都算，
+    # 不能只认 DONE：`DONE_WITH_CONCERNS` / `BLOCKED` 同样是「跑过了」。
     [ -f "$d/journal.md" ] || return 1
-    [ "$(awk -v kind=status -v fpath="$d/journal.md" -f "$AWK_PROG" "$d/journal.md")" = "DONE" ]
+    st="$(awk -v kind=status -v fpath="$d/journal.md" -f "$AWK_PROG" "$d/journal.md")"
+    [ -n "$st" ]
 }
 
 # review.md（裁决单）：只有 T2 / T3 需要。
@@ -184,25 +193,28 @@ declared_module_paths() {
 #     不声明又违反规则 2 —— 两头堵死。它本来也不是模块。
 # 点目录和被 .gitignore 命中的不算：src/.cache 既进不了提交，也不该进模块表。
 arch_module_dirs() {
-    local root="$1" d ignored="" cand=()
+    local staged="$1" root="$2" d files
     while IFS= read -r d; do
         [ -n "$d" ] || continue
         case "${d##*/}" in .*) continue ;; esac        # 点目录不是模块
-        cand+=("$d")
-    done < <( cd "$root" 2>/dev/null && [ -d "$MODULE_ROOT" ] && \
-              find "$MODULE_ROOT" -mindepth 1 -maxdepth 1 -type d \
-                   ! -empty 2>/dev/null | sort -u )
-
-    [ "${#cand[@]}" -gt 0 ] || return 0
-
-    # 一次 check-ignore 把所有候选喂进去，它只吐被忽略的那些。
-    ignored="$(printf '%s\n' "${cand[@]}" \
-        | git -C "$root" -c core.quotepath=false check-ignore --stdin 2>/dev/null || true)"
-
-    for d in "${cand[@]}"; do
-        case $'\n'"$ignored"$'\n' in *$'\n'"$d"$'\n'*) continue ;; esac
-        printf '%s\n' "$d"
-    done
+        # 只算「clone 之后还会在」的目录：里面有 git 跟踪的、或者会被跟踪的
+        # （未跟踪且没被 .gitignore 命中）文件。三类目录不算，它们声明不了：
+        #   - 空目录：git 不跟踪空目录
+        #   - 只装着被 ignore 的文件的目录（`src/logs/` 下只有 *.log）
+        #   - 只含空子目录的目录
+        # 声明它们会在 clone 里变成「声明了却不存在」，不声明又违反规则 2，两头堵死。
+        # 目录列表来自 cwd（暂存模式是索引物化出的临时树），但「有没有内容」必须问
+        # 真正的仓库：临时树不是 git 仓库，在那儿跑 git 会失败并静默返回空。
+        if [ "$staged" -eq 1 ]; then
+            files="$(git -C "$root" -c core.quotepath=false ls-files -c -- "$d" 2>/dev/null | head -n 1)"
+        else
+            files="$(git -C "$root" -c core.quotepath=false ls-files -co --exclude-standard -- "$d" 2>/dev/null | head -n 1)"
+        fi
+        [ -n "$files" ] && printf '%s\n' "$d"
+    done < <(
+        [ -d "$MODULE_ROOT" ] || exit 0
+        find "$MODULE_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -u
+    )
 }
 
 arch_path_exists() { [ -e "$1/$2" ]; }
@@ -263,7 +275,7 @@ check_architecture() {
         done <<< "$declared"
         [ "$covered" -eq 1 ] \
             || fail "「$d」是 $MODULE_ROOT 下的模块目录，但 docs/architecture.md 的模块表里没有它"
-    done < <(arch_module_dirs "$root")
+    done < <(arch_module_dirs "$staged" "$root")
 
     # 提示（不是失败）：表里全是宽声明时，规则 2 永远不触发——新增模块目录不会被检查。
     # 只在全量自查时报；--staged 每次提交都跑，不适合反复提示。
@@ -384,6 +396,11 @@ main() {
                 tasks/_archive/*/*)
                     rest="${p#tasks/_archive/}"
                     dirs+=("tasks/_archive/${rest%%/*}") ;;
+                # 归档**拍平**了（`git mv` 没先 mkdir 的后果）：文件直接躺在
+                # `tasks/_archive/` 下面。全量自查会把它整个跳过，所以这里必须报
+                # ——否则「把任务拍平」的那次提交正好是唯一能溜过去的提交。
+                tasks/_archive/*.md)
+                    fail "$p: tasks/_archive/ 顶层不该有文件——归档要 'mkdir -p tasks/_archive' 之后再 git mv，见 tasks/README.md 的「归档」" ;;
                 tasks/*/*)
                     rest="${p#tasks/}"
                     d="tasks/${rest%%/*}"
@@ -398,7 +415,7 @@ main() {
         # 那些文件从此不在任何全量检查的覆盖里（--staged 碰到才会查）。
         for f in tasks/_archive/*.md; do
             [ -f "$f" ] || continue
-            fail "$f: tasks/_archive/ 顶层不该有文件——归档要 `mkdir -p tasks/_archive` 之后再 git mv，见 tasks/README.md 的「归档」"
+            fail "$f: tasks/_archive/ 顶层不该有文件——归档要 'mkdir -p tasks/_archive' 之后再 git mv，见 tasks/README.md 的「归档」"
             break
         done
         for d in tasks/*/; do

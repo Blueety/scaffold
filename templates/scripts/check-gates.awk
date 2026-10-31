@@ -117,11 +117,16 @@ function heading_level(s,   n) {
 # 标题是否就是 want（或 want 后面紧跟括号/冒号/空格，如 `## 确认（可选）`）。
 # 用「前缀 + 分隔符」而不是「含 want」：后者会让 `## 待确认事项` 顶替 `## 确认`，
 # 一个已勾项的干扰节就能把真正的确认节挡在外面。
-function title_matches(title, want,   c) {
+function title_matches(title, want,   rest) {
     if (title == want) return 1
-    if (substr(title, 1, length(want)) != want) return 0
-    c = substr(title, length(want) + 1, 1)
-    return (c == " " || c == "（" || c == "(" || c == ":" || c == "：")
+    # 全程按**字节**比：`index` 是字节比较，`length(want)+1` 在两种 locale 下也都
+    # 落在 want 之后（字节数一致）。用 substr(title, 1, length(want)) 那种字符切片
+    # 在非 UTF-8 locale 下会把「确」字切一半，`## 确认（可选）` 就匹配不上了
+    # （登录 shell 里 locale 正常，`env -u LANG` 才露馅）。
+    if (index(title, want) != 1) return 0
+    rest = substr(title, length(want) + 1)
+    return (index(rest, " ") == 1 || index(rest, "（") == 1 || index(rest, "(") == 1 \
+            || index(rest, ":") == 1 || index(rest, "：") == 1)
 }
 
 function md_section(want,   i, insec, lvl, hl, n, t) {
@@ -265,11 +270,28 @@ function field_block_body(lbl,   n, i, out) {
 # 反过来 `TODO` / `(待补)` / 单个 `-` 是最常见的偷懒写法，得算没填。
 # 括号里的字用 `（` `）` 当字面量而不是塞进方括号——方括号是按字节比的，
 # 多字节字符放进去会匹配到半个字。
-function is_placeholder(s) {
+function is_placeholder(s,   inner) {
     if (s == "（）" || s == "()") return 1
-    if (s ~ /^（.*）$/ && s ~ /占位|待补|待填|待定|placeholder/) return 1
-    if (s ~ /^\(.*\)$/ && s ~ /占位|待补|待填|待定|placeholder/) return 1
-    if (s == "TODO" || s == "TBD" || s == "N/A" || s == "NA" || s == "XXX") return 1
+    # 括号里只有「占位符类」的字才算没填。**必须锚定整段**：
+    # 用子串匹配的话 `（占位符长度计算）`、`（placeholder 属性生效）` 这种真内容
+    # 会被判成空；反过来 `（TODO）` `（待办）` `（未填）` 这种偷懒写法又得算空。
+    # 多字节字符用**分支**（`（|(`）而不是方括号——方括号是按字节比的，
+    # 多字节字符放进去只能匹配到它的第一个字节。
+    if (s ~ /^（.*）$/ || s ~ /^\(.*\)$/) {
+        inner = s
+        # 多字节字符只能用**字面量**匹配，不能进方括号：方括号是按字节比的，
+        # `[（(]` 只会吃掉「（」的第一个字节，剩下的两个字节留在 inner 里，
+        # 后面那条锚定的正则就永远匹配不上（C locale 下才露馅）。
+        sub(/^（/, "", inner)
+        sub(/^\(/, "", inner)
+        sub(/）$/, "", inner)
+        sub(/\)$/, "", inner)
+        gsub(/[[:space:]]/, "", inner)
+        inner = tolower(inner)
+        return (inner ~ /^(占位|占位符|待补|待填|待定|待办|未填|未完成|placeholder|todo|tbd|xxx|na|n\/a|…|-+|这里写.*|填写.*)$/)
+    }
+    if (tolower(s) == "todo" || tolower(s) == "tbd" || s == "N/A" || tolower(s) == "na" || tolower(s) == "xxx") return 1
+    if (s == "待办" || s == "未填" || s == "待补") return 1
     if (s == "-" || s == "--" || s == "—" || s == "…" || s == "...") return 1
     return 0
 }
@@ -323,24 +345,22 @@ function table_rows(text, skip,   n, i, seen, cells, nf, j, c, cnt) {
 
 # 未勾选的 `- [ ]`。跳过代码围栏内的行：把复选框包进 ``` 里就能同时骗过
 # 「还有几项没勾」和「一条确认项都没有」——两条都只看行首，看不出那是个代码块。
-function count_checkboxes(text,   n, i, c, fence) {
-    n = split(text, ROWS, "\n"); c = 0; fence = 0
-    for (i = 1; i <= n; i++) {
-        if (ROWS[i] ~ /^[[:space:]]*(```|~~~)/) { fence = !fence; continue }
-        if (fence) continue
-        if (ROWS[i] ~ /^[[:space:]]*[-*+][[:space:]]+\[[[:space:]]?\]/) c++
+# want: 0 = 只数没勾的，1 = 勾了没勾都数。
+function count_checkboxes(text, want,   n, i, c, fence, marks) {
+    n = split(text, ROWS, "\n"); c = 0; fence = 0; marks = 0
+    for (i = 1; i <= n; i++)
+        if (ROWS[i] ~ /^[[:space:]]*(```|~~~)/) marks++
+    # 围栏数量是奇数说明**有一个没闭合**。这时不能把后面的行都当成代码块里的
+    # ——那正好是一条「把没勾的项藏进未闭合围栏」的绕过路径。整份文档都不跳。
+    if (marks % 2 == 0) {
+        for (i = 1; i <= n; i++) {
+            if (ROWS[i] ~ /^[[:space:]]*(```|~~~)/) { fence = !fence; continue }
+            if (fence) { ROWS[i] = "" }      # 抹掉围栏内的行，下面的判定一视同仁
+        }
     }
-    return c
-}
-
-# 全部复选框（勾了没勾都算）。用来区分「全勾完了」和「一条确认项都没写」——
-# 后者是 fail-open：没有复选框，上面那个「还有几项没勾」自然是 0。
-function count_all_checkboxes(text,   n, i, c, fence) {
-    n = split(text, ROWS, "\n"); c = 0; fence = 0
     for (i = 1; i <= n; i++) {
-        if (ROWS[i] ~ /^[[:space:]]*(```|~~~)/) { fence = !fence; continue }
-        if (fence) continue
-        if (ROWS[i] ~ /^[[:space:]]*[-*+][[:space:]]+\[[ xX]\]/) c++
+        if (want) { if (ROWS[i] ~ /^[[:space:]]*[-*+][[:space:]]+\[[ xX]\]/) c++ }
+        else      { if (ROWS[i] ~ /^[[:space:]]*[-*+][[:space:]]+\[[[:space:]]?\]/) c++ }
     }
     return c
 }
@@ -350,7 +370,7 @@ function count_all_checkboxes(text,   n, i, c, fence) {
 function count_listitems(text,   n, i, c) {
     n = split(text, ROWS, "\n"); c = 0
     for (i = 1; i <= n; i++)
-        if (ROWS[i] ~ /^[[:space:]]*([-*+][[:space:]]+|[0-9]+[.、][[:space:]]*)[^[:space:]]/) c++
+        if (ROWS[i] ~ /^[[:space:]]*([-*+][[:space:]]+|(（|\()?[0-9]+([.]|、|\)|）)[[:space:]]*)[^[:space:]]/) c++
     return c
 }
 
@@ -359,8 +379,8 @@ function count_listitems(text,   n, i, c) {
 function count_result_items(text,   n, i, c) {
     n = split(text, ROWS, "\n"); c = 0
     for (i = 1; i <= n; i++) {
-        if (ROWS[i] !~ /^[[:space:]]*([-*+][[:space:]]+|[0-9]+[.、][[:space:]]*)[^[:space:]]/) continue
-        if (ROWS[i] ~ /[:：][[:space:]]*$/) continue
+        if (ROWS[i] !~ /^[[:space:]]*([-*+][[:space:]]+|(（|\()?[0-9]+([.]|、|\)|）)[[:space:]]*)[^[:space:]]/) continue
+        if (ROWS[i] ~ /(:|：)[[:space:]]*$/) continue
         c++
     }
     return c
@@ -372,7 +392,7 @@ function count_result_items(text,   n, i, c) {
 function count_items(text,   n, i, c) {
     n = split(text, ROWS, "\n"); c = 0
     for (i = 1; i <= n; i++)
-        if (ROWS[i] ~ /^[[:space:]]*([0-9]+[.、][[:space:]]*|[-*+][[:space:]]+)[^[:space:]]/) c++
+        if (ROWS[i] ~ /^[[:space:]]*((（|\()?[0-9]+([.]|、|\)|）)[[:space:]]*|[-*+][[:space:]]+)[^[:space:]]/) c++
     return c
 }
 
@@ -418,9 +438,9 @@ function plan_check(   tier, type, n, filled, hy, t) {
     if (!has_section("确认")) V("缺「## 确认」一节")
     else {
         t = section_text("确认")
-        if (count_all_checkboxes(t) == 0)
+        if (count_checkboxes(t, 1) == 0)
             V("「## 确认」里一条确认项都没有（照模板抄 6 条；确实不需要就写明为什么）")
-        n = count_checkboxes(t)
+        n = count_checkboxes(t, 0)
         if (n != 0) V("「## 确认」还有 " n " 项没勾")
     }
 
@@ -505,7 +525,7 @@ function journal_check(   i, missing, end_state, verify, changed) {
     if (table_rows(changed, 0) == 0) V("「## 改动文件清单」表里没有一行")
     # 只认「整个单元格就是一个占位符」的行。之前是「出现任何 <...> 就算」——
     # 那样 `Map<string, number>`、`<script>`、URL 里的尖括号都会被误判成残留占位符。
-    if (changed ~ /src\/[.．][.．][.．]/ || changed ~ /src\/…/ \
+    if (changed ~ /src\/(\.|．)(\.|．)(\.|．)/ || changed ~ /src\/…/ \
         || changed ~ /\|[[:space:]]*`?<[^>]*>`?[[:space:]]*\|/)
         V("「## 改动文件清单」还留着模板占位符（src/... 或 <...>）")
 }
@@ -551,9 +571,9 @@ function slice_check(   type, tier, prio, st, n, t) {
     if (!has_section("确认")) V("缺「## 确认」一节")
     else {
         t = section_text("确认")
-        if (count_all_checkboxes(t) == 0)
+        if (count_checkboxes(t, 1) == 0)
             V("「## 确认」里一条确认项都没有（照模板抄；确实不需要就写明为什么）")
-        n = count_checkboxes(t)
+        n = count_checkboxes(t, 0)
         if (n != 0) V("「## 确认」还有 " n " 项没勾")
     }
 }
