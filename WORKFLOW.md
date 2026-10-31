@@ -51,15 +51,7 @@
 说明为什么选这些，有没有替代方案。
 ```
 
-把决定抄成下面这个块（Phase 2 初始化技术栈时直接用，也会写进项目 `README.md` 的「技术栈」段）：
-
-```
-技术栈决定：
-- 语言: TypeScript
-- 框架: Next.js
-- 包管理: npm
-- 测试: Jest
-```
+把决定抄成 `web-chat-templates/tech-stack-decision.md` 的「记下来」那个块——**那是唯一一份**（这里只留指针，不复写，免得两边漂）。两个去处：整块写进项目 `README.md` 的「技术栈」段；其中「难换的」六项按 ADR 三条准入进 `docs/adr/`。
 
 不要等到 Phase 2 再想技术栈——那时候你已经在终端里了，来回切换成本更高。带锁定成本的选择（数据库、认证服务商、部署目标）会被 Phase 2 的 Agent 写进 `docs/adr/`。
 
@@ -78,7 +70,7 @@
 3. **刻意偏离常规的地方** — 你要求反着来做的，以及理由（否则以后会被「修好」）
 4. **代码里看不见的约束** — 合规、对方接口限制、环境限制，附出处
 
-**完成这一步后**：需求你能用自己的话讲清楚；上面四类里凡是出现过的，都已经记下来（不是只留在聊天记录里）；技术栈四项有结论；有界面的项目界面决策已钉死（且没有出现「现代、简洁、大气」这类形容词）。
+**完成这一步后**：需求你能用自己的话讲清楚；上面四类里凡是出现过的，都已经记下来（不是只留在聊天记录里）；技术栈决定块有结论（`web-chat-templates/tech-stack-decision.md` 的「记下来」）；有界面的项目界面决策已钉死（且没有出现「现代、简洁、大气」这类形容词）。
 
 ### Step 1.2: 生成 Task Brief
 
@@ -92,7 +84,7 @@
 
 **压缩规则：删讨论过程，留术语和决策。**
 
-重点保留 Goal、Acceptance Criteria、Constraints。讨论过程的寒暄、试错、来回确认删掉——本地 Agent 不需要你的聊天记录。
+重点保留 Goal、验收标准、Constraints。讨论过程的寒暄、试错、来回确认删掉——本地 Agent 不需要你的聊天记录。
 
 但下面四类内容**原样带过来**，不要当成「冗余」删掉：
 
@@ -197,10 +189,12 @@ uv add fastapi uvicorn
 
 4. 按 docs/agents/架构师.md 的「项目尺度架构设计」填 docs/architecture.md
    —— 模块划分 / 接口契约 / 数据模型 / 数据流。
-   模块按 Task Handoff 里「这一版要做的功能」切，不要按现有目录反推。
+   模块按 Task Handoff 里「这一版要做的功能」切，不要按现有目录反推；
+   数据模型用 Task Handoff 的「数据」那节，不要自己重新设计一遍。
 
 5. 把下面这份 Task Handoff 里的术语与决策，落成长期文档：
    - 术语 → CONTEXT.md
+   - 代码里看不见的约束 → docs/architecture.md 的「约束」段
    - 符合「难以撤销 + 没有背景会让人困惑 + 是真实取舍的结果」三条的决策 → docs/adr/0001-*.md
    - 只影响实现的细节不用写 ADR
 
@@ -272,7 +266,9 @@ mkdir tasks\2026-08-04-add-login
 ### Step 3.2: 写 prd.md
 
 把 Task Handoff 复制到 `tasks/<日期>-<简述>/prd.md`。
-按 prd.md 模板逐项填写：Goal、这一版要验证什么、Requirements、User Stories、验收标准、Out of Scope、Not yet specified、Constraints、Context Pointers、Testing Decisions、Risks、Verification Plan。
+按 prd.md 模板逐项填写：Goal、这一版要验证什么、Requirements、User Stories、验收标准、Out of Scope、Not yet specified、Constraints、Context Pointers、Testing Decisions、Risks、术语与决策、Verification Plan。
+
+交接卡里标「→ 长期文档」的节（现状、数据）**不要在 prd.md 里再抄一遍**——Phase 2 已经把它们的对应部分落成 `CONTEXT.md` / `docs/adr/` / `docs/architecture.md`。只有「已排除的方案 / 刻意反常规」里不够 ADR 三条准入的那部分留在 prd.md 的 `## 术语与决策`。
 
 `Not yet specified` 是**雾区**：确定在后面、但现在还没法精确表述的东西写在这里，**不要**硬拆成假切片。判据是「能不能现在就把问题写清楚」——能就开切片或决策条目，不能就留在这。每解掉一个决策，回来看一次这节。详见 `tasks/README.md`。
 
