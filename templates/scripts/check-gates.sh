@@ -148,15 +148,26 @@ table_rows() {
 
 # ---------------------------------------------------------------- 各项检查
 
-# 闸门 B：[DEBUG- 残留。cwd 就是检查范围 —— 暂存模式下是索引物化出的整棵树，
-# 也就是「这次提交之后仓库里的样子」，和全量自查同范围。
+# 闸门 B：[DEBUG- 残留。
+#   --staged：直接查索引（git grep --cached）。范围 = 这次提交后的仓库，和全量自查对齐；
+#             不扫物化出来的临时树——那要先 checkout-index 把整棵树写到磁盘、再全扫一遍，
+#             3000 文件 / 20MB 的仓库上 19s vs 0.67s。
+#   全量：扫工作区（含未跟踪文件，那才是「全量」的意义）。
+# -I 跳过二进制：grep 对二进制只会回一句「Binary file X matches」，没有行号也没有内容，
+# 当成「调试标记残留」是误报（图片、fixture、快照都可能恰好含这几个字节）。
 # 大小写不敏感：写 [debug-x] 同样是没清干净的调试埋点。
 check_gate_b() {
-    local hits
-    hits="$(find . -type f \
-        ! -path './.git/*' ! -path '*/node_modules/*' \
-        ! -name '*.md' ! -name 'check-gates.sh' \
-        -exec grep -Hin '\[DEBUG-' {} + 2>/dev/null | sed 's|^\./||' || true)"
+    local staged="$1" root="$2" hits
+    if [ "$staged" -eq 1 ]; then
+        hits="$(git -C "$root" grep -I -i -n --cached -e '\[DEBUG-' -- \
+            ':(exclude)*.md' ':(exclude)*check-gates.sh' \
+            ':(exclude)node_modules/*' ':(exclude)*/node_modules/*' 2>/dev/null || true)"
+    else
+        hits="$(find . -type f \
+            ! -path './.git/*' ! -path '*/node_modules/*' \
+            ! -name '*.md' ! -name 'check-gates.sh' \
+            -exec grep -H -I -i -n '\[DEBUG-' {} + 2>/dev/null | sed 's|^\./||' || true)"
+    fi
     if [ -n "$hits" ]; then
         printf '%s\n' "$hits" | while IFS= read -r line; do
             printf '  [x] 闸门 B: %s —— 调试标记残留\n' "$line"
@@ -605,8 +616,8 @@ main() {
         cd "$root" || exit 2
     fi
 
-    # 闸门 B：cwd 就是检查范围
-    check_gate_b
+    # 闸门 B：残留扫描。--staged 查索引，全量查工作区
+    check_gate_b "$staged" "$root"
 
     # 架构：模块表 vs 实际目录。仓库状态不变量，两种模式都跑
     check_architecture "$staged" "$root"
