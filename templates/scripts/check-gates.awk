@@ -90,14 +90,27 @@ function V(msg) { print "  [x] " fpath ": " msg }
 
 # ---------------------------------------------------------------- 查询
 
-# `## <标题>` 开一节，到下一个 `## ` 标题为止。取第一个标题里含 want 的。
-# 返回正文行数，正文存进 S[]。
-function md_section(want,   i, insec, n) {
-    n = 0; insec = 0
+# 标题级别（`## x` → 2，`### x` → 3）；不是标题返回 0。
+# 只认 2 级及以上：`# 大标题` 在任务文件里当文档标题用，不当节。
+function heading_level(s,   n) {
+    if (substr(s, 1, 1) != "#") return 0
+    n = 0
+    while (substr(s, n + 1, 1) == "#") n++
+    if (n < 2) return 0
+    if (substr(s, n + 1, 1) !~ /[[:space:]]/) return 0
+    return n
+}
+
+# 一个标题开一节（`### <标题>` 也算——模板不一定只用两级），
+# 到下一个**同级或更高级**的标题为止。取第一个标题里含 want 的。
+# 这样 `### 步骤` 能被当成节，而节里更深的 `###` 子标题不会把它切断。
+function md_section(want,   i, insec, lvl, hl, n) {
+    n = 0; insec = 0; lvl = 0
     for (i = 1; i <= NL; i++) {
-        if (L[i] ~ /^##[[:space:]]/) {
-            if (insec) break
-            if (index(L[i], want) > 0) insec = 1
+        hl = heading_level(L[i])
+        if (hl > 0) {
+            if (insec && hl <= lvl) break
+            if (!insec && index(L[i], want) > 0) { insec = 1; lvl = hl }
             continue
         }
         if (insec) S[++n] = L[i]
@@ -114,11 +127,16 @@ function section_text(want,   n, i, out) {
     return out
 }
 
-# 是否存在以 `## <标题>` 开头的行（等价于原来的 grep -q "^## <标题>"）。
-# 注意与 md_section 的区别：这里要求标题**以 want 开头**，那里只要求**含 want**。
-function has_section(want,   i) {
-    for (i = 1; i <= NL; i++)
-        if (substr(L[i], 1, 3 + length(want)) == "## " want) return 1
+# 是否存在**以 want 开头**的标题行（任意级别，`## 步骤` 和 `### 步骤` 都算）。
+# 注意与 md_section 的区别：这里要求标题以 want 开头，那里只要求含 want。
+function has_section(want,   i, hl, t) {
+    for (i = 1; i <= NL; i++) {
+        hl = heading_level(L[i])
+        if (hl == 0) continue
+        t = L[i]
+        sub(/^#+[[:space:]]+/, "", t)
+        if (substr(t, 1, length(want)) == want) return 1
+    }
     return 0
 }
 
@@ -213,6 +231,9 @@ function field_filled(lbl,   s, n, j, l, body) {
         gsub(/<!--.*-->/, "", l)
         sub(/^[[:space:]]*[-*][[:space:]]*/, "", l)
         gsub(/[[:space:]]/, "", l)
+        if (l == "") continue
+        if (l ~ /^（.*）$/) continue     # 整行只是模板提示（占位）→ 不算内容
+        if (l ~ /^`+$/) continue        # 整行只是空反引号 → 不算内容
         body = body l
     }
     return (body != "")
@@ -240,6 +261,15 @@ function table_rows(text, skip,   n, i, seen, cells, nf, j, c, cnt) {
 function count_checkboxes(text,   n, i, c) {
     n = split(text, ROWS, "\n"); c = 0
     for (i = 1; i <= n; i++) if (ROWS[i] ~ /^[[:space:]]*[-*+][[:space:]]+\[[[:space:]]?\]/) c++
+    return c
+}
+
+# 全部复选框（勾了没勾都算）。用来区分「全勾完了」和「一条确认项都没写」——
+# 后者是 fail-open：没有复选框，上面那个「还有几项没勾」自然是 0。
+function count_all_checkboxes(text,   n, i, c) {
+    n = split(text, ROWS, "\n"); c = 0
+    for (i = 1; i <= n; i++)
+        if (ROWS[i] ~ /^[[:space:]]*[-*+][[:space:]]+\[[ xX]\]/) c++
     return c
 }
 
@@ -281,13 +311,13 @@ function modules_dump(   n, i, cells, nf, p) {
 
 # ---------------------------------------------------------------- plan.md
 
-function plan_check(   tier, type, n, filled, hy) {
+function plan_check(   tier, type, n, filled, hy, t) {
     if (!has_section("任务概要")) { V("缺「## 任务概要」一节"); return }
 
     tier = md_token("档位")
     if (tier == "")                    V("档位未声明（找不到 `- **档位**:` 行）")
     else if (index(tier, "T?") > 0)    V("档位仍是模板占位符 T?")
-    else if (tier !~ /^T[0-3]/)        V("档位 '" tier "' 不是 T0–T3")
+    else if (tier !~ /^T[0-3]$/)       V("档位 '" tier "' 不是 T0–T3")
 
     type = md_token("类型")
     if (type == "") V("类型未声明（找不到 `- **类型**:` 行）")
@@ -299,10 +329,13 @@ function plan_check(   tier, type, n, filled, hy) {
 
     if (table_rows(section_text("步骤"), 1) == 0) V("「## 步骤」表里没有任何步骤")
 
-    # 确认清单：这一节必须存在，且里面不能有未勾的项
+    # 确认清单：这一节必须存在、里面至少有一条确认项、且不能有未勾的
     if (!has_section("确认")) V("缺「## 确认」一节")
     else {
-        n = count_checkboxes(section_text("确认"))
+        t = section_text("确认")
+        if (count_all_checkboxes(t) == 0)
+            V("「## 确认」里一条确认项都没有（照模板抄 6 条；确实不需要就写明为什么）")
+        n = count_checkboxes(t)
         if (n != 0) V("「## 确认」还有 " n " 项没勾")
     }
 
@@ -326,7 +359,7 @@ function plan_check(   tier, type, n, filled, hy) {
     }
 
     # 任务分级.md：bug 不可复现强制 T3
-    if (type == "bug-不可复现" && tier !~ /^T3/)
+    if (type == "bug-不可复现" && tier !~ /^T3$/)
         V("类型 bug-不可复现 必须声明 T3（现在写的是 '" tier "')")
 }
 
@@ -341,7 +374,7 @@ function prd_check(   tier, acc) {
     tier = md_token("档位")
     if (tier == "")                 { }
     else if (index(tier, "T?") > 0) V("档位仍是模板占位符 T?")
-    else if (tier !~ /^T[0-3]/)     V("档位 '" tier "' 不是 T0–T3")
+    else if (tier !~ /^T[0-3]$/)    V("档位 '" tier "' 不是 T0–T3")
 
     acc = section_text("验收标准")
     if (acc == "") V("缺「## 验收标准」一节（Spec 轴和 Done Means 都拿它当基准）")
@@ -382,13 +415,14 @@ function journal_check(   i, missing, end_state, verify, changed) {
 
     changed = section_text("改动文件清单")
     if (table_rows(changed, 0) == 0) V("「## 改动文件清单」表里没有一行")
-    if (index(changed, "src/...") > 0) V("「## 改动文件清单」还留着模板占位符 src/...")
+    if (index(changed, "src/...") > 0 || changed ~ /<[^>]*>/)
+        V("「## 改动文件清单」还留着模板占位符（src/... 或 <...>）")
 }
 
 # ---------------------------------------------------------------- NN-*.md 切片 / 决策条目
 
 # 类型决定哪一节必填（同 plan.md 的「修 bug 时必填」）。
-function slice_check(   type, tier, prio, st, n) {
+function slice_check(   type, tier, prio, st, n, t) {
     type = md_token("类型")
     if (type == "") { V("类型未声明（找不到 `- **类型**:` 行，值应为 切片 或 决策条目）"); return }
     if (type != "切片" && type != "决策条目") { V("类型 '" type "' 不在 {切片, 决策条目}"); return }
@@ -403,7 +437,7 @@ function slice_check(   type, tier, prio, st, n) {
     tier = md_token("档位")
     if (tier == "")                 V("档位未声明（找不到 `- **档位**:` 行）")
     else if (index(tier, "T?") > 0) V("档位仍是模板占位符 T?")
-    else if (tier !~ /^T[0-3]/)     V("档位 '" tier "' 不是 T0–T3")
+    else if (tier !~ /^T[0-3]$/)    V("档位 '" tier "' 不是 T0–T3")
 
     prio = md_token("优先级")
     if (prio == "") V("优先级未声明（找不到 `- **优先级**:` 行）")
@@ -425,7 +459,10 @@ function slice_check(   type, tier, prio, st, n) {
 
     if (!has_section("确认")) V("缺「## 确认」一节")
     else {
-        n = count_checkboxes(section_text("确认"))
+        t = section_text("确认")
+        if (count_all_checkboxes(t) == 0)
+            V("「## 确认」里一条确认项都没有（照模板抄；确实不需要就写明为什么）")
+        n = count_checkboxes(t)
         if (n != 0) V("「## 确认」还有 " n " 项没勾")
     }
 }

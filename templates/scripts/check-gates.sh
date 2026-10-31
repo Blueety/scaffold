@@ -13,15 +13,16 @@
 #   - 闸门 B：非 .md 文件里没有 [DEBUG- 残留（大小写不敏感；.md 是文档，会引用这个约定）。
 #              排除 scripts/check-gates.sh 自身、node_modules/、二进制文件；
 #              全量模式还排除 .gitignore 命中的本地文件（那是数据不是代码）
-#   - plan.md：档位与类型已声明、相关文件 / 验证命令非空、步骤表非空、确认清单全勾、
+#   - plan.md：档位与类型已声明、相关文件 / 验证命令非空、步骤表非空、
+#              确认清单至少一条且全勾、
 #              没有残留模板提示「（从 prd.md 提取）」、测试 Seam 四行要么全填要么全空、
 #              bug 任务的闸门 A 字段（含 ≥3 条排序假设）、bug-不可复现 必须声明 T3
 #   - prd.md：验收标准非空且有条目；档位行填了就必须合法（不强制存在）
 #   - journal.md：章节齐全（含雾区变化 / 一致性走查）、结束状态合法、验证结果有内容且不写「应该可以」、
-#                 改动清单已填且没留模板占位符 src/...、
+#                 改动清单已填且没留模板占位符（src/... 或 <...>）、
 #                 结束状态是 DONE / DONE_WITH_CONCERNS 时「主要提交」必须回填
 #   - NN-*.md（切片）：类型与状态取值合法、档位与优先级取值合法、演示与完成标准非空、
-#                      文件范围与被谁挡已填、确认清单全勾、状态 completed 时必须回填主要提交；
+#                      文件范围与被谁挡已填、确认清单至少一条且全勾、状态 completed 时必须回填主要提交；
 #                      决策条目则要求问题 / 结论 / 依据三字段非空
 #   - review.md（裁决单）：任务档位是 T2 / T3 时必须存在——plan.md / prd.md / 切片里
 #                          **任何一处**声明了 T2/T3 就算，不依赖 plan.md 是否存在；
@@ -308,7 +309,12 @@ main() {
         # set -u 会把 "$check_tree_tmp" 当成未绑定变量，trap 失败 → 脚本整体非 0。
         check_tree_tmp="$(mktemp -d)"
         trap 'rm -rf "$check_tree_tmp"' EXIT
-        git -C "$root" checkout-index -a --prefix="$check_tree_tmp/" 2>/dev/null || true
+        # 物化失败必须硬停：否则会在一个空临时树里继续跑，每个任务目录都报
+        # 「缺 plan.md / journal.md」——一堆假违规比一句报错难查得多。
+        if ! git -C "$root" checkout-index -a --prefix="$check_tree_tmp/" 2>/dev/null; then
+            printf '  [x] 无法把 git 索引物化到临时目录（checkout-index 失败），--staged 中止\n' >&2
+            exit 2
+        fi
         cd "$check_tree_tmp" || exit 2
     else
         cd "$root" || exit 2
