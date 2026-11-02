@@ -31,6 +31,7 @@ my-project-name/
 ├── README.md              # 项目说明
 ├── .gitignore             # Git 忽略规则
 ├── .gitattributes         # 锁 LF（脚本与钩子在 Linux/macOS 上必须无 CRLF）
+├── .scaffold-kinds        # 模板文件分类：mechanism 整份取模板 / content 按内容合并
 ├── src/                   # 源代码目录（空）
 ├── scripts/
 │   ├── check-gates.sh     # 闸门检查器（plan / prd / journal / 切片 / review / 架构 / [DEBUG- 残留）
@@ -103,7 +104,7 @@ bash scripts/scaffold-update.sh ../my-project-name --write   # 真的写
 |---|---|
 | 项目没动过这个文件 | 直接升级到新模板 |
 | 项目改过、模板没动 | 原样保留 |
-| 两边都改过 | `git merge-file` 合并，合不拢就写冲突标记并返回 1 |
+| 两边都改过 | `templates/.scaffold-kinds` 标成 `mechanism` 的取模板版（本地改动备份到现场）；其余走 `git merge-file`，合不拢就写冲突标记并返回 1 |
 | 模板新增 | 加进去；项目已有同名文件则跳过，不覆盖 |
 | 模板删掉 | 项目没动过就删，改过就保留并报告 |
 
@@ -111,15 +112,38 @@ bash scripts/scaffold-update.sh ../my-project-name --write   # 真的写
 
 **目标仓库有未提交改动时拒绝写盘**（退出码 2）：脚本写的是模板路径，你改的可能是同一批文件，混在一起提交就说不清谁写了什么。先提交或 stash，或加 `--force`。
 
-**冲突现场会留下来**：`<项目>/.git/scaffold-work/<时间戳>/` 里每个冲突文件都有 `.ours` / `.base` / `.theirs`，可以直接复核或重跑 `git merge-file`。放在 `.git/` 下是为了不进 `git status`——不用改项目的 `.gitignore`。
+**写盘时留现场**：`<项目>/.git/scaffold-work/<时间戳>/` 里有 `MANIFEST`（这次每条动作一行）、`REVISIONS`（base / new / 基线来源），冲突文件另有 `.ours` / `.base` / `.theirs`。放在 `.git/` 下是为了不进 `git status`——不用改项目的 `.gitignore`。
 
-**写盘后会跑一次目标仓库的闸门**，报出存量违规数，并记进 `.scaffold-version`（下次对比）。新装进去的规则对历史文件是全红的，这个数字应该在落盘那一刻就知道，而不是等你启用钩子才发现。
+**写盘后会跑一次目标仓库的闸门**，报出存量违规数与分布，并记进 `.scaffold-version`（下次对比增减）。新装进去的规则对历史文件是全红的，这个数字应该在落盘那一刻就知道，而不是等你启用钩子才发现。
 
 **基线（旧模板）从哪来**，按优先级：
 
-1. `--from <sha>`；
-2. 项目根 `.scaffold-version` 里记的提交（每次更新成功后写入）；
-3. 都没有 → 按文件内容在脚手架历史里比对，挑最像的那个版本，并报一致率（46 个版本约 5 秒）。这是给**这个功能出现之前**生成的项目用的自举路径。
+| 来源 | 怎么来的 |
+|---|---|
+| `--from <sha>` | 你直接指定 |
+| `.scaffold-version` 的 `commit=` | 上次更新成功后写入 |
+| 按内容比对 | 拿项目文件对脚手架历史，挑最像的版本，报一致率 |
+
+第三条是给**这个功能出现之前**生成的项目用的自举路径。一致率 < 80% 时**不合并**（退出码 2）：挑错版本会把「模板演进」和「本地改写」混成同一批冲突，比不合并危险得多。三条出路：
+
+```bash
+bash scripts/scaffold-update.sh ../p --from <sha>            # 知道就指定
+bash scripts/scaffold-update.sh ../p --adopt-baseline        # 只记基线，不合并
+bash scripts/scaffold-update.sh ../p --adopt-baseline <sha>
+bash scripts/scaffold-update.sh ../p --accept-guess          # 确认可用，硬着头皮合
+```
+
+`--adopt-baseline` 专治「脚手架历史被重写过、按内容比对不可信」——写完基线，之后每次同步都从它算起。选中的来源会记进 `baseline_source=`，下次不再重猜。
+
+### 三类文件
+
+| 分类 | 例子 | 「两边都改过」时 |
+|---|---|---|
+| `mechanism` | `docs/agents/*`、`skills/*`、`scripts/check-gates.*`、`.githooks/pre-commit`、`tasks/_template/*` | 取模板版；本地改动备份到现场。这类文件本地改了应当报上游，而不是留着 |
+| `content` | `AGENTS.md`、`docs/commands.md`、`docs/pitfalls.md` | 照常三方合并；想免掉反复冲突用下面的裁决 |
+| 未列出 | 其余 | 默认三方合并，和不分类时一样 |
+
+清单在 `templates/.scaffold-kinds`，只影响更新器，闸门不读它。
 
 ### 裁决：让「本地说了算」的文件不再反复冲突
 
@@ -139,19 +163,31 @@ bash scripts/scaffold-update.sh ../p --write --union .gitignore
 - 模板又变了 → `keep-local` 会提示「重新判断」（内容不动，不会偷偷合并）
 - `union` 会把新增的行追加进来，本地内容一条不丢
 
+预览时裁决同样生效（只是不落盘），所以可以先看效果再决定要不要 `--write`。
+
+### 其他开关
+
+| 开关 | 作用 |
+|---|---|
+| `--diff` | 预览时打印改动内容；跳过的同名文件也给两边行数 |
+| `--json <路径>` | 结果写成 JSON（基线、来源、每文件动作、闸门数），给 CI 用 |
+| `--refresh-gate-count` | 只重跑闸门、更新计数，不合并（清零常跨几个工作日） |
+| `--quiet` | 不打印动作清单 |
+| `--force` | 目标仓库脏也写 |
+
 ### Windows
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\scaffold-update.ps1 ..\my-project --write
 ```
 
-`PATH` 里的 `bash.exe` 常常是 System32 下的 WSL 桩，跑不了 Windows 路径，报错还会被控制台代码页吃成一行 `?`。这个包装器会先找 Git for Windows 自带的 bash，找不到就说清楚。
+`PATH` 里的 `bash.exe` 常常是 System32 下的 WSL 桩，跑不了 Windows 路径，报错还会被控制台代码页吃成一行 `?`。这个包装器会先找 Git for Windows 自带的 bash，找不到就说清楚。脚本启动时也会自检 `find` 是不是 POSIX 的——Windows 的 `find.exe` 抢在前面时什么都不输出，会把「找不到文件」误读成别的结论。
 
 脚手架 `templates/` 有未提交改动时照样能跑（「新版」取工作区），但**不记录基线提交**——下次更新会重新比对，等你把脚手架提交了就自愈。
 
 需要 bash 4 以上（macOS 自带的是 3.2，用 `brew install bash` 装的那个）。
 
-改了这个脚本要跑它自己的验收：`bash scripts/fixtures/update-test.sh`（约 100 秒，28 项断言，覆盖冲突现场、脏树、裁决、并集、闸门自检）。
+改了这个脚本要跑它自己的验收：`bash scripts/fixtures/update-test.sh`（约 200 秒，54 项断言：冲突现场、脏树、裁决、并集、基线阈值、adopt、闸门计数、机制文件、MANIFEST / JSON、`--quiet`）。闸门本身另有 `bash scripts/fixtures/gate-test.sh`（约 90 秒，7 项：规模底线、目标必填、纯重命名豁免、拍平归档）。
 
 ## 自检
 

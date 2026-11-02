@@ -90,7 +90,7 @@ commit_all "$P" local-edit
 out="$("$B" "$UP" "$P" --write 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && ok "冲突退出码 1" || no "冲突退出码 1（实际 $rc）"
 has "冲突   docs/commands.md" "$out" "报出冲突"
-kd="$(printf '%s\n' "$out" | sed -n 's/^冲突现场: //p' | head -n 1)"
+kd="$(printf '%s\n' "$out" | sed -n 's/^现场目录: //p' | head -n 1)"
 if [ -n "$kd" ] && [ -f "$kd/docs/commands.md.base" ] && [ -f "$kd/docs/commands.md.ours" ] && [ -f "$kd/docs/commands.md.theirs" ]; then
     ok "三方快照都在"
 else
@@ -163,6 +163,104 @@ echo "== --diff =="
 P="$TMP/p7"; cp -r "$TMP/withver" "$P"
 out="$("$B" "$UP" "$P" --diff 2>&1)"
 has "fixture 新增的一节" "$out" "--diff 打印了改动内容"
+# `| head` 关掉管道时，trap '' PIPE 会让 sed/grep 往 stderr 打 "Broken pipe"，
+# 把真正的输出淹掉。这里只关心 stderr 有没有这行噪音。
+err="$("$B" "$UP" "$P" --diff 2>&1 >/dev/null | head -3)"
+not "Broken pipe" "$err" "管道被关掉时不吐 Broken pipe"
+
+# ---------------------------------------------------------------- 8. 基线阈值
+
+echo "== 基线一致率阈值 =="
+P="$TMP/p8"; cp -r "$TMP/base-project" "$P"
+# 把项目里几乎所有模板文件都改一行，一致率必然掉到阈值以下
+while IFS= read -r f; do
+    case "$f" in AGENTS.md|README.md) continue ;; esac
+    [ -f "$P/$f" ] && printf '改过的行\n' >> "$P/$f"
+done < <( cd "$SCAF/templates" && find . -type f | sed 's|^\./||' )
+commit_all "$P" messy
+out="$("$B" "$UP" "$P" 2>&1)"; rc=$?
+[ "$rc" -eq 2 ] && ok "低一致率拒绝合并（退出码 2）" || no "低一致率拒绝合并（实际 $rc）"
+has "不敢拿它当 base" "$out" "说明了为什么拒绝"
+has "--adopt-baseline" "$out" "给出 --adopt-baseline 这条出路"
+out="$("$B" "$UP" "$P" --accept-guess 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then ok "--accept-guess 放行"; else no "--accept-guess 放行（实际 $rc）"; fi
+has "按 --accept-guess" "$out" "放行时仍然提醒"
+
+# ---------------------------------------------------------------- 9. --adopt-baseline
+
+echo "== --adopt-baseline =="
+P="$TMP/p9"; cp -r "$TMP/base-project" "$P"
+rm -f "$P/.scaffold-version"
+before="$(tree_sig "$P")"
+out="$("$B" "$UP" "$P" --adopt-baseline "$BASE_SHA" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "adopt 退出码 0" || no "adopt 退出码 0（实际 $rc）"
+# 「不动项目文件」= 除了新写的 .scaffold-version，git 看不到别的变化
+changed="$( cd "$P" && git -c core.quotepath=false status --porcelain --untracked-files=all 2>/dev/null )"
+if [ "$changed" = "?? .scaffold-version" ]; then ok "adopt 只写了基线文件"; else no "adopt 只写了基线文件（实际: $changed）"; fi
+grep -q "^commit=$BASE_SHA\$" "$P/.scaffold-version" && ok "记下了指定提交" || no "记下了指定提交"
+grep -q '^baseline_source=adopted$' "$P/.scaffold-version" && ok "来源标成 adopted" || no "来源标成 adopted"
+
+# ---------------------------------------------------------------- 10. --refresh-gate-count
+
+echo "== --refresh-gate-count =="
+P="$TMP/p10"; cp -r "$TMP/withver" "$P"
+commit_all "$P" init
+"$B" "$UP" "$P" --write >/dev/null 2>&1
+commit_all "$P" updated
+before="$(tree_sig "$P")"
+out="$("$B" "$UP" "$P" --refresh-gate-count 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "refresh 退出码 0" || no "refresh 退出码 0（实际 $rc）"
+has "已更新 .scaffold-version" "$out" "说明了只更新计数"
+grep -q '^gate_violations=' "$P/.scaffold-version" && ok "计数还在" || no "计数还在"
+not "汇总:" "$out" "没有走合并流程"
+
+# ---------------------------------------------------------------- 11. 机制文件
+
+echo "== .scaffold-kinds: mechanism =="
+# 机制文件两边都改过才算数：模板侧也要动一次
+printf '\n模板给执行者加的一条\n' >> "$SCAF/templates/docs/agents/执行者.md"
+git -C "$SCAF" add -A >/dev/null 2>&1
+git -C "$SCAF" -c user.email=t@t -c user.name=t commit -qm touch-agent
+P="$TMP/p11"; cp -r "$TMP/withver" "$P"
+printf '\n本地给执行者加的一条\n' >> "$P/docs/agents/执行者.md"
+commit_all "$P" local
+out="$("$B" "$UP" "$P" --write 2>&1)"; rc=$?
+has "覆盖   docs/agents/执行者.md" "$out" "机制文件直接取模板版"
+not "冲突   docs/agents/执行者.md" "$out" "机制文件不再起冲突"
+kd="$(printf '%s\n' "$out" | sed -n 's/^现场目录: //p' | head -n 1)"
+if [ -n "$kd" ] && grep -q '本地给执行者加的一条' "$kd/docs/agents/执行者.md.ours" 2>/dev/null; then
+    ok "本地改动备份进了现场"
+else
+    no "本地改动备份进了现场（kd=$kd）"
+fi
+grep -q '模板给执行者加的一条' "$P/docs/agents/执行者.md" && ok "文件已经是模板版" || no "文件已经是模板版"
+
+# ---------------------------------------------------------------- 12. MANIFEST / JSON / --quiet
+
+echo "== MANIFEST / JSON / --quiet =="
+P="$TMP/p12"; cp -r "$TMP/withver" "$P"
+commit_all "$P" init
+out="$("$B" "$UP" "$P" --write --json "$TMP/out.json" 2>&1)"; rc=$?
+has "这次写到的文件" "$out" "默认打印动作清单"
+mf="$(printf '%s\n' "$out" | sed -n 's/^现场目录: //p' | head -n 1)"
+if [ -n "$mf" ] && [ -f "$mf/MANIFEST" ]; then ok "MANIFEST 落了"; else no "MANIFEST 落了（mf=$mf）"; fi
+if [ -f "$TMP/out.json" ] && grep -q '"baseline_source"' "$TMP/out.json"; then ok "JSON 有 baseline_source"; else no "JSON 有 baseline_source"; fi
+if [ -f "$TMP/out.json" ] && grep -q '"files"' "$TMP/out.json"; then ok "JSON 有 files 数组"; else no "JSON 有 files 数组"; fi
+P="$TMP/p12b"; cp -r "$TMP/withver" "$P"
+commit_all "$P" init
+out="$("$B" "$UP" "$P" --write --quiet 2>&1)"
+not "这次写到的文件" "$out" "--quiet 不打印清单"
+has "汇总:" "$out" "--quiet 仍给汇总"
+
+# ---------------------------------------------------------------- 13. 跳过的文件给行数
+
+echo "== --diff 下跳过文件给行数 =="
+P="$TMP/p13"; cp -r "$TMP/withver" "$P"
+printf '# 项目自己写的同名文件\n内容不同\n' > "$P/docs/new-thing.md"
+commit_all "$P" own
+out="$("$B" "$UP" "$P" --diff 2>&1)"
+has "跳过   docs/new-thing.md" "$out" "报成跳过"
+has "模板" "$out" "给了行数提示"
 
 printf '\n结果: PASS %d / FAIL %d\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

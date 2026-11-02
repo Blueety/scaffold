@@ -7,11 +7,18 @@
 #   bash scripts/scaffold-update.sh <项目目录> --write        真正写盘
 #   bash scripts/scaffold-update.sh <项目目录> --diff         预览时打印改动内容
 #   bash scripts/scaffold-update.sh <项目目录> --from <sha>   指定基线版本
+#   bash scripts/scaffold-update.sh <项目目录> --accept-guess 接受按内容比对出来的基线
+#   bash scripts/scaffold-update.sh <项目目录> --adopt-baseline [<sha>]
+#                                                            只写基线、不合并（区分大小写无关）
+#   bash scripts/scaffold-update.sh <项目目录> --refresh-gate-count
+#                                                            只重跑闸门、更新计数
+#   bash scripts/scaffold-update.sh <项目目录> --json <路径>   把结果写成 JSON
 #   bash scripts/scaffold-update.sh <项目目录> --write --force
 #                                                            目标仓库脏也照样写
 #   bash scripts/scaffold-update.sh <项目目录> --write --keep-local <路径>
 #   bash scripts/scaffold-update.sh <项目目录> --write --union <路径>
 #                                                            给单个文件记下裁决
+#   bash scripts/scaffold-update.sh <项目目录> --quiet        不打印逐条路径清单
 #
 # 逐文件三方合并：
 #   ours   = 项目里现在的文件
@@ -25,20 +32,30 @@
 #   只在 theirs 里有    → 新增
 #   只在 base 里有      → 模板删掉了：ours 没改就删，改过就保留并报告
 #
+# 模板根的 `.scaffold-kinds` 给每个文件分类，分类决定「两边都改过」时怎么办：
+#   mechanism  机制文件（角色提示词、闸门脚本、钩子）：取模板版，本地改动备份到现场
+#   content    内容文件（AGENTS.md / commands.md 这类项目会填满的）：照常合并，
+#              合不拢就冲突；想免掉反复冲突用 --keep-local / --union
+#   没列出的文件走默认的三方合并。
+#
 # 已裁决的文件（记在 .scaffold-version 的 decision 段）不再走上面的判断：
 #   keep-local  永远保留本地版；模板又变了就提示「请重新判断」
 #   union       把模板里本地没有的行追加进来，本地行一条不删
-# 用途：docs/commands.md、docs/pitfalls.md 这类「项目填满、模板只是骨架」的
-# 文件，每次同步都会重新起冲突。裁决一次，之后只在模板真变了时才打扰你。
+# 预览时裁决同样生效（只是不落盘），所以能先看效果再决定。
 #
 # 基线从哪来（按优先级）：
 #   1. --from <sha>
 #   2. 项目根的 .scaffold-version 里记的 commit（本脚本更新成功后写入）
-#   3. 都没有 → 拿项目内容和脚手架历史逐个比对，挑最像的那个版本，并报匹配度
+#   3. 都没有 → 拿项目内容和脚手架历史逐个比对，挑最像的那个版本，并报一致率。
+#      **一致率 < 80% 时不合并**：那说明挑中的版本很可能不是生成时用的那个，
+#      拿它当 base 会把「模板演进」和「本地改写」混成同一批冲突。这时要么
+#      `--from <sha>`，要么 `--adopt-baseline`（只记基线），要么 `--accept-guess`。
+#      选中的来源会写进 .scaffold-version 的 baseline_source。
 #
 # 只碰 templates/ 里出现过的路径：src/、tasks/<任务>、.git/ 一概不动。
-# 有冲突时三方快照留在 <项目>/.git/scaffold-work/<时间戳>/（项目不是 git 仓库时
-# 落在 <项目>/.scaffold-work/），可以拿它们复核或重跑 git merge-file。
+# 写盘时在 <项目>/.git/scaffold-work/<时间戳>/（项目不是 git 仓库时在
+# <项目>/.scaffold-work/）留 MANIFEST（每条动作一行）和冲突文件的
+# .ours/.base/.theirs 三方快照，可以拿它们复核或重跑 git merge-file。
 # 写完要自己看一眼 `git diff` 再提交——脚本不做提交。
 #
 # 退出码：0 = 完成（含无事可做），1 = 有冲突需要人工处理，2 = 用法/环境错误。
@@ -69,6 +86,12 @@ WRITE=0
 FROM=""
 SHOW_DIFF=0
 FORCE=0
+QUIET=0
+ACCEPT_GUESS=0
+ADOPT=0
+ADOPT_SHA=""
+REFRESH_GATE=0
+JSON_OUT=""
 KEEP_LOCAL=()
 UNIONS=()
 POSITIONAL=()
@@ -78,6 +101,18 @@ while [ "$#" -gt 0 ]; do
         --dry-run) WRITE=0 ;;
         --diff)    SHOW_DIFF=1 ;;
         --force)   FORCE=1 ;;
+        --quiet)   QUIET=1 ;;
+        --accept-guess) ACCEPT_GUESS=1 ;;
+        --adopt-baseline)
+            ADOPT=1
+            case "${2:-}" in
+                ""|-*) ;;
+                *) ADOPT_SHA="$2"; shift ;;
+            esac ;;
+        --adopt-baseline=*) ADOPT=1; ADOPT_SHA="${1#--adopt-baseline=}" ;;
+        --refresh-gate-count) REFRESH_GATE=1 ;;
+        --json)    shift; [ "$#" -gt 0 ] || die "--json 需要一个路径"; JSON_OUT="$1" ;;
+        --json=*)  JSON_OUT="${1#--json=}" ;;
         --from)    shift; [ "$#" -gt 0 ] || die "--from 需要一个提交"; FROM="$1" ;;
         --from=*)  FROM="${1#--from=}" ;;
         --keep-local) shift; [ "$#" -gt 0 ] || die "--keep-local 需要一个路径"; KEEP_LOCAL+=("$1") ;;
@@ -99,6 +134,22 @@ PROJECT="$(cd "${POSITIONAL[0]}" 2>/dev/null && pwd)" || die "找不到项目目
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+
+# `find` 必须是 POSIX 的。Windows 的 find.exe 常常抢在 MSYS 前面，它把
+# `find . -type f` 当参数错误、退出非零且什么都不输出——于是「找不到文件」
+# 会被误读成「找不到能对上的版本」这类别的结论。这里先探一次，探不通就直说。
+find_probe() {
+    local d out
+    d="$(mktemp -d)" || return 1
+    : > "$d/probe"
+    out="$(find "$d" -type f 2>/dev/null)" || { rm -rf "$d"; return 1; }
+    rm -rf "$d"
+    case "$out" in *probe*) return 0 ;; *) return 1 ;; esac
+}
+find_probe || die "find 不是 POSIX find（Windows 自带的 find.exe 会抢在 Git 的 find 前面，且什么都不输出）。
+把 Git 的 usr/bin 放到 PATH 最前再跑，例如：
+  export PATH=\"/usr/bin:\$PATH\"
+或在 Git Bash 里直接运行。"
 
 # ---------------------------------------------------------------- 基线
 
@@ -131,11 +182,14 @@ declare -A DEC_STRAT=()
 declare -A DEC_SHA=()
 declare -A DNEW=()
 GATE_PREV=""
+BASE_SOURCE=""
+BASE_SOURCE_PREV=""
 if [ -f "$VERSION_FILE" ]; then
     while IFS='=' read -r k v; do
         case "$k" in
             project_name) [ -n "$PROJECT_NAME" ] || PROJECT_NAME="$v" ;;
             commit)       [ -n "$BASE_COMMIT" ] || BASE_COMMIT="$v" ;;
+            baseline_source) [ -n "$BASE_SOURCE_PREV" ] || BASE_SOURCE_PREV="$v" ;;
             gate_violations) [ -n "$GATE_PREV" ] || GATE_PREV="$v" ;;
             # `decision <策略> <路径> <记录时的模板 blob>`：整行没有 '='，于是 k 是整行
             decision\ *)
@@ -263,34 +317,172 @@ autodetect_base() {
         done < <(git -C "$SCAFFOLD_ROOT" -c core.quotepath=false ls-tree -r "$c" -- templates)
         [ "$total" -gt 0 ] || continue
         pct=$((score * 100 / total))
-        if [ "$pct" -gt "$best_pct" ]; then best_pct="$pct"; best="$c"; fi
+        # 同分时取**更早**的版本（git log 是新到旧，所以 `-ge` 让最后一个赢）。
+        # 取新的看着「改动少」，代价是：模板在 base→new 之间对「项目也改过的文件」
+        # 做的改动会被当成已应用，从此既不合并也不报告——静默丢改动。
+        # 取旧的只会多重合几次，冲突能看见。
+        if [ "$pct" -ge "$best_pct" ]; then best_pct="$pct"; best="$c"; fi
     done < <(git -C "$SCAFFOLD_ROOT" log --format=%H -n 100 -- templates)
     printf '%s %s\n' "$best" "$best_pct"
 }
 
+[ -n "$FROM" ] && BASE_SOURCE="--from"
+[ -z "$BASE_SOURCE" ] && [ -n "$BASE_COMMIT" ] && BASE_SOURCE="${BASE_SOURCE_PREV:-version-file}"
+
+# 一致率低时不合并。拿错 base 做三方合并，会把「模板演进」和「本地改写」混成
+# 同一批冲突——人工还得逐个反推哪边是哪边，比不合并危险得多。
+GUESS_MIN=80
 MATCH_PCT=""
 if [ -z "$BASE_COMMIT" ]; then
     DETECTED="$(autodetect_base)"
     BASE_COMMIT="${DETECTED%% *}"
     MATCH_PCT="${DETECTED##* }"
     [ -n "$BASE_COMMIT" ] || die "在脚手架历史里找不到能对上的版本，请用 --from <sha> 指定"
-    [ "$MATCH_PCT" -ge 50 ] || note "最像的版本只对上 ${MATCH_PCT}% 的文件 —— 项目可能改动较多，合并结果请仔细看"
+    BASE_SOURCE="content-guess:${MATCH_PCT}%"
+    if [ "$MATCH_PCT" -lt "$GUESS_MIN" ] && [ "$ACCEPT_GUESS" -eq 0 ]; then
+        printf '错误: 按内容比对挑中的基线 %s 只对上 %s%% 的文件（阈值 %s%%），不敢拿它当 base 合并。\n' \
+            "${BASE_COMMIT:0:7}" "$MATCH_PCT" "$GUESS_MIN" >&2
+        printf '  · 知道生成时用的版本 → --from <sha>\n' >&2
+        printf '  · 就按这个版本记下、这次不合并 → --adopt-baseline %s\n' "${BASE_COMMIT:0:7}" >&2
+        printf '  · 确认可以用 → --accept-guess\n' >&2
+        exit 2
+    fi
+    [ "$MATCH_PCT" -lt "$GUESS_MIN" ] && note "按 --accept-guess 用了 ${MATCH_PCT}% 的基线 —— 冲突要逐个看，别整批接受"
 fi
 
 if [ -n "$BASE_COMMIT" ] && ! git -C "$SCAFFOLD_ROOT" merge-base --is-ancestor "$BASE_COMMIT" HEAD 2>/dev/null; then
     note "基线 $BASE_COMMIT 不是当前 HEAD 的祖先（脚手架历史被改写过？）—— 合并结果请仔细看"
 fi
 
+NEW_COMMIT="$(git -C "$SCAFFOLD_ROOT" rev-parse HEAD 2>/dev/null || true)"
+
+# `.scaffold-version` 的字段只在一处定义：--write 收尾、--adopt-baseline、
+# --refresh-gate-count 三个入口共用，免得某次改动漏掉一个入口。
+gate_violations=""
+write_version_file() {
+    local commit="$1" source="$2"
+    [ -n "$gate_violations" ] || gate_violations="$GATE_PREV"
+    {
+        printf 'scaffold=%s\n' "$SCAFFOLD_ROOT"
+        printf 'project_name=%s\n' "$PROJECT_NAME"
+        printf 'commit=%s\n' "$commit"
+        [ -n "$source" ] && printf 'baseline_source=%s\n' "$source"
+        printf 'updated=%s\n' "$(date +%Y-%m-%d)"
+        [ -n "$gate_violations" ] && printf 'gate_violations=%s\n' "$gate_violations"
+        # 裁决按路径排序，diff 里才不会每次换位置
+        if [ "${#DEC_STRAT[@]}" -gt 0 ]; then
+            local p
+            for p in $(printf '%s\n' "${!DEC_STRAT[@]}" | sort); do
+                printf 'decision %s %s %s\n' "${DEC_STRAT[$p]}" "$p" "${DEC_SHA[$p]:-}"
+            done
+        fi
+    } > "$VERSION_FILE"
+}
+
+# 在目标仓库跑一次闸门。新项目零违规；既有项目的历史文件按新规则会全红，
+# 这个数必须在这里就报出来——上一次是装完工具一声不吭，隔了两轮才发现有几百条。
+gate_report() {
+    [ -f "$PROJECT/scripts/check-gates.sh" ] || return 0
+    local out n dir
+    out="$( cd "$PROJECT" && "${BASH:-bash}" scripts/check-gates.sh 2>&1 )" || true
+    n="$(printf '%s\n' "$out" | grep -c '^  \[x\]')" || n=0
+    gate_violations="$n"
+    printf '\n自检：在目标仓库跑一次闸门检查（新装进来的规则对历史文件也会判）…\n'
+    if [ "$n" -eq 0 ]; then
+        printf '  存量违规 0 条，钩子可以放心启用。\n'
+        return 0
+    fi
+    printf '  存量违规 %s 条' "$n"
+    if [ -n "$GATE_PREV" ]; then
+        if [ "$n" -gt "$GATE_PREV" ]; then printf '（上次 %s，多了 %s）\n' "$GATE_PREV" "$((n - GATE_PREV))"
+        elif [ "$n" -lt "$GATE_PREV" ]; then printf '（上次 %s，少了 %s）\n' "$GATE_PREV" "$((GATE_PREV - n))"
+        else printf '（与上次相同）\n'; fi
+    else
+        printf '\n'
+    fi
+    # 分布比总数有用：914 条是「5 个目录 × 12 条」还是「散在 200 个文件里」，
+    # 决定先归档还是先补字段。
+    printf '%s\n' "$out" | grep '^  \[x\]' | sed -E 's/^  \[x\] ([^:]*):.*/\1/' \
+        | sed -E 's|^(tasks/(_archive/)?[^/]+)/.*|\1|; s|^([^/]+)/.*|\1/|' \
+        | sort | uniq -c | sort -rn | head -8 | sed 's/^/  /'
+    printf '  启用钩子前先清零，否则每次提交都会被拦；治理路线见 tasks/README.md 的「闸门升级后的存量违规」。\n'
+    hp="$(git -C "$PROJECT" config --get core.hooksPath 2>/dev/null || true)"
+    if [ "$hp" != ".githooks" ]; then
+        printf '  提示: core.hooksPath 不是 .githooks，钩子不会执行（git config core.hooksPath .githooks）。\n'
+    fi
+}
+
+# --json：给 CI / 父进程一份机器可读的结果，省得解析人类文本。
+json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    printf '%s' "$s"
+}
+
+# ACTIONS 里存的是「动作 + 空格 + 路径」（对齐用的空格宽度不固定），拆回来。
+split_action() {
+    ACT_LABEL="${1%% *}"
+    local rest="${1#"$ACT_LABEL"}"
+    ACT_PATH="${rest#"${rest%%[! ]*}"}"
+}
+
+write_json() {
+    local a act path first=1
+    {
+        printf '{\n'
+        printf '  "project": "%s",\n' "$(json_escape "$PROJECT")"
+        printf '  "baseline": "%s",\n' "${BASE_COMMIT:-}"
+        printf '  "baseline_source": "%s",\n' "$(json_escape "${BASE_SOURCE:-}")"
+        printf '  "new": "%s",\n' "${NEW_COMMIT:-}"
+        if [ "$WRITE" -eq 1 ]; then printf '  "write": true,\n'; else printf '  "write": false,\n'; fi
+        printf '  "counts": {"upgrade": %d, "merge": %d, "union": %d, "keep": %d, "overwrite": %d, "conflict": %d, "add": %d, "delete": %d, "skip": %d, "unchanged": %d, "foreign": %d},\n' \
+            "$n_up" "$n_merge" "$n_union" "$n_keep" "$n_over" "$n_conf" "$n_add" "$n_del" "$n_skip" "$n_same" "$n_foreign"
+        printf '  "gate": {"violations": %s, "previous": %s},\n' \
+            "${gate_violations:-null}" "${GATE_PREV:-null}"
+        printf '  "files": ['
+        for a in ${ACTIONS[@]+"${ACTIONS[@]}"}; do
+            split_action "$a"
+            [ "$first" -eq 1 ] || printf ','
+            first=0
+            printf '\n    {"action": "%s", "path": "%s"}' "$ACT_LABEL" "$(json_escape "$ACT_PATH")"
+        done
+        [ "$first" -eq 1 ] || printf '\n  '
+        printf ']\n}\n'
+    } > "$JSON_OUT" || die "写不了 JSON: $JSON_OUT"
+    printf '\nJSON: %s\n' "$JSON_OUT"
+}
+
+# --adopt-baseline：只记基线，不合并。给「脚手架历史被重写过、按内容比对不可信」
+# 的项目一条不靠猜的路：知道哪个版本就写哪个，之后每次同步都从它算起。
+if [ "$ADOPT" -eq 1 ]; then
+    adopt="${ADOPT_SHA:-$NEW_COMMIT}"
+    is_commit "$adopt" || die "--adopt-baseline 的提交在脚手架里不存在: $adopt"
+    write_version_file "$adopt" "adopted"
+    printf '已记下基线: %s（来源 adopted，没有改动任何项目文件）\n' "${adopt:0:7}"
+    printf '下次同步从它算起；要换成别的版本就再跑一次 --adopt-baseline <sha>。\n'
+    exit 0
+fi
+
+# --refresh-gate-count：只重跑闸门、更新计数。清零常跨好几个工作日，
+# 中间不该为了更新一个数字去重做一次合并。
+if [ "$REFRESH_GATE" -eq 1 ]; then
+    is_repo=0
+    git -C "$PROJECT" rev-parse --git-dir >/dev/null 2>&1 && is_repo=1
+    gate_report
+    write_version_file "${BASE_COMMIT:-}" "${BASE_SOURCE:-}"
+    printf '已更新 .scaffold-version 的 gate_violations（没有改动任何项目文件）。\n'
+    exit 0
+fi
+
 render_commit "$BASE_COMMIT" "$WORK/base" || die "展开基线版本 $BASE_COMMIT 失败"
 render_worktree "$WORK/theirs" || die "展开当前 templates/ 失败"
-
-NEW_COMMIT="$(git -C "$SCAFFOLD_ROOT" rev-parse HEAD 2>/dev/null || true)"
 
 printf '项目: %s\n' "$PROJECT"
 if [ -n "$MATCH_PCT" ]; then
     printf '基线: %s（按内容比对，一致率 %s%%）\n' "${BASE_COMMIT:0:7}" "$MATCH_PCT"
 else
-    printf '基线: %s\n' "${BASE_COMMIT:0:7}"
+    printf '基线: %s（来源 %s）\n' "${BASE_COMMIT:0:7}" "${BASE_SOURCE:-version-file}"
 fi
 printf '新版: %s\n\n' "${NEW_COMMIT:0:7}"
 
@@ -329,8 +521,24 @@ fi
 # ---------------------------------------------------------------- 逐文件
 
 n_up=0 n_keep=0 n_merge=0 n_conf=0 n_add=0 n_del=0 n_same=0 n_foreign=0
-n_skip=0 n_union=0 n_stale=0
+n_skip=0 n_union=0 n_stale=0 n_over=0
 STALE=()
+ACTIONS=()
+
+# 模板根的 .scaffold-kinds 给文件分类。没有这个文件时全部走默认的三方合并，
+# 行为和不分类完全一样——它只影响「两边都改过」这一支。
+declare -A KIND=()
+KINDS_FILE="$TEMPLATE_DIR/.scaffold-kinds"
+if [ -f "$KINDS_FILE" ]; then
+    # 注意不能写 `IFS= read`：IFS 清空后不做字段切分，整行会全落到 $kind 里，
+    # path 永远是空——所有行都被当成注释跳过，分类静默失效（`read` 默认按空白切）。
+    while read -r kind path extra; do
+        case "$kind" in ''|'#'*) continue ;; esac
+        [ -n "${path:-}" ] || continue
+        KIND["$path"]="$kind"
+        [ -n "${extra:-}" ] && note "$KINDS_FILE 里「$path」这一行多了内容，已忽略: $extra"
+    done < "$KINDS_FILE"
+fi
 
 is_repo=0
 git -C "$PROJECT" rev-parse --git-dir >/dev/null 2>&1 && is_repo=1
@@ -349,21 +557,26 @@ if [ "$WRITE" -eq 1 ] && [ "$is_repo" -eq 1 ] && [ "$FORCE" -eq 0 ]; then
     fi
 fi
 
-# 冲突现场：base/ours/theirs 各留一份，否则只能凭记忆裁决。
+# 现场目录：base/ours/theirs 快照和 MANIFEST 都放这儿，否则只能凭记忆裁决。
 # 优先放 .git/ 里——git 自己就不跟踪，不需要动目标的 .gitignore。
 KEEP_DIR=""
-keep_conflict() {
-    local p="$1" o="$2" b="$3" t="$4" gitdir
-    if [ -z "$KEEP_DIR" ]; then
-        if [ "$is_repo" -eq 1 ]; then
-            gitdir="$(git -C "$PROJECT" rev-parse --absolute-git-dir 2>/dev/null || printf '%s/.git' "$PROJECT")"
-            KEEP_DIR="$gitdir/scaffold-work/$(date +%Y%m%d-%H%M%S)"
-        else
-            KEEP_DIR="$PROJECT/.scaffold-work/$(date +%Y%m%d-%H%M%S)"
-        fi
-        mkdir -p "$KEEP_DIR" || return 0
-        printf 'base=%s\nnew=%s\n' "${BASE_COMMIT:-}" "${NEW_COMMIT:-}" > "$KEEP_DIR/REVISIONS"
+ensure_work_dir() {
+    [ -n "$KEEP_DIR" ] && return 0
+    local gitdir
+    if [ "$is_repo" -eq 1 ]; then
+        gitdir="$(git -C "$PROJECT" rev-parse --absolute-git-dir 2>/dev/null || printf '%s/.git' "$PROJECT")"
+        KEEP_DIR="$gitdir/scaffold-work/$(date +%Y%m%d-%H%M%S)"
+    else
+        KEEP_DIR="$PROJECT/.scaffold-work/$(date +%Y%m%d-%H%M%S)"
     fi
+    mkdir -p "$KEEP_DIR" || return 1
+    printf 'base=%s\nnew=%s\nsource=%s\n' "${BASE_COMMIT:-}" "${NEW_COMMIT:-}" "${BASE_SOURCE:-}" \
+        > "$KEEP_DIR/REVISIONS"
+}
+
+keep_conflict() {
+    local p="$1" o="$2" b="$3" t="$4"
+    ensure_work_dir || return 0
     mkdir -p "$KEEP_DIR/$(dirname "$p")" 2>/dev/null || true
     cp "$o" "$KEEP_DIR/$p.ours" 2>/dev/null || true
     cp "$b" "$KEEP_DIR/$p.base" 2>/dev/null || true
@@ -402,12 +615,19 @@ same() {
 }
 
 # --diff：让「升级」这个结论带上内容。默认只给分类，十个文件全凭信任接受。
+# 输出一律走内建 printf、不经管道：脚本开了 `trap '' PIPE`，管道下游一关，
+# sed/grep 会往 stderr 打 "Broken pipe"，把真正的输出淹掉（`--diff | head` 就是这样）。
+indent_print() {
+    local prefix="$1" line
+    while IFS= read -r line; do printf '%s%s\n' "$prefix" "$line"; done
+}
+
 show_diff() {
     [ "$SHOW_DIFF" -eq 1 ] || return 0
     local out
-    out="$(diff -u "$1" "$2" 2>/dev/null | sed -n '3,22p')" || true
+    out="$(diff -u "$1" "$2" 2>/dev/null)" || true
     [ -n "$out" ] || return 0
-    printf '%s\n' "$out" | sed 's/^/      /'
+    printf '%s\n' "$out" | sed -n '3,22p' | indent_print '      '
 }
 
 while IFS= read -r p; do
@@ -438,21 +658,25 @@ while IFS= read -r p; do
                 if [ -n "$novel" ]; then
                     printf '  裁决   %s（keep-local：保留本地版）\n' "$p"
                     n_skip=$((n_skip + 1))
+                    ACTIONS+=("跳过    $p")
                     continue
                 fi
                 printf '  提示   %s（已裁决保留本地，但模板已变 —— 重新判断后重记裁决）\n' "$p"
                 STALE+=("$p")
                 n_stale=$((n_stale + 1))
+                ACTIONS+=("提示    $p")
                 continue
                 ;;
             union)
                 if [ "$has_o" -eq 0 ]; then
                     printf '  保留   %s（本地已删，裁决是 union —— 自己看要不要恢复）\n' "$p"
                     n_keep=$((n_keep + 1))
+                    ACTIONS+=("保留    $p")
                     continue
                 fi
                 printf '  并集   %s\n' "$p"
                 n_union=$((n_union + 1))
+                ACTIONS+=("并集    $p")
                 if [ "$WRITE" -eq 1 ]; then union_append "$o" "$t"; mark_exec "$p"; fi
                 DEC_SHA["$p"]="$cur_sha"
                 continue
@@ -466,10 +690,12 @@ while IFS= read -r p; do
         if same "$o" "$b"; then
             printf '  删除   %s\n' "$p"
             n_del=$((n_del + 1))
+            ACTIONS+=("删除    $p")
             [ "$WRITE" -eq 1 ] && rm -f "$o"
         else
             printf '  保留   %s（模板已删，本地改过）\n' "$p"
             n_keep=$((n_keep + 1))
+            ACTIONS+=("保留    $p")
         fi
         continue
     fi
@@ -483,11 +709,17 @@ while IFS= read -r p; do
             else
                 printf '  跳过   %s（项目已有同名文件，不是模板来的）\n' "$p"
                 n_foreign=$((n_foreign + 1))
+                ACTIONS+=("跳过    $p")
+                if [ "$SHOW_DIFF" -eq 1 ]; then
+                    printf '        模板 %s 行 / 本地 %s 行，内容不同；要比较就看这两个文件\n' \
+                        "$(wc -l < "$t" | tr -d ' ')" "$(wc -l < "$o" | tr -d ' ')"
+                fi
             fi
             continue
         fi
         printf '  新增   %s\n' "$p"
         n_add=$((n_add + 1))
+        ACTIONS+=("新增    $p")
         if [ "$WRITE" -eq 1 ]; then
             mkdir -p "$(dirname "$o")"
             cp "$t" "$o"
@@ -505,6 +737,7 @@ while IFS= read -r p; do
             printf '  保留   %s（本地已删除，模板有改动 —— 自己判断要不要恢复）\n' "$p"
             n_keep=$((n_keep + 1))
         fi
+        ACTIONS+=("保留    $p")
         continue
     fi
 
@@ -513,12 +746,29 @@ while IFS= read -r p; do
     elif same "$o" "$b"; then
         printf '  升级   %s\n' "$p"
         n_up=$((n_up + 1))
+        ACTIONS+=("升级    $p")
         show_diff "$b" "$t"
         if [ "$WRITE" -eq 1 ]; then cat "$t" > "$o"; mark_exec "$p"; fi
     elif same "$t" "$b"; then
         printf '  保留   %s（本地改过，模板没动）\n' "$p"
         n_keep=$((n_keep + 1))
+        ACTIONS+=("保留    $p")
     else
+        # 两边都改过。分类决定怎么合：
+        # mechanism（角色提示词、闸门脚本、钩子）本地改了就一定是改错了地方，
+        # 取模板版并留下本地版供追溯；content 和未分类的文件照常三方合并。
+        if [ "${KIND[$p]:-}" = "mechanism" ]; then
+            printf '  覆盖   %s（机制文件：取模板版，本地改动留在现场）\n' "$p"
+            n_over=$((n_over + 1))
+            ACTIONS+=("覆盖    $p")
+            show_diff "$b" "$t"
+            if [ "$WRITE" -eq 1 ]; then
+                keep_conflict "$p" "$o" "$b" "$t"
+                cat "$t" > "$o"
+                mark_exec "$p"
+            fi
+            continue
+        fi
         merged="$WORK/merged"
         # 本地那一版先归一到 LF 再参与合并：项目锁 eol=lf，CR 不是内容。
         # 不归一的话，一个 CRLF 文件会被 git merge-file 判成「每一行都变了」。
@@ -526,11 +776,13 @@ while IFS= read -r p; do
         if git merge-file -p -L local -L scaffold-base -L scaffold-new "$WORK/ours.lf" "$b" "$t" > "$merged"; then
             printf '  合并   %s\n' "$p"
             n_merge=$((n_merge + 1))
+            ACTIONS+=("合并    $p")
             show_diff "$b" "$t"
             if [ "$WRITE" -eq 1 ]; then cat "$merged" > "$o"; mark_exec "$p"; fi
         else
             printf '  冲突   %s（已写冲突标记）\n' "$p"
             n_conf=$((n_conf + 1))
+            ACTIONS+=("冲突    $p")
             show_diff "$b" "$t"
             if [ "$WRITE" -eq 1 ]; then
                 keep_conflict "$p" "$o" "$b" "$t"
@@ -545,35 +797,6 @@ done < <(
     } | sort -u
 )
 
-# ---------------------------------------------------------------- 事后自检
-
-# 装进来的闸门对新项目是零违规，对既有项目是一堆存量债——上一次就是这么来的：
-# 工具装完一声不吭，使用者隔了两轮才发现有 599 条。
-gate_violations=""
-gate_report() {
-    [ -f "$PROJECT/scripts/check-gates.sh" ] || return 0
-    printf '\n自检：在目标仓库跑一次闸门检查（新装进来的规则对历史文件也会判）…\n'
-    local out n
-    out="$( cd "$PROJECT" && "${BASH:-bash}" scripts/check-gates.sh 2>&1 )" || true
-    n="$(printf '%s\n' "$out" | grep -c '^  \[x\]')" || n=0
-    gate_violations="$n"
-    if [ "$n" -eq 0 ]; then
-        printf '  存量违规 0 条，钩子可以放心启用。\n'
-    else
-        printf '  存量违规 %s 条:\n' "$n"
-        printf '%s\n' "$out" | grep '^  \[x\]' | head -5 | sed 's/^/  /'
-        [ "$n" -gt 5 ] && printf '  …（还有 %s 条）\n' "$((n - 5))"
-        if [ -n "$GATE_PREV" ] && [ "$n" -gt "$GATE_PREV" ]; then
-            printf '  比上次多 %s 条 —— 这次升级让规则变严了。\n' "$((n - GATE_PREV))"
-        fi
-        printf '  启用钩子前先清零，否则每次提交都会被拦；治理路线见 tasks/README.md 的「闸门升级后的存量违规」。\n'
-    fi
-    hp="$(git -C "$PROJECT" config --get core.hooksPath 2>/dev/null || true)"
-    if [ "$hp" != ".githooks" ]; then
-        printf '  提示: core.hooksPath 不是 .githooks，钩子不会执行（git config core.hooksPath .githooks）。\n'
-    fi
-}
-
 # ---------------------------------------------------------------- 版本记录
 
 if [ "$WRITE" -eq 1 ]; then
@@ -587,28 +810,16 @@ if [ "$WRITE" -eq 1 ]; then
     fi
 
     gate_report
-
-    {
-        printf 'scaffold=%s\n' "$SCAFFOLD_ROOT"
-        printf 'project_name=%s\n' "$PROJECT_NAME"
-        printf 'commit=%s\n' "$record"
-        printf 'updated=%s\n' "$(date +%Y-%m-%d)"
-        [ -n "$gate_violations" ] && printf 'gate_violations=%s\n' "$gate_violations"
-        # 裁决按路径排序，diff 里才不会每次换位置
-        if [ "${#DEC_STRAT[@]}" -gt 0 ]; then
-            for p in $(printf '%s\n' "${!DEC_STRAT[@]}" | sort); do
-                printf 'decision %s %s %s\n' "${DEC_STRAT[$p]}" "$p" "${DEC_SHA[$p]:-}"
-            done
-        fi
-    } > "$VERSION_FILE"
+    write_version_file "$record" "$BASE_SOURCE"
 fi
 
 # ---------------------------------------------------------------- 汇总
 
-printf '\n汇总: 升级 %d / 合并 %d / 并集 %d / 保留 %d / 冲突 %d / 新增 %d / 删除 %d / 跳过 %d / 未变 %d / 未动 %d\n' \
-    "$n_up" "$n_merge" "$n_union" "$n_keep" "$n_conf" "$n_add" "$n_del" "$n_skip" "$n_same" "$n_foreign"
+printf '\n汇总: 升级 %d / 合并 %d / 并集 %d / 保留 %d / 覆盖 %d / 冲突 %d / 新增 %d / 删除 %d / 跳过 %d / 未变 %d / 未动 %d\n' \
+    "$n_up" "$n_merge" "$n_union" "$n_keep" "$n_over" "$n_conf" "$n_add" "$n_del" "$n_skip" "$n_same" "$n_foreign"
 
 # 「下次还得人工」= 这次两边都动过的文件。数字不落盘就是每次重新猜一遍。
+# 覆盖（机制文件）不算：它每次都是自动处理，不需要人。
 both=$((n_merge + n_conf + n_union + n_stale))
 if [ "$both" -gt 0 ]; then
     printf '下次同步预计仍需人工: %d 个（模板与本地都在动）\n' "$both"
@@ -625,13 +836,35 @@ fi
 
 if [ "$WRITE" -eq 0 ]; then
     printf '\n这是预览，没有写盘。确认后加 --write 执行。\n'
+    [ -n "$JSON_OUT" ] && write_json
     exit 0
 fi
 
+# 落 MANIFEST：这次到底动了哪些文件。没有它，出问题时只能靠 git diff 反推
+# （而 git diff 分不出「工具写的」和「本来就有的改动」）。
+if [ "${#ACTIONS[@]}" -gt 0 ] && ensure_work_dir; then
+    {
+        printf 'project=%s\n' "$PROJECT"
+        printf 'updated=%s\n' "$(date +%Y-%m-%dT%H:%M:%S)"
+        printf 'base=%s\nnew=%s\nsource=%s\n' "${BASE_COMMIT:-}" "${NEW_COMMIT:-}" "${BASE_SOURCE:-}"
+        [ -n "$gate_violations" ] && printf 'gate_violations=%s\n' "$gate_violations"
+        printf '\n'
+        for a in ${ACTIONS[@]+"${ACTIONS[@]}"}; do printf '%s\n' "$a"; done
+    } > "$KEEP_DIR/MANIFEST"
+fi
+
+if [ "$QUIET" -eq 0 ] && [ "${#ACTIONS[@]}" -gt 0 ]; then
+    printf '\n这次写到的文件（完整清单也在 MANIFEST 里）:\n'
+    for a in ${ACTIONS[@]+"${ACTIONS[@]}"}; do printf '  %s\n' "$a"; done
+fi
+
 if [ -n "$KEEP_DIR" ]; then
-    printf '\n冲突现场: %s\n  每个冲突文件留了 .ours / .base / .theirs，复核或重跑:\n' "$KEEP_DIR"
+    printf '\n现场目录: %s\n' "$KEEP_DIR"
+    printf '  MANIFEST 列出这次每条动作；冲突文件另存了 .ours / .base / .theirs，复核或重跑:\n'
     printf '  git merge-file -p <f>.ours <f>.base <f>.theirs\n'
 fi
+
+[ -n "$JSON_OUT" ] && write_json
 
 if [ "$n_conf" -gt 0 ]; then
     printf '\n有 %d 个文件冲突，搜索 <<<<<<< 处理。' "$n_conf"

@@ -435,6 +435,7 @@ function plan_check(   tier, type, n, filled, hy, t) {
     else if (type != "加功能" && type != "重构" && type != "bug-可复现" && type != "bug-不可复现")
         V("类型 '" type "' 不在 {加功能, 重构, bug-可复现, bug-不可复现}")
 
+    if (!field_filled("目标")) V("「目标」为空")
     if (!field_filled("相关文件")) V("「相关文件」为空")
     if (!field_filled("验证命令")) V("「验证命令」为空")
 
@@ -451,7 +452,7 @@ function plan_check(   tier, type, n, filled, hy, t) {
     }
 
     # 「（从 prd.md 提取）」这类模板提示现在放在注释里（读入时已被剥掉），
-    # 所以这里不再单独查它——目标没写就是空的，field_filled 已经管住了。
+    # 所以「目标」只会因为真的没写才为空——上面那条 field_filled 就是这么来的。
 
     # 测试 Seam：要么整节不填，要么四行都填
     filled = 0
