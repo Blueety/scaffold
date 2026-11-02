@@ -535,6 +535,27 @@ function journal_check(   i, missing, end_state, verify, changed) {
     if (changed ~ /src\/(\.|．)(\.|．)(\.|．)/ || changed ~ /src\/…/ \
         || changed ~ /\|[[:space:]]*`?<[^>]*>`?[[:space:]]*\|/)
         V("「## 改动文件清单」还留着模板占位符（src/... 或 <...>）")
+
+    check_next_notes()
+}
+
+# 「下次注意什么」每条都要有去向。没有去向的提醒随任务归档就死了：`tasks/_archive/`
+# 在全量自查里是跳过的，`self-audit` 走查的也是文档一致性、不读历史 journal。
+# 这条只判**形式**（有没有写出口），不判内容质量——「写得对不对」机器管不了，
+# 判质量只会退化成勾选表演。
+function check_next_notes(   n, i, l) {
+    if (!has_section("下次注意什么")) return
+    n = split(section_text("下次注意什么"), NN_LINES, "\n")
+    for (i = 1; i <= n; i++) {
+        l = NN_LINES[i]
+        gsub(/\r/, "", l)
+        sub(/^[ \t]*([-*+]|[0-9]+\.)?[ \t]*/, "", l)
+        sub(/[ \t]+$/, "", l)
+        if (l == "") continue
+        if (l == "无" || l == "无。" || l == "N/A") continue
+        if (index(l, "→") > 0 || index(l, "不沉淀") > 0) continue
+        V("「下次注意什么」这条没有去向: " l " —— 每条要么 `→ pitfalls` / `→ 任务分级阈值` / `→ skills/<名>`，要么写「不沉淀」")
+    }
 }
 
 # ---------------------------------------------------------------- NN-*.md 切片 / 决策条目

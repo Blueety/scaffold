@@ -126,5 +126,78 @@ out="$(run_staged "$P")"
     no "T1 单文件提交通过"
 }
 
+echo "== journal 的「下次注意什么」必须写去向 =="
+P="$TMP/g5"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-06-note"
+cat > "$P/tasks/2026-01-06-note/journal.md" <<'JOURNAL'
+# 执行日志
+
+## 目标
+
+修好 a
+
+## 主要提交
+
+- **主要提交**: `abc1234`
+
+## 改动文件清单
+
+| 文件 | 改动 |
+|---|---|
+| `src/a.sh` | 改一行 |
+
+## 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `bash scripts/check-gates.sh` | 通过 |
+
+- 未运行的检查及原因: 无
+
+- 返工: 1 次
+
+## 遇到的问题
+
+- 改了两次才过：第一次忘了同步 b（提交 abc1234）
+
+## 下次注意什么
+
+- 改 A 必须同步 B
+
+## 涉及的 ADR
+
+- 无
+
+## 下一步
+
+- 无
+
+## 雾区变化
+
+- **解掉的雾区项**: 无
+- **新增的雾区项**: 无
+
+## 一致性走查
+
+- **本次是否走查**: 未到触发条件
+
+## 结束状态
+
+- **结束状态**: `DONE`
+JOURNAL
+( cd "$P" && git add -A ) >/dev/null 2>&1
+out="$(run_staged "$P")"
+has "没有去向" "$out" "没写 → 的提醒被报出来"
+# 补上就去掉这条违规
+sed -i 's/^- 改 A 必须同步 B$/- 改 A 必须同步 B → pitfalls/' "$P/tasks/2026-01-06-note/journal.md"
+( cd "$P" && git add -A ) >/dev/null 2>&1
+out="$(run_staged "$P")"
+not "没有去向" "$out" "写了 → pitfalls 之后通过"
+# 「无」不该被要求写去向
+sed -i 's/^- 改 A 必须同步 B → pitfalls$/- 无/' "$P/tasks/2026-01-06-note/journal.md"
+( cd "$P" && git add -A ) >/dev/null 2>&1
+out="$(run_staged "$P")"
+not "没有去向" "$out" "写「无」不算违规"
+
 printf '\n结果: PASS %d / FAIL %d\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

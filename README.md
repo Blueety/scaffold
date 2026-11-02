@@ -187,7 +187,7 @@ powershell -ExecutionPolicy Bypass -File scripts\scaffold-update.ps1 ..\my-proje
 
 需要 bash 4 以上（macOS 自带的是 3.2，用 `brew install bash` 装的那个）。
 
-改了这个脚本要跑它自己的验收：`bash scripts/fixtures/update-test.sh`（约 200 秒，54 项断言：冲突现场、脏树、裁决、并集、基线阈值、adopt、闸门计数、机制文件、MANIFEST / JSON、`--quiet`）。闸门本身另有 `bash scripts/fixtures/gate-test.sh`（约 90 秒，7 项：规模底线、目标必填、纯重命名豁免、拍平归档）。
+改了这个脚本要跑它自己的验收：`bash scripts/fixtures/update-test.sh`（约 200 秒，54 项断言：冲突现场、脏树、裁决、并集、基线阈值、adopt、闸门计数、机制文件、MANIFEST / JSON、`--quiet`）。闸门本身另有 `bash scripts/fixtures/gate-test.sh`（约 105 秒，10 项：规模底线、目标必填、纯重命名豁免、拍平归档、journal 去向）。
 
 ## 自检
 
