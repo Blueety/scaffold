@@ -19,6 +19,7 @@ tasks/<日期>-<简述>/
   plan.md         实施计划
   review.md       审查裁决单（只有 T2 / T3 需要）
   journal.md      执行日志
+  tmp/            一次性脚本和中间产物（已在 .gitignore 里，闸门 B 收尾时清掉）
 ```
 
 ## 模板目录

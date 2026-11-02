@@ -156,17 +156,25 @@ render_worktree() {
 # 没有基线记录时：拿项目现有内容和脚手架历史比对，挑一致率最高的版本。
 #
 # 比的是 git blob 哈希，不是文件内容。两个提速点，都是因为本机起一个进程约 0.1s：
-#   - 项目侧哈希一次 `hash-object --stdin-paths` 算完，不是每文件一次
+#   - 项目侧哈希一次算完，不是每文件一次
 #   - 占位符文件一次 grep 找出来，不是每文件一次
 # 剩下的成本是每个历史版本一次 `ls-tree`（46 个版本约 5 秒）。只在不带
 # .scaffold-version 的旧项目上跑一次，之后都走记录里的提交。
 #
+# **项目侧的哈希必须走索引，不能直接 hash-object 工作区文件。**
+# `git hash-object` 默认套 clean 过滤器，于是 `core.autocrlf=true` 的机器会把
+# CRLF 归一成 LF 再算哈希：一份只有行尾不同的文件，和模板 blob 算出同一个哈希，
+# 该扣的分没扣，基线就挑到别的版本；换一台 autocrlf=false 的机器又是另一个结果。
+# `git ls-files -s` 给的是索引里的 blob——它和脚手架历史里的 blob 是同一个口径
+# （都是 clean 之后的），不受本机 config 影响。索引里没有的文件（还没 add、
+# 项目不是仓库）才现算，且 `--no-filters` 按原始字节，不经过任何归一。
+#
 # 带 {{PROJECT_NAME}} 的文件不参与：模板展开后必然和项目对不上，那是占位符替换的
 # 结果，不是版本差异。用剩下的文件打分，项目自己改过的文件只会拉低一点分数。
 autodetect_base() {
-    local c meta p rel sha pct total score best="" best_pct=-1
+    local c meta p rel sha pct total score best="" best_pct=-1 mode stage
     local -A proj=() skip=()
-    local -a paths=()
+    local -a paths=() rest=()
 
     while IFS= read -r rel; do
         skip["$rel"]=1
@@ -180,12 +188,27 @@ autodetect_base() {
     done < <( cd "$TEMPLATE_DIR" && find . -type f | sed 's|^\./||' | sort )
     [ "${#paths[@]}" -gt 0 ] || return 1
 
-    # 一次进程算完项目侧所有哈希（stdin 一行一个路径，输出顺序与输入一致）
-    local i=0
-    while IFS= read -r sha; do
-        proj["${paths[$i]}"]="$sha"
-        i=$((i + 1))
-    done < <( cd "$PROJECT" && printf '%s\n' "${paths[@]}" | git hash-object --stdin-paths 2>/dev/null )
+    # 1) 索引里的 blob（一次进程）。清理过，和脚手架历史同口径。
+    if git -C "$PROJECT" rev-parse --git-dir >/dev/null 2>&1; then
+        while IFS=$'\t' read -r meta p; do
+            [ -n "$meta" ] || continue
+            read -r mode sha stage <<< "$meta"
+            [ -n "$sha" ] && proj["$p"]="$sha"
+        done < <( git -C "$PROJECT" -c core.quotepath=false ls-files -s 2>/dev/null )
+    fi
+
+    # 2) 索引里没有的：按原始字节算，不套 autocrlf。
+    for rel in "${paths[@]}"; do
+        [ -n "${proj[$rel]+x}" ] || rest+=("$rel")
+    done
+    if [ "${#rest[@]}" -gt 0 ]; then
+        local i=0
+        while IFS= read -r sha; do
+            proj["${rest[$i]}"]="$sha"
+            i=$((i + 1))
+        done < <( cd "$PROJECT" && printf '%s\n' "${rest[@]}" \
+                 | git hash-object --no-filters --stdin-paths 2>/dev/null )
+    fi
 
     while IFS= read -r c; do
         [ -n "$c" ] || continue
@@ -193,7 +216,8 @@ autodetect_base() {
         score=0
         while IFS=$'\t' read -r meta p; do
             rel="${p#templates/}"
-            [ -n "${proj[$rel]+x}" ] || continue
+            [ -n "${skip[$rel]+x}" ] && continue    # 占位符文件：索引里也有，必须在这里再排一次
+            [ -n "${proj[$rel]:-}" ] || continue
             total=$((total + 1))
             sha="${meta##* }"
             [ "$sha" = "${proj[$rel]}" ] && score=$((score + 1))
@@ -250,6 +274,15 @@ mark_exec() {
     esac
 }
 
+# 比较时忽略纯行尾差异。项目自带 `* text=auto eol=lf`，行尾只是 checkout 的产物；
+# 工作区里一个 CRLF 的文件不该被当成「我改过它」，否则每个文件都会走合并，
+# 而 git merge-file 会把「整份都变了」判成冲突。
+same() {
+    cmp -s "$1" "$2" && return 0
+    # 退一步：忽略行尾 CR 再比。不用 `diff --strip-trailing-cr`——BSD 的 diff 没这个选项。
+    cmp -s <(sed 's/\r$//' "$1") <(sed 's/\r$//' "$2")
+}
+
 while IFS= read -r p; do
     [ -n "$p" ] || continue
     b="$WORK/base/$p"
@@ -263,7 +296,7 @@ while IFS= read -r p; do
     # 模板删掉了这个文件
     if [ "$has_t" -eq 0 ]; then
         [ "$has_o" -eq 1 ] || continue                      # 项目也没有：无事
-        if cmp -s "$o" "$b"; then
+        if same "$o" "$b"; then
             printf '  删除   %s\n' "$p"
             n_del=$((n_del + 1))
             [ "$WRITE" -eq 1 ] && rm -f "$o"
@@ -278,7 +311,7 @@ while IFS= read -r p; do
     if [ "$has_b" -eq 0 ]; then
         if [ "$has_o" -eq 1 ]; then
             # 项目自己就有同名文件：不是从模板来的，绝不覆盖
-            if cmp -s "$o" "$t"; then
+            if same "$o" "$t"; then
                 n_same=$((n_same + 1))
             else
                 printf '  跳过   %s（项目已有同名文件，不是模板来的）\n' "$p"
@@ -298,7 +331,7 @@ while IFS= read -r p; do
 
     # 项目自己删掉了某个模板文件
     if [ "$has_o" -eq 0 ]; then
-        if cmp -s "$b" "$t"; then
+        if same "$b" "$t"; then
             printf '  保留   %s（本地已删除，模板没动）\n' "$p"
             n_keep=$((n_keep + 1))
         else
@@ -308,18 +341,21 @@ while IFS= read -r p; do
         continue
     fi
 
-    if cmp -s "$o" "$t"; then
+    if same "$o" "$t"; then
         n_same=$((n_same + 1))
-    elif cmp -s "$o" "$b"; then
+    elif same "$o" "$b"; then
         printf '  升级   %s\n' "$p"
         n_up=$((n_up + 1))
         if [ "$WRITE" -eq 1 ]; then cat "$t" > "$o"; mark_exec "$p"; fi
-    elif cmp -s "$t" "$b"; then
+    elif same "$t" "$b"; then
         printf '  保留   %s（本地改过，模板没动）\n' "$p"
         n_keep=$((n_keep + 1))
     else
         merged="$WORK/merged"
-        if git merge-file -p -L local -L scaffold-base -L scaffold-new "$o" "$b" "$t" > "$merged"; then
+        # 本地那一版先归一到 LF 再参与合并：项目锁 eol=lf，CR 不是内容。
+        # 不归一的话，一个 CRLF 文件会被 git merge-file 判成「每一行都变了」。
+        sed 's/\r$//' "$o" > "$WORK/ours.lf"
+        if git merge-file -p -L local -L scaffold-base -L scaffold-new "$WORK/ours.lf" "$b" "$t" > "$merged"; then
             printf '  合并   %s\n' "$p"
             n_merge=$((n_merge + 1))
             if [ "$WRITE" -eq 1 ]; then cat "$merged" > "$o"; mark_exec "$p"; fi
