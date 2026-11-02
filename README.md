@@ -107,7 +107,13 @@ bash scripts/scaffold-update.sh ../my-project-name --write   # 真的写
 | 模板新增 | 加进去；项目已有同名文件则跳过，不覆盖 |
 | 模板删掉 | 项目没动过就删，改过就保留并报告 |
 
-只碰 `templates/` 里出现过的路径——`src/`、`tasks/<任务>/`、`.git/` 一概不动。脚本不做提交，写完自己看 `git diff`。
+只碰 `templates/` 里出现过的路径——`src/`、`tasks/<任务>`、`.git/` 一概不动。脚本不做提交，写完自己看 `git diff`。
+
+**目标仓库有未提交改动时拒绝写盘**（退出码 2）：脚本写的是模板路径，你改的可能是同一批文件，混在一起提交就说不清谁写了什么。先提交或 stash，或加 `--force`。
+
+**冲突现场会留下来**：`<项目>/.git/scaffold-work/<时间戳>/` 里每个冲突文件都有 `.ours` / `.base` / `.theirs`，可以直接复核或重跑 `git merge-file`。放在 `.git/` 下是为了不进 `git status`——不用改项目的 `.gitignore`。
+
+**写盘后会跑一次目标仓库的闸门**，报出存量违规数，并记进 `.scaffold-version`（下次对比）。新装进去的规则对历史文件是全红的，这个数字应该在落盘那一刻就知道，而不是等你启用钩子才发现。
 
 **基线（旧模板）从哪来**，按优先级：
 
@@ -115,9 +121,37 @@ bash scripts/scaffold-update.sh ../my-project-name --write   # 真的写
 2. 项目根 `.scaffold-version` 里记的提交（每次更新成功后写入）；
 3. 都没有 → 按文件内容在脚手架历史里比对，挑最像的那个版本，并报一致率（46 个版本约 5 秒）。这是给**这个功能出现之前**生成的项目用的自举路径。
 
+### 裁决：让「本地说了算」的文件不再反复冲突
+
+`docs/commands.md`、`docs/pitfalls.md` 这类文件，模板只给骨架、项目填满内容。它们和模板的差异是**永久分歧**，不是待合并的临时差异——不记下来，每次同步都得重新判一遍，而且模板一合并就可能把项目内容拼进去。
+
+```bash
+# 这个文件永远保留项目版本
+bash scripts/scaffold-update.sh ../p --write --keep-local docs/commands.md
+
+# 这个文件取并集：模板新增的行追加进来，本地一行不删
+bash scripts/scaffold-update.sh ../p --write --union .gitignore
+```
+
+裁决记在 `.scaffold-version` 的 `decision` 段，附上当时的模板 blob。之后：
+
+- 模板没再变 → 直接跳过，不再打扰
+- 模板又变了 → `keep-local` 会提示「重新判断」（内容不动，不会偷偷合并）
+- `union` 会把新增的行追加进来，本地内容一条不丢
+
+### Windows
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\scaffold-update.ps1 ..\my-project --write
+```
+
+`PATH` 里的 `bash.exe` 常常是 System32 下的 WSL 桩，跑不了 Windows 路径，报错还会被控制台代码页吃成一行 `?`。这个包装器会先找 Git for Windows 自带的 bash，找不到就说清楚。
+
 脚手架 `templates/` 有未提交改动时照样能跑（「新版」取工作区），但**不记录基线提交**——下次更新会重新比对，等你把脚手架提交了就自愈。
 
 需要 bash 4 以上（macOS 自带的是 3.2，用 `brew install bash` 装的那个）。
+
+改了这个脚本要跑它自己的验收：`bash scripts/fixtures/update-test.sh`（约 100 秒，28 项断言，覆盖冲突现场、脏树、裁决、并集、闸门自检）。
 
 ## 自检
 
