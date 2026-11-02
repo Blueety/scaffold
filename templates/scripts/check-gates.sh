@@ -33,14 +33,26 @@
 #          .gitignore 命中的除外；空目录不算——git 不跟踪空目录，声明它反而会卡住提交。
 #          模块根本身不查存在性（空目录进不了 git，clone 之后它会消失）
 #
+#   - 规模底线（仅 --staged）：任务在模块根下**累计**改动的文件数 ≥ 4 时，必须有任务目录
+#          声明 T2/T3。累计从 plan.md 进入历史的那次提交之前算起——按单次提交算的话，
+#          把 T2 的活拆成两次提交就能溜过去。只查低报：T0 / T1 的档位声明不再等人确认，
+#          这条是它的机械底线。只数模块根下的文件（文档、tasks/ 不计），阈值对齐 6 条信号。
+#
 # 不覆盖（判断性内容，留在 skills/ 里由人确认）：
 #   双轴不合并、一次性脚本是否真删干净、命令是否真跑过、
+#   档位**高报**（声明得比实际大），以及 6 条信号里的跨模块 / 动公开接口 /
+#   行为变化 / 不可逆性四条——只有文件数一条两侧都查：≥ 4 必须在 T2/T3。
 #   **任务是否真的收尾了**（journal.md 在提交之后才写，机器判断不了「这个任务结束了没有」）。
 #
 # 退出码：0 = 通过，1 = 有违规，2 = 用法错误。
 # <<< usage
 
 set -u
+
+# 忽略 SIGPIPE。钩子是被 git 直接执行的：`git commit 2>&1 | head -1` 这类写法会让
+# 读端提前退出，脚本写到第二行就吃 SIGPIPE，死在半路——实测 git 会**照常提交**
+# （exit 0，闸门等于没跑）。把 SIGPIPE 改成写失败，脚本就能跑完并正常返回 1。
+trap '' PIPE
 
 violations=0
 
@@ -158,7 +170,7 @@ check_review() {
 }
 
 # 任务档位是否落在 T2/T3：plan.md / prd.md / 切片里任何一处声明了 T2/T3 就算。
-# 不能只看 plan.md——T1 的 plan 可省，而切片文件自己带档位；
+# 不能只看 plan.md——档位也可能只写在 prd.md 或切片里；
 # prd.md 的档位行也是同一个字段，只写在那里时同样得认。
 task_is_high_tier() {
     local d="$1" f
@@ -168,6 +180,72 @@ task_is_high_tier() {
     done
     [ "${#files[@]}" -gt 0 ] || return 1
     [ "$(awk -v kind=tier -f "$AWK_PROG" "${files[@]}")" = "yes" ]
+}
+
+# 规模底线：声明的档位不能低于**数得出来**的改动量。
+#
+# 只查低报，不查高报：高报只是多一次审查，低报是拿「小改动」换免打扰——而 T0 / T1
+# 的档位声明不再等人确认之后，低报就是「没人看」的唯一入口。
+#
+# 6 条信号里能机械化的只有文件数这一条：跨模块 / 动公开接口 / 行为变化 / 不可逆性
+# 没有判据，仍然靠人看 diff。只数 $MODULE_ROOT 下的文件——量的是「改了多少代码」，
+# 文档、tasks/ 不算。阈值对齐 docs/agents/任务分级.md 的 6 条信号表：文件数 ≥ 4 → T2 起。
+#
+# 只在 --staged 跑：全量自查没有「这次提交」这个基准。$3… = 本次改动涉及的任务目录。
+
+# 数 $MODULE_ROOT 下从 $1（可为空 = 只看索引）到索引的改动文件数。
+# -M：重命名算一次（和 `git diff --stat` 的文件数口径一致）；不认的话一次
+# src/a → src/b 会被数成 2 个文件，小改动被误判成 T2。
+count_code_changes() {
+    local from="$1" root="$2" n=0 p range=()
+    [ -n "$from" ] && range=("$from")
+    while IFS= read -r p; do
+        case "$p" in "${MODULE_ROOT%/}"/*) n=$((n + 1)) ;; esac
+    done < <(git -c core.quotepath=false -C "$root" diff --cached --name-only -M \
+             --diff-filter=ACMRD ${range[@]+"${range[@]}"} -- "${MODULE_ROOT%/}" 2>/dev/null)
+    printf '%s' "$n"
+}
+
+check_scale() {
+    local staged="$1" root="$2"; shift 2
+    [ "$staged" -eq 1 ] || return 0
+    local d base n max=0
+    # 空树的 SHA：任务起点那个提交本身就是根提交时，`base^` 不存在，
+    # 从空树算起才等同于「这个任务从零开始」。
+    local empty_tree=4b825dc642cb6eb9a060e54bf8d69288fbee4904
+    local cands=("$@")
+    if [ "${#cands[@]}" -eq 0 ]; then
+        # 这次提交没碰任何任务目录——最常见的是「计划先提交、代码后提交」。
+        # 退回**所有在飞任务**（cwd 是索引物化的树，看到的就是提交后的状态）：
+        # 不归属的话，一个纯代码提交就没人管，规模规则等于失效。
+        for d in tasks/*/; do
+            d="${d%/}"
+            case "$d" in tasks/_template|tasks/_archive) continue ;; esac
+            [ -d "$d" ] && cands+=("$d")
+        done
+    fi
+    for d in ${cands[@]+"${cands[@]}"}; do
+        task_is_high_tier "$d" && return 0
+    done
+    if [ "${#cands[@]}" -eq 0 ]; then
+        # 一个任务目录都没有：只能量这次索引。够 T2 就是「连 plan 都没写」。
+        n="$(count_code_changes "" "$root")"
+    else
+        # 按**任务**累计，不按单次提交：从 plan.md 进入历史的那次提交之前算起。
+        # 只量本次 diff 的话，把 T2 的活拆成两次提交就能溜过去——而「一个任务
+        # 对应一个主要提交」本来就是 tasks/README.md 的约定。
+        for d in ${cands[@]+"${cands[@]}"}; do
+            base="$(git -C "$root" log --diff-filter=A --format=%H -1 -- "$d/plan.md" 2>/dev/null)"
+            if [ -n "$base" ]; then
+                base="$(git -C "$root" rev-parse -q --verify "$base^" 2>/dev/null || printf '%s' "$empty_tree")"
+            fi
+            n="$(count_code_changes "$base" "$root")"
+            [ "$n" -gt "$max" ] && max="$n"
+        done
+        n="$max"
+    fi
+    [ "$n" -ge 4 ] || return 0
+    fail "这个任务的代码改动累计 $n 个 $MODULE_ROOT 下的文件，但没有声明 T2/T3 —— 按 docs/agents/任务分级.md 的 6 条信号，文件数 ≥ 4 就是 T2。把 plan.md 的档位升到 T2 并补 review.md（3.4 批准 + 3.8 独立审查）；如果这些文件分属别的任务，说明这个提交混了多个任务，按「一个任务一个提交」拆开"
 }
 
 # ---------------------------------------------------------------- 架构
@@ -427,6 +505,9 @@ main() {
             dirs+=("${d%/}")
         done
     fi
+
+    # 规模底线：只在 --staged 有意义（要有「这次提交」这个基准）
+    check_scale "$staged" "$root" ${dirs[@]+"${dirs[@]}"}
 
     # 去重后逐个检查
     local seen="|"
