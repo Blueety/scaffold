@@ -381,6 +381,9 @@ function count_result_items(text,   n, i, c) {
     for (i = 1; i <= n; i++) {
         if (ROWS[i] !~ /^[[:space:]]*([-*+][[:space:]]+|(（|\()?[0-9]+([.]|、|\)|）)[[:space:]]*)[^[:space:]]/) continue
         if (ROWS[i] ~ /(:|：)[[:space:]]*$/) continue
+        # 模板自带的固定字段不是「验证结果」：`- 返工: 0 次` 只要照抄模板就会出现，
+        # 算进来的话这一节永远非空，「没有一行结果」这条检查就废了。
+        if (ROWS[i] ~ /^[[:space:]]*[-*+][[:space:]]*(返工|被打回)[[:space:]]*[:：]/) continue
         c++
     }
     return c
@@ -543,19 +546,49 @@ function journal_check(   i, missing, end_state, verify, changed) {
 # 在全量自查里是跳过的，`self-audit` 走查的也是文档一致性、不读历史 journal。
 # 这条只判**形式**（有没有写出口），不判内容质量——「写得对不对」机器管不了，
 # 判质量只会退化成勾选表演。
-function check_next_notes(   n, i, l) {
+#
+# 按**条目**判，不按行判：一个条目可以写两行——先说要记住什么，箭头另起一行。
+# 模板注释里给的就是这种排版，按行判会让模板自己的示例判红。
+function check_next_notes(   n, i, l, txt, item, item_line, have_item) {
     if (!has_section("下次注意什么")) return
-    n = split(section_text("下次注意什么"), NN_LINES, "\n")
+    txt = section_text("下次注意什么")
+    n = split(txt, NN_LINES, "\n")
+    have_item = 0
+    item = ""; item_line = ""
     for (i = 1; i <= n; i++) {
         l = NN_LINES[i]
         gsub(/\r/, "", l)
-        sub(/^[ \t]*([-*+]|[0-9]+\.)?[ \t]*/, "", l)
-        sub(/[ \t]+$/, "", l)
-        if (l == "") continue
-        if (l == "无" || l == "无。" || l == "N/A") continue
-        if (index(l, "→") > 0 || index(l, "不沉淀") > 0) continue
-        V("「下次注意什么」这条没有去向: " l " —— 每条要么 `→ pitfalls` / `→ 任务分级阈值` / `→ skills/<名>`，要么写「不沉淀」")
+        if (l ~ /^[ \t]*$/ || l ~ /^[ \t]*(```|~~~)/) continue
+
+        if (is_bullet(l)) {
+            flush_note(item, item_line, have_item)
+            item = l; item_line = i; have_item = 1
+        } else if (have_item) {
+            item = item "\n" l            # 续行：并进上一个条目
+        } else {
+            item = item "\n" l            # 第一个条目之前就出现的注记
+        }
     }
+    flush_note(item, item_line, have_item)
+}
+
+function is_bullet(l) { return l ~ /^[ \t]*([-*+]|[0-9]+[.)])[ \t]+[^ \t]/ }
+
+# 一个条目里只要**任何一行**写了去向就算数。
+function flush_note(item, item_line, have_item,   l, n, i) {
+    if (item == "") return
+    n = split(item, NOTE_TMP, "\n")
+    for (i = 1; i <= n; i++) {
+        l = NOTE_TMP[i]
+        gsub(/^[ \t]*([-*+]|[0-9]+[.)])?[ \t]*/, "", l)
+        sub(/[ \t]+$/, "", l)
+        if (l == "无" || l == "无。" || l == "N/A") return
+        if (index(l, "→") > 0 || index(l, "不沉淀") > 0) return
+    }
+    l = item
+    sub(/^[ \t]*([-*+]|[0-9]+[.)])[ \t]*/, "", l)
+    sub(/\n.*/, "", l)
+    V("「下次注意什么」这条没有去向: " l " —— 每条要么 `→ pitfalls` / `→ 任务分级阈值` / `→ skills/<名>`，要么写「不沉淀」")
 }
 
 # ---------------------------------------------------------------- NN-*.md 切片 / 决策条目

@@ -76,6 +76,31 @@ mkdir -p "$P/src"; for i in 1 2 3 4 5; do printf 'echo %s\n' "$i" > "$P/src/f$i.
 out="$(run_staged "$P")"
 has "没有声明 T2/T3" "$out" "5 个代码文件却只有 T2 任务在飞 → 仍然拦下"
 
+echo "== G1b: 跨提交累计（代码提交不碰任务目录）=="
+P="$TMP/g1b"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-07-split" "$P/src"
+plan_text T1 > "$P/tasks/2026-01-07-split/plan.md"
+wip_commit "$P"                                   # 计划先提交
+printf 'echo 1\n' > "$P/src/a.sh"; printf 'echo 2\n' > "$P/src/b.sh"
+wip_commit "$P"                                   # 前 2 个代码文件：还不该拦
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
+not "没有声明 T2/T3" "$out" "累计 2 个文件时不拦"
+printf 'echo 3\n' > "$P/src/c.sh"; printf 'echo 4\n' > "$P/src/d.sh"
+wip_commit "$P"                                   # 再 2 个，且这次没碰 tasks/
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
+has "累计" "$out" "两次提交各 2 个文件，累计 4 个 → 拦下"
+
+echo "== G1c: 躺着一个没归档的 T2 任务时，T1 的规模底线仍然有效 =="
+P="$TMP/g1c"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-08-big" "$P/tasks/2026-01-08-small" "$P/src"
+plan_text T2 > "$P/tasks/2026-01-08-big/plan.md"
+plan_text T1 > "$P/tasks/2026-01-08-small/plan.md"
+wip_commit "$P"
+for i in 1 2 3 4 5; do printf 'echo %s\n' "$i" > "$P/src/f$i.sh"; done
+wip_commit "$P"
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
+has "累计" "$out" "T2 任务在飞不会让 T1 的底线失效"
+
 echo "== G2: plan.md 的「目标」为空要报 =="
 P="$TMP/g2"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-02-x"
@@ -129,7 +154,11 @@ out="$(run_staged "$P")"
 echo "== journal 的「下次注意什么」必须写去向 =="
 P="$TMP/g5"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-06-note"
-cat > "$P/tasks/2026-01-06-note/journal.md" <<'JOURNAL'
+
+# 整份 journal 用函数生成：只有「下次注意什么」这一节随用例变，
+# 拼字符串改文件会在多条目那条用例上写出不可读的 sed。
+journal_head() {
+    cat <<'HDR'
 # 执行日志
 
 ## 目标
@@ -154,15 +183,17 @@ cat > "$P/tasks/2026-01-06-note/journal.md" <<'JOURNAL'
 
 - 未运行的检查及原因: 无
 
-- 返工: 1 次
+- 被打回: 1 次
 
 ## 遇到的问题
 
-- 改了两次才过：第一次忘了同步 b（提交 abc1234）
+- 重跑了两次才过：第一次忘了同步 b（提交 abc1234）
 
 ## 下次注意什么
-
-- 改 A 必须同步 B
+HDR
+}
+journal_tail() {
+    cat <<'FTR'
 
 ## 涉及的 ADR
 
@@ -184,19 +215,33 @@ cat > "$P/tasks/2026-01-06-note/journal.md" <<'JOURNAL'
 ## 结束状态
 
 - **结束状态**: `DONE`
-JOURNAL
-( cd "$P" && git add -A ) >/dev/null 2>&1
-out="$(run_staged "$P")"
-has "没有去向" "$out" "没写 → 的提醒被报出来"
-# 补上就去掉这条违规
-sed -i 's/^- 改 A 必须同步 B$/- 改 A 必须同步 B → pitfalls/' "$P/tasks/2026-01-06-note/journal.md"
-( cd "$P" && git add -A ) >/dev/null 2>&1
-out="$(run_staged "$P")"
-not "没有去向" "$out" "写了 → pitfalls 之后通过"
-# 「无」不该被要求写去向
-sed -i 's/^- 改 A 必须同步 B → pitfalls$/- 无/' "$P/tasks/2026-01-06-note/journal.md"
-( cd "$P" && git add -A ) >/dev/null 2>&1
-out="$(run_staged "$P")"
+FTR
+}
+write_journal() {  # $1 = 下次注意什么 这一节的内容
+    { journal_head; printf '%s\n' "$1"; journal_tail; } > "$P/tasks/2026-01-06-note/journal.md"
+}
+staged_run() { ( cd "$P" && git add -A ) >/dev/null 2>&1; run_staged "$P"; }
+
+write_journal "- 改 A 必须同步 B"
+out="$(staged_run)"
+has "没有去向" "$out" "没写去向的提醒被报出来"
+# 模板自带的 `- 被打回: N 次` 不能算成一条验证结果
+not "验证结果」里没有一行结果" "$out" "「被打回」不计入验证结果条目"
+
+write_journal "- 改 A 必须同步 B
+  → pitfalls"
+out="$(staged_run)"
+not "没有去向" "$out" "箭头写在下一行也算去向"
+
+write_journal "- 改 A 必须同步 B
+  → pitfalls
+- 少写一条测试"
+out="$(staged_run)"
+has "少写一条测试" "$out" "多条目时逐条判，缺去向的那条被报出来"
+not "改 A 必须同步 B" "$out" "已经写了去处的条目不再报"
+
+write_journal "- 无"
+out="$(staged_run)"
 not "没有去向" "$out" "写「无」不算违规"
 
 printf '\n结果: PASS %d / FAIL %d\n' "$pass" "$fail"

@@ -221,9 +221,20 @@ check_scale() {
     done
     if [ "${#cands[@]}" -eq 0 ]; then
         # 这次提交没碰任何任务目录——最常见的是「计划先提交、代码后提交」。
-        # 直接量本次索引：**不要**退回「所有在飞任务」。退回去的话，仓库里只要
-        # 躺着一个 T2 任务，规模底线就永久失效，而这正是 T0/T1 不等确认的唯一兜底。
-        n="$(count_code_changes "" "$root")"
+        # 这时不能只看本次索引：把 T2 的活拆成两次提交就能溜过去。
+        # 但也不能退回「所有在飞任务」然后见到 T2 就让位——那样仓库里躺着一个
+        # 没归档的 T2 任务，规模底线就永久失效。只累计**声明为 T0/T1** 的任务。
+        for d in "$root"/tasks/*/; do
+            d="${d%/}"; d="${d#"$root"/}"
+            [ -f "$root/$d/plan.md" ] || continue
+            task_is_high_tier "$d" && continue
+            base="$(git -C "$root" log --diff-filter=A --format=%H -1 -- "$d/plan.md" 2>/dev/null)"
+            [ -n "$base" ] || continue
+            base="$(git -C "$root" rev-parse -q --verify "$base^" 2>/dev/null || printf '%s' "$empty_tree")"
+            n="$(count_code_changes "$base" "$root")"
+            [ "$n" -gt "$max" ] && max="$n"
+        done
+        n="$max"
     else
         # 按**任务**累计，不按单次提交：从 plan.md 进入历史的那次提交之前算起。
         # 只量本次 diff 的话，把 T2 的活拆成两次提交就能溜过去——而「一个任务
