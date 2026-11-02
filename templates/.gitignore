@@ -35,4 +35,5 @@ htmlcov/
 .pytest_cache/
 
 # 任务目录里的一次性脚本 / 输出（闸门 B 收尾时要清掉，别先 commit 进去）
-tasks/*/tmp/
+# `**` 而不是 `*`：归档后任务在 tasks/_archive/<任务>/ 下，深一层。
+tasks/**/tmp/

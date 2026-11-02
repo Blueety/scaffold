@@ -399,13 +399,19 @@ function count_items(text,   n, i, c) {
 # ---------------------------------------------------------------- 模块表
 
 # `## 模块划分` 表第 2 列声明的路径，去掉反引号与尾斜杠。
-function modules_dump(   n, i, cells, nf, p) {
+function modules_dump(   n, i, cells, nf, p, line) {
     n = md_section("模块划分")
     for (i = 1; i <= n; i++) {
         if (S[i] !~ /^[[:space:]]*\|/) continue
-        nf = split(S[i], cells, "|")
+        # markdown 表格里 `\|` 是**转义竖线**，不是列分隔。直接 split 会把它劈成两格，
+        # 于是「模块名」里出现竖线时路径格整个前移：拿到的路径是个词，且真正的路径
+        # 不再被检查。先用哨兵占住，切完再还原。
+        line = S[i]
+        gsub(/\\\|/, "\002", line)
+        nf = split(line, cells, "|")
         if (nf < 3) continue
         p = cells[3]
+        gsub(/\002/, "\\|", p)
         gsub(/`/, "", p)
         sub(/^[[:space:]]+/, "", p); sub(/[[:space:]]+$/, "", p)
         sub(/\/+$/, "", p)
