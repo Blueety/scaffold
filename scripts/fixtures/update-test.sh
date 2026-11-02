@@ -32,8 +32,10 @@ not() { if printf '%s' "$2" | grep -qF -- "$1"; then no "$3"; else ok "$3"; fi; 
 tree_sig() { ( cd "$1" && find . -type f -not -path './.git/*' | sort | xargs sha1sum 2>/dev/null | sha1sum ); }
 
 commit_all() {
+    # 必须绕过钩子：fixture 要造「闸门会判红」的现场（空目标、旧格式 journal），
+    # 钩子会在这一步把提交拦下，后面所有断言就都在测失败路径。
     git -C "$1" add -A >/dev/null 2>&1
-    git -C "$1" -c user.email=t@t -c user.name=t commit -qm "${2:-wip}" >/dev/null 2>&1
+    git -C "$1" -c user.email=t@t -c user.name=t -c core.hooksPath=/dev/null commit -qm "${2:-wip}" >/dev/null 2>&1
 }
 
 # ---------------------------------------------------------------- fixture
@@ -151,10 +153,14 @@ grep -q '^decision union .gitignore ' "$P/.scaffold-version" && ok "union 记进
 
 echo "== 落盘后跑闸门 =="
 P="$TMP/p6"; cp -r "$TMP/withver" "$P"
+# 造一条存量违规：plan 不写「目标」
+mkdir -p "$P/tasks/2026-01-09-legacy"
+printf '# 实施计划\n\n## 任务概要\n\n- **档位**: `T1 — 1 文件 / 0 调用方 / 行为有变 / 无覆盖测试 / 预估 5 行`\n- **类型**: `加功能`\n- **目标**:\n- **相关文件**:\n  - src/a.sh\n- **验证命令**: `bash scripts/check-gates.sh`\n\n## 步骤\n\n| # | 步骤 | 文件范围 | 风险 | 验证 |\n|---|---|---|---|---|\n| 1 | 改 a | src/a.sh | 低 | 跑闸门 |\n\n## 确认\n\n- [x] 已确认\n' > "$P/tasks/2026-01-09-legacy/plan.md"
 commit_all "$P" init
 out="$("$B" "$UP" "$P" --write 2>&1)"; rc=$?
 has "自检：" "$out" "跑了一次闸门"
 has "存量违规" "$out" "报出违规条数"
+has "tasks/2026-01-09-legacy" "$out" "直方图按任务目录聚合（不压成 tasks/）"
 grep -q '^gate_violations=' "$P/.scaffold-version" && ok "违规数记进了 .scaffold-version" || no "违规数记进了 .scaffold-version"
 
 # ---------------------------------------------------------------- 7. --diff

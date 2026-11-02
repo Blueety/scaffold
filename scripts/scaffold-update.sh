@@ -402,8 +402,12 @@ gate_report() {
     fi
     # 分布比总数有用：914 条是「5 个目录 × 12 条」还是「散在 200 个文件里」，
     # 决定先归档还是先补字段。
-    printf '%s\n' "$out" | grep '^  \[x\]' | sed -E 's/^  \[x\] ([^:]*):.*/\1/' \
-        | sed -E 's|^(tasks/(_archive/)?[^/]+)/.*|\1|; s|^([^/]+)/.*|\1/|' \
+    # 两次 `s` 不能写成串联：后一条会作用在前一条的结果上，把
+    # `tasks/<任务>` 再压成 `tasks/`（实测过，整张直方图只剩一级目录）。
+    # 用 `t` 在第一条命中后跳过后面的替换。
+    printf '%s\n' "$out" | grep '^  \[x\]' \
+        | sed -E 's/^  \[x\] ([^:]*):.*/\1/' \
+        | sed -E 's|^(tasks/(_archive/)?[^/]+)/.*|\1|; t; s|^([^/]+)/.*|\1/|' \
         | sort | uniq -c | sort -rn | head -8 | sed 's/^/  /'
     printf '  启用钩子前先清零，否则每次提交都会被拦；治理路线见 tasks/README.md 的「闸门升级后的存量违规」。\n'
     hp="$(git -C "$PROJECT" config --get core.hooksPath 2>/dev/null || true)"
