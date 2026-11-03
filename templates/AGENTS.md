@@ -67,7 +67,7 @@
 - 每完成一个逻辑步骤后运行验证命令，不接受「应该可以」——必须实际运行。
 - 如有失败，先解释原因再修复，不要绕过问题。
 - 修 bug 时：进入根因假设前，必须有一条已经实跑过、能对这个 bug 变红的命令（`skills/bug-fix/SKILL.md` 闸门 A）。
-- 写测试前：先书面列出要测的 seam 并等待确认。
+- 写测试前：先把要测的 seam 写进 `plan.md` 的「## 测试 Seam」一节（T0 / T1 写完即继续；T2 / T3 随 plan 一次批准）。没写进 plan、或与 plan 不符的，停下来问。
 - 调试日志统一加 `[DEBUG-xxxx]` 前缀，提交前 grep 清干净。
 - 提交前闸门是**自动**的：`.githooks/pre-commit` 会跑 `scripts/check-gates.sh --staged`，检查 `[DEBUG-` 残留、`docs/architecture.md` 的模块表与实际目录是否对得上、`plan.md` 的档位/类型/闸门 A 字段、`journal.md` 的章节与验证结果、切片文件的字段、**T2 / T3 的 `review.md` 是否存在且填全**。被拦下就按提示补内容，**不要**用 `git commit --no-verify` 绕过。手动全量检查：`sh scripts/check-gates.sh`（Windows 上 `bash` 可能指向 WSL 的桩，改用 `sh`）。
 - 动手前先确认钩子真的挂上了：`git config core.hooksPath` 要输出 `.githooks`。这个设置在 `.git/config` 里，**clone 之后不会跟着来**——丢了钩子就不跑，闸门静默失效，而且没有任何提示。是空的话跑一次 `git config core.hooksPath .githooks`。

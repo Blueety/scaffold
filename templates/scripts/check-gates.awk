@@ -402,7 +402,7 @@ function count_items(text,   n, i, c) {
 # ---------------------------------------------------------------- 模块表
 
 # `## 模块划分` 表第 2 列声明的路径，去掉反引号与尾斜杠。
-function modules_dump(   n, i, cells, nf, p, line) {
+function modules_dump(   n, i, cells, nf, p, line, npaths, k, seg, prev_dir) {
     n = md_section("模块划分")
     for (i = 1; i <= n; i++) {
         if (S[i] !~ /^[[:space:]]*\|/) continue
@@ -419,7 +419,21 @@ function modules_dump(   n, i, cells, nf, p, line) {
         sub(/^[[:space:]]+/, "", p); sub(/[[:space:]]+$/, "", p)
         sub(/\/+$/, "", p)
         if (p == "" || p == "路径" || p ~ /^-+$/) continue
-        print p
+        # 一格可以写多个路径，用「空格 + 空格」分隔（`c++`、`a+b` 这类名字不能被切）。
+        # 靠后的段如果自己不带 `/`，按**上一段所在的目录**解析——
+        # `…/settings/lastSession.ts + closeToTray.ts` 的另一半在同一个目录里。
+        npaths = split(p, PARTS, /[[:space:]]+\+[[:space:]]+/)
+        prev_dir = ""
+        for (k = 1; k <= npaths; k++) {
+            seg = PARTS[k]
+            gsub(/^[[:space:]]+/, "", seg); gsub(/[[:space:]]+$/, "", seg)
+            sub(/\/+$/, "", seg)
+            if (seg == "") continue
+            if (index(seg, "/") == 0 && prev_dir != "") seg = prev_dir "/" seg
+            print seg
+            prev_dir = seg
+            sub(/\/[^\/]*$/, "", prev_dir)
+        }
     }
 }
 

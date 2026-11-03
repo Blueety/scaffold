@@ -56,7 +56,7 @@ scripts/              闸门检查器（check-gates.sh + check-gates.awk）
 - 命名和描述用 `CONTEXT.md` 里的词。
 - 修改行为前先跑测试。
 - 修 bug 走 `skills/bug-fix/SKILL.md`：进根因假设前先有一条能对这个 bug 变红的命令（闸门 A）。
-- 写测试走 `skills/tdd/SKILL.md`：先书面列 seam 并确认，再动手。
+- 写测试走 `skills/tdd/SKILL.md`：先把 seam 写进 `plan.md`，再动手。
 - 重构走 `skills/refactor/SKILL.md`：先造行为安全网，再改结构；行为一变就不是重构。
 - 提交前走 `skills/pre-review/SKILL.md`：Standards / Spec 两轴分开报告。**T2 / T3 必须派独立子 agent 审**，产出 `tasks/<日期>-<简述>/review.md`；T1 自己审。提交时 `scripts/check-gates.sh --staged` 会拦 `[DEBUG-` 残留、`plan.md` / `journal.md` / 切片 / `review.md` 的字段、`architecture.md` 模块表与实际目录的偏差，以及**规模低报**（`src/` 下改 ≥ 4 个文件却没有 T2 / T3 的声明）。
 - 收到审查意见走 `skills/receiving-review/SKILL.md`：每条发现落到「改 / 不改 + 理由 / 不接受 + 反证」，改完重跑验证。

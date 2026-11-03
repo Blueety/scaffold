@@ -82,11 +82,12 @@ mkdir -p "$P/tasks/2026-01-07-split" "$P/src"
 plan_text T1 > "$P/tasks/2026-01-07-split/plan.md"
 wip_commit "$P"                                   # 计划先提交
 printf 'echo 1\n' > "$P/src/a.sh"; printf 'echo 2\n' > "$P/src/b.sh"
-wip_commit "$P"                                   # 前 2 个代码文件：还不该拦
+( cd "$P" && git add -A ) >/dev/null 2>&1               # 暂存但不提交：模拟「这次要提交的」
 out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
 not "没有声明 T2/T3" "$out" "累计 2 个文件时不拦"
+wip_commit "$P"                                         # 第一个提交：2 个文件
 printf 'echo 3\n' > "$P/src/c.sh"; printf 'echo 4\n' > "$P/src/d.sh"
-wip_commit "$P"                                   # 再 2 个，且这次没碰 tasks/
+( cd "$P" && git add -A ) >/dev/null 2>&1               # 第二个提交在索引里，这次不碰 tasks/
 out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
 has "累计" "$out" "两次提交各 2 个文件，累计 4 个 → 拦下"
 
@@ -97,9 +98,65 @@ plan_text T2 > "$P/tasks/2026-01-08-big/plan.md"
 plan_text T1 > "$P/tasks/2026-01-08-small/plan.md"
 wip_commit "$P"
 for i in 1 2 3 4 5; do printf 'echo %s\n' "$i" > "$P/src/f$i.sh"; done
-wip_commit "$P"
+( cd "$P" && git add -A ) >/dev/null 2>&1
 out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
 has "累计" "$out" "T2 任务在飞不会让 T1 的底线失效"
+
+echo "== G-arch-1: 模块表一格写两个路径 =="
+P="$TMP/ga1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/src/a" "$P/src/b"
+printf 'echo a\n' > "$P/src/a/x.sh"; printf 'echo b\n' > "$P/src/b/y.sh"
+cat > "$P/docs/architecture.md" <<'MD'
+# 架构
+
+## 模块划分
+
+| 模块 | 路径 | 职责 |
+|---|---|---|
+| a | `src/a/x.sh` + `src/b/y.sh` | 两个文件 |
+| b | `src/b/` | 目录 |
+MD
+( cd "$P" && git add -A ) >/dev/null 2>&1
+out="$(run_staged "$P")"
+not "但它不存在" "$out" "一格两个路径都真实存在时不报错"
+
+echo "== G-arch-2: 一格里的第二个路径不存在仍要报 =="
+sed -i 's|`src/a/x.sh` + `src/b/y.sh`|`src/a/x.sh` + `src/b/nope.sh`|' "$P/docs/architecture.md"
+( cd "$P" && git add -A ) >/dev/null 2>&1
+out="$(run_staged "$P")"
+has "但它不存在" "$out" "第二段不存在时照样拦下（修复不能变成静默忽略）"
+
+echo "== G-arch-3: 相对段按上一段目录解析 =="
+mkdir -p "$P/src/c/d"; printf 'x\n' > "$P/src/c/d/one.sh"; printf 'x\n' > "$P/src/c/d/two.sh"
+# 先把 G-arch-2 的坏行改回来，再加一行「绝对路径 + 相对名」
+sed -i 's|`src/a/x.sh` + `src/b/nope.sh`|`src/a/x.sh` + `src/b/y.sh`|' "$P/docs/architecture.md"
+printf '| c | `src/c/d/one.sh` + `two.sh` | 相对段 |\n' >> "$P/docs/architecture.md"
+( cd "$P" && git add -A ) >/dev/null 2>&1
+out="$(run_staged "$P")"
+not "但它不存在" "$out" "相对段 two.sh 解析到 src/c/d/two.sh"
+
+echo "== G-doc-1: 机制文件不许再要求「等人确认 seam」 =="
+for f in docs/agents/执行者.md skills/tdd/SKILL.md AGENTS.md README.md tasks/README.md; do
+    if grep -qE "seam 并等确认|并让用户确认|seam 并等待确认|需要 seam 确认|seam 已确认" "$REPO_ROOT/templates/$f"; then
+        no "$f 仍要求等人确认 seam"
+    else
+        ok "$f 与任务分级一致"
+    fi
+done
+
+echo "== G1d: 索引干净时规模底线不误报 =="
+P="$TMP/g1d"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-09-old" "$P/src"
+plan_text T1 > "$P/tasks/2026-01-09-old/plan.md"
+for i in 1 2 3 4 5 6; do printf 'echo %s\n' "$i" > "$P/src/f$i.sh"; done
+wip_commit "$P"                                   # 6 个文件进历史，任务声明是 T1
+out="$(run_staged "$P")"                          # 索引干净
+not "没有声明 T2/T3" "$out" "没有暂存改动时不报规模底线"
+# 反向：真暂存一个代码文件，累计照旧生效，并且点名是哪个任务
+printf 'echo 7\n' > "$P/src/f7.sh"; ( cd "$P" && git add -A ) >/dev/null 2>&1
+out="$(run_staged "$P")"
+has "没有声明 T2/T3" "$out" "有暂存内容时累计照旧生效"
+has "2026-01-09-old" "$out" "报错点出是哪个任务超了规模底线"
 
 echo "== G2: plan.md 的「目标」为空要报 =="
 P="$TMP/g2"; new_project "$P" || { echo "建项目失败"; exit 2; }

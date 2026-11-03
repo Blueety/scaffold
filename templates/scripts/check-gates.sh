@@ -211,7 +211,11 @@ count_code_changes() {
 check_scale() {
     local staged="$1" root="$2"; shift 2
     [ "$staged" -eq 1 ] || return 0
-    local d base n max=0
+    # 索引里没有代码改动 ⇒ 没有「这次提交」可判。
+    # 不短路的话，下面按任务累计的分支算的是 base→索引；索引等于 HEAD 时
+    # 那就是「该任务开始以来的全部改动」，历史 T0/T1 任务一律 ≥4 ⇒ 空跑必红。
+    git -C "$root" diff --cached --quiet -- "${MODULE_ROOT%/}" 2>/dev/null && return 0
+    local d base n max=0 max_dir=""
     # 空树的 SHA：任务起点那个提交本身就是根提交时，`base^` 不存在，
     # 从空树算起才等同于「这个任务从零开始」。
     local empty_tree=4b825dc642cb6eb9a060e54bf8d69288fbee4904
@@ -232,7 +236,7 @@ check_scale() {
             [ -n "$base" ] || continue
             base="$(git -C "$root" rev-parse -q --verify "$base^" 2>/dev/null || printf '%s' "$empty_tree")"
             n="$(count_code_changes "$base" "$root")"
-            [ "$n" -gt "$max" ] && max="$n"
+            if [ "$n" -gt "$max" ]; then max="$n"; max_dir="$d"; fi
         done
         n="$max"
     else
@@ -245,12 +249,13 @@ check_scale() {
                 base="$(git -C "$root" rev-parse -q --verify "$base^" 2>/dev/null || printf '%s' "$empty_tree")"
             fi
             n="$(count_code_changes "$base" "$root")"
-            [ "$n" -gt "$max" ] && max="$n"
+            if [ "$n" -gt "$max" ]; then max="$n"; max_dir="$d"; fi
         done
         n="$max"
     fi
     [ "$n" -ge 4 ] || return 0
-    fail "这个任务的代码改动累计 $n 个 $MODULE_ROOT 下的文件，但没有声明 T2/T3 —— 按 docs/agents/任务分级.md 的 6 条信号，文件数 ≥ 4 就是 T2。把 plan.md 的档位升到 T2 并补 review.md（3.4 批准 + 3.8 独立审查）；如果这些文件分属别的任务，说明这个提交混了多个任务，按「一个任务一个提交」拆开"
+    # 报出是哪个任务超的：仓库里几十个 T0/T1 任务时，只说「这个任务」等于让人手算。
+    fail "任务 ${max_dir:-（本次改动）} 的代码改动累计 $n 个 $MODULE_ROOT 下的文件，但没有声明 T2/T3 —— 按 docs/agents/任务分级.md 的 6 条信号，文件数 ≥ 4 就是 T2。把 plan.md 的档位升到 T2 并补 review.md（3.4 批准 + 3.8 独立审查）；如果这些文件分属别的任务，说明这个提交混了多个任务，按「一个任务一个提交」拆开"
 }
 
 # ---------------------------------------------------------------- 架构
