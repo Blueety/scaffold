@@ -586,7 +586,10 @@ function check_next_notes(   n, i, l, txt, item, item_line, have_item) {
     flush_note(item, item_line, have_item)
 }
 
-function is_bullet(l) { return l ~ /^[ \t]*([-*+]|[0-9]+[.)])[ \t]+[^ \t]/ }
+# 条目符号。和 count_listitems 同口径：`-` `*` `+`、`1.` `1)`，以及中文的 `1、` `1）`。
+# 只认半角点的话，用顿号编号的条目不被当成条目起始，整节会被并成一个条目，
+# 只要其中任意一行有去向就全部放行——静默免检。
+function is_bullet(l) { return l ~ /^[ \t]*([-*+][ \t]+|(（|\()?[0-9]+([.]|、|\)|）)[ \t]*)[^ \t]/ }
 
 # 一个条目里只要**任何一行**写了去向就算数。
 function flush_note(item, item_line, have_item,   l, n, i) {
@@ -594,13 +597,16 @@ function flush_note(item, item_line, have_item,   l, n, i) {
     n = split(item, NOTE_TMP, "\n")
     for (i = 1; i <= n; i++) {
         l = NOTE_TMP[i]
-        gsub(/^[ \t]*([-*+]|[0-9]+[.)])?[ \t]*/, "", l)
+        gsub(/^[ \t]*([-*+]|(（|\()?[0-9]+([.]|、|\)|）))?[ \t]*/, "", l)
         sub(/[ \t]+$/, "", l)
         if (l == "无" || l == "无。" || l == "N/A") return
         if (index(l, "→") > 0 || index(l, "不沉淀") > 0) return
     }
+    # 报错要能定位。条目可能以换行开头（前面是「第一个项目符号之前的散文」），
+    # 直接剥前缀会剥空，消息就变成「没有去向:  —— …」，指不到任何东西。
     l = item
-    sub(/^[ \t]*([-*+]|[0-9]+[.)])[ \t]*/, "", l)
+    while (substr(l, 1, 1) == "\n") l = substr(l, 2)
+    sub(/^[ \t]*([-*+]|(（|\()?[0-9]+([.]|、|\)|）))[ \t]*/, "", l)
     sub(/\n.*/, "", l)
     V("「下次注意什么」这条没有去向: " l " —— 每条要么 `→ pitfalls` / `→ 任务分级阈值` / `→ skills/<名>`，要么写「不沉淀」")
 }

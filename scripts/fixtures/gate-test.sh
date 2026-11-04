@@ -158,6 +158,30 @@ out="$(run_staged "$P")"
 has "没有声明 T2/T3" "$out" "有暂存内容时累计照旧生效"
 has "2026-01-09-old" "$out" "报错点出是哪个任务超了规模底线"
 
+echo "== G1e: 模板目录不被当成任务（只改 src 时不许 100% 拦）=="
+P="$TMP/g1e"; new_project "$P" || { echo "建项目失败"; exit 2; }
+# 让「模板 plan.md 进入历史」那笔提交拉长：一段历史之后才出现代码
+printf 'echo 1\n' > "$P/src/f1.sh"; wip_commit "$P" code1
+printf 'echo 2\n' > "$P/src/f2.sh"; wip_commit "$P" code2
+printf 'echo 3\n' > "$P/src/f3.sh"; wip_commit "$P" code3
+printf 'echo 4\n' > "$P/src/f4.sh"; wip_commit "$P" code4
+printf 'echo 5\n' > "$P/src/f5.sh"; wip_commit "$P" code5
+# 现在只改 1 个 src 文件并暂存：没有任何任务目录被碰
+printf 'echo 1 # 注释\n' > "$P/src/f1.sh"
+( cd "$P" && git add -A ) >/dev/null 2>&1
+out="$(run_staged "$P")"
+not "tasks/_template" "$out" "模板目录不被当成任务累计"
+# 反向：5 个文件全在索引里、仓库里只有 T2 任务在飞 → 仍要拦，且主语是「本次改动」。
+# T2 任务必须先提交：否则这次提交碰了任务目录、cands 非空，走的是「该任务自己是 T2」
+# 那条提前返回，测不到这个分支。
+rm -rf "$P/tasks"/*
+mkdir -p "$P/tasks/2026-01-10-big"; plan_text T2 > "$P/tasks/2026-01-10-big/plan.md"
+wip_commit "$P" t2task
+for i in 1 2 3 4 5; do printf 'echo %s # x\n' "$i" > "$P/src/f$i.sh"; done
+( cd "$P" && git add -A ) >/dev/null 2>&1
+out="$(run_staged "$P")"
+has "本次改动" "$out" "只有 T2 在飞时，本次索引的 5 个文件仍被拦"
+
 echo "== G2: plan.md 的「目标」为空要报 =="
 P="$TMP/g2"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-02-x"
@@ -300,6 +324,20 @@ not "改 A 必须同步 B" "$out" "已经写了去处的条目不再报"
 write_journal "- 无"
 out="$(staged_run)"
 not "没有去向" "$out" "写「无」不算违规"
+
+# 顿号 / 全角括号编号也要认作条目起始，否则整节被并成一条，静默免检
+write_journal "1、第一条没有去向
+2、第二条 → pitfalls
+3）第三条也没有去向"
+out="$(staged_run)"
+has "第一条没有去向" "$out" "顿号编号的条目被单独检查"
+has "第三条也没有去向" "$out" "全角括号编号的条目被单独检查"
+not "第二条 → pitfalls" "$out" "写了去向的顿号条目不被误报"
+
+# 散文（没有条目符号）也要能在报错里看到原文，而不是空着
+write_journal "这是一句散文，没有条目符号也没有去向"
+out="$(staged_run)"
+has "这是一句散文" "$out" "散文条目的报错带原文（不是空消息）"
 
 printf '\n结果: PASS %d / FAIL %d\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

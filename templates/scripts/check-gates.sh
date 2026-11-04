@@ -215,7 +215,7 @@ check_scale() {
     # 不短路的话，下面按任务累计的分支算的是 base→索引；索引等于 HEAD 时
     # 那就是「该任务开始以来的全部改动」，历史 T0/T1 任务一律 ≥4 ⇒ 空跑必红。
     git -C "$root" diff --cached --quiet -- "${MODULE_ROOT%/}" 2>/dev/null && return 0
-    local d base n max=0 max_dir=""
+    local d base n max=0 max_dir="" who
     # 空树的 SHA：任务起点那个提交本身就是根提交时，`base^` 不存在，
     # 从空树算起才等同于「这个任务从零开始」。
     local empty_tree=4b825dc642cb6eb9a060e54bf8d69288fbee4904
@@ -228,8 +228,16 @@ check_scale() {
         # 这时不能只看本次索引：把 T2 的活拆成两次提交就能溜过去。
         # 但也不能退回「所有在飞任务」然后见到 T2 就让位——那样仓库里躺着一个
         # 没归档的 T2 任务，规模底线就永久失效。只累计**声明为 T0/T1** 的任务。
+        #
+        # 起点是「本次索引自己的改动数」：仓库里只有 T2/T3 在飞时（T0 不建目录，
+        # 所以这是常态），没有任何 T0/T1 任务可以归属，这几处改动仍然要有人认领。
+        max="$(count_code_changes "" "$root")"
         for d in "$root"/tasks/*/; do
             d="${d%/}"; d="${d#"$root"/}"
+            # 模板目录不是任务：它的 plan.md 档位是 `T?`，会被当成 T0/T1，
+            # 而它的起点是脚手架落地那次提交——于是「累计」把项目至今的全部
+            # src 改动都算进一个假任务里，任何只改代码的提交都被拦。
+            case "$d" in tasks/_template) continue ;; esac
             [ -f "$root/$d/plan.md" ] || continue
             task_is_high_tier "$d" && continue
             base="$(git -C "$root" log --diff-filter=A --format=%H -1 -- "$d/plan.md" 2>/dev/null)"
@@ -255,7 +263,14 @@ check_scale() {
     fi
     [ "$n" -ge 4 ] || return 0
     # 报出是哪个任务超的：仓库里几十个 T0/T1 任务时，只说「这个任务」等于让人手算。
-    fail "任务 ${max_dir:-（本次改动）} 的代码改动累计 $n 个 $MODULE_ROOT 下的文件，但没有声明 T2/T3 —— 按 docs/agents/任务分级.md 的 6 条信号，文件数 ≥ 4 就是 T2。把 plan.md 的档位升到 T2 并补 review.md（3.4 批准 + 3.8 独立审查）；如果这些文件分属别的任务，说明这个提交混了多个任务，按「一个任务一个提交」拆开"
+    # 没有可归属的任务（改动全在本次索引里）时主语换成「本次改动」，别再拼出
+    # 「任务 （本次改动） 的…」这种半句话。
+    if [ -n "$max_dir" ]; then
+        who="任务 $max_dir"
+    else
+        who="本次改动"
+    fi
+    fail "$who 的代码改动累计 $n 个 $MODULE_ROOT 下的文件，但没有声明 T2/T3 —— 按 docs/agents/任务分级.md 的 6 条信号，文件数 ≥ 4 就是 T2。把 plan.md 的档位升到 T2 并补 review.md（3.4 批准 + 3.8 独立审查）；如果这些文件分属别的任务，说明这个提交混了多个任务，按「一个任务一个提交」拆开"
 }
 
 # ---------------------------------------------------------------- 架构
