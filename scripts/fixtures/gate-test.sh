@@ -238,6 +238,44 @@ printf '\n写法：`# 决策: ADR-0099`\n' >> "$P/docs/adr/README.md"
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 not "ADR-0099" "$out" "markdown 文档里的示例不算锚点"
 
+echo "== G-link-2: 不是路径的行内代码不当断链 =="
+P="$TMP/gl2"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tests"; printf 'def test_shutdown(): pass\n' > "$P/tests/test_web.py"
+cat >> "$P/AGENTS.md" <<'EOF'
+
+部署设 `APP_COOKIES_FILE=/srv/cookies.txt`；发布看 `youtu.be/`；
+测试见 `tests/test_web.py::test_shutdown`；细节见 `docs/architecture.md:120`。
+EOF
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+not "APP_COOKIES_FILE" "$out" "env 赋值不是断链"
+not "youtu.be/" "$out" "裸域名不是断链"
+not "::test_shutdown" "$out" "pytest node id 只判文件部分"
+not ":120" "$out" "带行号的引用只判文件部分（文件存在就不报）"
+# 负向：剥掉后缀之后仍然断链，必须报
+printf '\n真断链 `docs/nope.md:12`，另一个 `tests/nope.py::test_x`。\n' >> "$P/AGENTS.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "docs/nope.md" "$out" "带行号的真断链照样报"
+has "tests/nope.py" "$out" "node id 的文件部分不存在时照样报"
+not "::test_x" "$out" "报的是文件路径，不是整串 node id"
+# 违规条数与屏幕上打出来的行数一致（曾经差 1：末尾空行被算成一项）
+n_lines="$(printf '%s\n' "$out" | grep -c '^  \[x\]')"
+n_declared="$(printf '%s\n' "$out" | sed -n 's/^闸门检查失败：\([0-9]*\) 项。$/\1/p')"
+[ "$n_lines" = "$n_declared" ] && ok "失败条数与打出来的行数一致（$n_lines）" \
+    || no "失败条数与打出来的行数一致（显示 $n_lines，声明 $n_declared）"
+
+echo "== G-link-3: tasks/README.md 属于被查的活文档 =="
+P="$TMP/gl3"; new_project "$P" || { echo "建项目失败"; exit 2; }
+printf '\n活文档：见 `docs/not-here.md`。\n' >> "$P/tasks/README.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "docs/not-here.md" "$out" "tasks/README.md 里的断链要报"
+# _template 与任务目录仍然跳过
+printf '\n示例：`docs/nowhere.md`。\n' >> "$P/tasks/_template/plan.md"
+mkdir -p "$P/tasks/2026-01-01-x"
+printf '# 计划\n\n见 `docs/gone.md`。\n' > "$P/tasks/2026-01-01-x/plan.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+not "docs/nowhere.md" "$out" "tasks/_template/ 跳过（填空模板）"
+not "docs/gone.md" "$out" "任务目录跳过（快照）"
+
 echo "== G2: plan.md 的「目标」为空要报 =="
 P="$TMP/g2"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-02-x"

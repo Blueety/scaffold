@@ -723,7 +723,7 @@ function trim(s) {
     return s
 }
 
-function emit_link(file, s,   tail, last) {
+function emit_link(file, s,   last, t) {
     if (s == "") return
     # 不是相对路径：外部 URL、锚点、绝对路径、带占位符/通配符的
     if (s ~ /^[a-zA-Z]+:\/\//) return
@@ -733,12 +733,22 @@ function emit_link(file, s,   tail, last) {
     if (s ~ /\.\.\./) return
     if (s ~ /NNNN/) return
     if (s ~ /[ \t]/) return
+    # env 赋值 / shell 片段：`KEY=/path`、`--out=docs/x.md`。
+    # 用「前缀 + =」而不是「整串含 =」：后者会漏掉 `src/a=b.py` 这种真文件名。
+    if (s ~ /^[A-Za-z_][A-Za-z0-9_]*=/ || s ~ /^--[A-Za-z0-9-]+=/) return
+    # 后缀不属于路径：pytest node id `path::test_x`、行号 `path:120`。
+    # 先剥 `::` 再剥 `:120`，复合写法 `x.md:12::foo` 需要这个顺序（反了就剩 `x.md:12`）。
+    sub(/::.*$/, "", s)
+    sub(/:[0-9]+$/, "", s)
+    if (s == "") return
     if (index(s, "/") == 0) return
     # 只查**像文件**的引用：最后一段要带扩展名。
     # 纯目录引用（`src/`、`tasks/_archive/`、`docs/adr/`）不查——空目录进不了 git，
     # 模板里也用它们做示意；查了只会让每个新项目一开张就红。
     last = s
     sub(/[\/]+$/, "", last)
+    # 裸域名（`youtu.be/`）：去掉尾斜杠后没有内部 `/`，不是相对路径
+    if (index(last, "/") == 0) return
     sub(/.*\//, "", last)
     if (index(last, ".") == 0) return
     # 去掉行尾的标点（中文句读紧跟在反引号外的情形）

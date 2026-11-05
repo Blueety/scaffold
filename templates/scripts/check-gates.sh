@@ -127,8 +127,11 @@ check_gate_b() {
 emit_violations() {
     [ -n "$1" ] || return 0
     printf '%s\n' "$1"
+    # 数**非空行**。调用方攒出来的字符串常常以换行结尾（`out="$out$line\n"`），
+    # `<<<` 又会补一个换行，于是末尾多出一条空行被算成 1 项违规——
+    # 屏幕上显示 4 条，收尾却写「闸门检查失败：5 项」。
     local n=0 l
-    while IFS= read -r l; do n=$((n + 1)); done <<< "$1"
+    while IFS= read -r l; do [ -n "$l" ] && n=$((n + 1)); done <<< "$1"
     violations=$((violations + n))
 }
 
@@ -147,8 +150,11 @@ check_slice()   { run_check slice   "$1"; }
 # 的小节。这类断链只能靠人读到才发现，而这套规则的价值恰恰在于「换个人/AI 接手时
 # 顺着指针能找到东西」。
 #
-# 只查**活文档**：根目录的 md、docs/、skills/、tasks/README.md、tasks/_template/。
-# `tasks/<任务>/` 是快照，任务结束后可能改过名、删过文件，那里的断链是历史，不是缺陷。
+# 只查**活文档**：根目录的 md、`docs/`、`skills/`、`tasks/README.md`。
+# `tasks/<任务>/` 是快照（任务结束后可能改名、删文件，那里的断链是历史不是缺陷），
+# `tasks/_template/` 是**填空模板**（里面的示例路径本来就指向还不存在的东西）——
+# 这两类跳过。注意 `tasks/README.md` 是活文档，不跳过：
+# 约定、归档流程、闸门说明都写在那里，它的断链和 `docs/` 里的一样有害。
 #
 # 只查**像文件**的引用（最后一段带扩展名）。纯目录引用（`src/`、`docs/adr/`）不查：
 # 空目录进不了 git，模板里也用它们做示意。
@@ -157,9 +163,7 @@ check_links() {
     local -a files=()
     while IFS= read -r f; do
         case "$f" in
-            # 任务目录是快照：任务结束后文件可能改名、删除，那里的断链是历史不是缺陷。
-            # `_template/` 也一样——它是**填空模板**，里面的 `第 3 个切片`、示例路径
-            # 本来就指向还不存在的东西。
+            ./tasks/README.md) ;;
             ./tasks/*) continue ;;
         esac
         files+=("${f#./}")
