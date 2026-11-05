@@ -182,6 +182,39 @@ for i in 1 2 3 4 5; do printf 'echo %s # x\n' "$i" > "$P/src/f$i.sh"; done
 out="$(run_staged "$P")"
 has "本次改动" "$out" "只有 T2 在飞时，本次索引的 5 个文件仍被拦"
 
+echo "== G-link: 文档里的相对路径必须存在 =="
+P="$TMP/gl1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+printf '\n见 `docs/nope.md`。\n' >> "$P/AGENTS.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "docs/nope.md" "$out" "指向不存在文件的相对路径被报出来"
+# 围栏代码块里的路径不算引用（示例命令常出现不存在的路径）
+printf '\n```bash\ncat docs/nope.md\n```\n' >> "$P/AGENTS.md"
+sed -i 's|见 `docs/nope.md`。|见 `docs/commands.md`。|' "$P/AGENTS.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+not "docs/nope.md" "$out" "围栏代码块里的路径不检查、改对之后不报"
+# 带占位符的示例路径不检查
+printf '\n写进 `tasks/<日期>-<简述>/plan.md`。\n' >> "$P/AGENTS.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+not "plan.md 不存在" "$out" "带占位符的示例路径不检查"
+
+echo "== G-adr: 取代关系必须互指 =="
+P="$TMP/gadr"; new_project "$P" || { echo "建项目失败"; exit 2; }
+printf '# 甲\n\nStatus: accepted\n' > "$P/docs/adr/0001-a.md"
+printf '# 乙\n\nStatus: accepted\nSupersedes: ADR-0001\n' > "$P/docs/adr/0002-b.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "没有" "$out" "只写 Supersedes、旧篇没写 Superseded-By → 报"
+# 补上反向互链，但 Status 还写着 accepted
+printf '# 甲\n\nStatus: accepted\nSuperseded-By: ADR-0002\n' > "$P/docs/adr/0001-a.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "应为 superseded" "$out" "写了 Superseded-By 却仍是 accepted → 报"
+sed -i 's/^Status: accepted$/Status: superseded/' "$P/docs/adr/0001-a.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+not "[x]" "$out" "两边互指且状态正确 → 通过"
+# 引用了不存在的编号
+printf '\n另见 ADR-0009。\n' >> "$P/docs/adr/0002-b.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "ADR-0009" "$out" "引用不存在的 ADR 被报出来"
+
 echo "== G2: plan.md 的「目标」为空要报 =="
 P="$TMP/g2"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-02-x"

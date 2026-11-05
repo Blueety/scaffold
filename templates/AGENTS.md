@@ -56,7 +56,7 @@
 
 - 先只读分析，再动手。不要把分析和实现混在一轮里。
 - 在只读分析末尾声明档位（一行）。**T0 / T1 是通知**——发完继续做，不等人回；**T2 / T3 的计划等你批准**（见 `docs/agents/任务分级.md` 的「人检查点与独立审查」），批准即授权这个规模，不再单独确认档位。
-- 计划保存到 `tasks/<日期>-<简述>/plan.md`（日期用当天 `YYYY-MM-DD`，简述用简短英文，如 `2026-08-09-todo-title-search/plan.md`）。
+- 计划保存到 `tasks/<日期>-<简述>/plan.md`（日期用当天 `YYYY-MM-DD`，简述用简短英文，如 `todo-title-search`）。
   计划包含：目标、涉及文件、实施步骤、验证命令、测试 seam、预估 diff 范围。**只有 T0 可以不落盘**；T1 / T2 / T3 都要落——实施由执行者子 agent 做，它只认 `plan.md`，对话里的计划传不过去。
 - **派执行者子 agent 实施（T1 / T2 / T3）**：写计划的人不实施。由规划者派一个**全新的子 agent** 按 `docs/agents/执行者.md` 实施，输入只给 `prd.md` + `plan.md` + 规范文件（`AGENTS.md`、`docs/architecture.md`、`docs/commands.md`、`CONTEXT.md`、`docs/pitfalls.md`），**不给规划过程的对话**——给了，它继承规划时的结论，`plan.md` 就约束不住实施。子 agent 报的「已完成」由主线程重跑关键命令复核，不能直接采信。T0 免检：不写计划，也就没有可派的东西。
 - 保持 diff 最小，不重构无关代码。
@@ -69,7 +69,7 @@
 - 修 bug 时：进入根因假设前，必须有一条已经实跑过、能对这个 bug 变红的命令（`skills/bug-fix/SKILL.md` 闸门 A）。
 - 写测试前：先把要测的 seam 写进 `plan.md` 的「## 测试 Seam」一节（T1 写完即继续；**T0 不建 plan**，seam 一行写在回复里；T2 / T3 随 plan 一次批准）。没写下来、或与 `plan.md` 不符的，停下来问。
 - 调试日志统一加 `[DEBUG-xxxx]` 前缀，提交前 grep 清干净。
-- 提交前闸门是**自动**的：`.githooks/pre-commit` 会跑 `scripts/check-gates.sh --staged`，检查 `[DEBUG-` 残留、`docs/architecture.md` 的模块表与实际目录是否对得上、`plan.md` 的档位/类型/闸门 A 字段、`journal.md` 的章节与验证结果、切片文件的字段、**T2 / T3 的 `review.md` 是否存在且填全**。被拦下就按提示补内容，**不要**用 `git commit --no-verify` 绕过。手动全量检查：`sh scripts/check-gates.sh`（Windows 上 `bash` 可能指向 WSL 的桩，改用 `sh`）。
+- 提交前闸门是**自动**的：`.githooks/pre-commit` 会跑 `scripts/check-gates.sh --staged`，检查 `[DEBUG-` 残留、`docs/architecture.md` 的模块表与实际目录是否对得上、**文档里写的相对路径是否真实存在**、**ADR 的 `Superseded-By` / `Supersedes` 是否互指**、`plan.md` 的档位/类型/闸门 A 字段、`journal.md` 的章节与验证结果、切片文件的字段、**T2 / T3 的 `review.md` 是否存在且填全**。被拦下就按提示补内容，**不要**用 `git commit --no-verify` 绕过。手动全量检查：`sh scripts/check-gates.sh`（Windows 上 `bash` 可能指向 WSL 的桩，改用 `sh`）。
 - 动手前先确认钩子真的挂上了：`git config core.hooksPath` 要输出 `.githooks`。这个设置在 `.git/config` 里，**clone 之后不会跟着来**——丢了钩子就不跑，闸门静默失效，而且没有任何提示。是空的话跑一次 `git config core.hooksPath .githooks`。
 - 提交前审查：T0 不审；T1 自己审；**T2 / T3 必须派一个全新的子 agent 审**（只给它 `prd.md`、`plan.md`、diff、相关规范，**不给它会话历史**），产出 `tasks/<日期>-<简述>/review.md`。轮次上限 2，超了升级给人。
 - 收到审查意见后按 `skills/receiving-review/SKILL.md` 逐条处理：改 / 不改+理由 / 不接受+反证，**没有第四种**；不能静默跳过任何一条。

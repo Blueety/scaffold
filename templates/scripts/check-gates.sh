@@ -29,6 +29,11 @@
 #   - review.md（裁决单）：任务档位是 T2 / T3 时必须存在——plan.md / prd.md / 切片里
 #                          **任何一处**声明了 T2/T3 就算，不依赖 plan.md 是否存在；
 #                          章节齐全、固定点已填、逐条处理表非空、「审查者明确未判断的」不许留空
+#   - 文档内相对引用：根目录 md、docs/、skills/ 里用反引号或 markdown 链接写下的
+#                      相对路径必须存在（围栏代码块、带占位符的示例不算）。
+#                      tasks/ 整个跳过——那是快照，断链属于历史。
+#   - docs/adr/：任何 `ADR-NNNN` 引用都要有文件；`Superseded-By` 与 `Supersedes`
+#                必须互指；写了 Superseded-By 就不能还是 `Status: accepted`
 #   - 架构：docs/architecture.md 的模块表 vs 实际模块目录（双向，模块根默认 src）。
 #          表里全是宽声明（模块根本身或它的祖先）时，全量自查会提示一句：新增子目录不会被检查。
 #          模块目录 = 模块根下**非空**的直接子目录（含还没 git add 的），点目录和被
@@ -132,6 +137,57 @@ check_plan()    { run_check plan    "$1"; }
 check_prd()     { run_check prd     "$1"; }
 check_journal() { run_check journal "$1"; }
 check_slice()   { run_check slice   "$1"; }
+
+# 文档里的相对引用必须指向真实存在的文件。
+#
+# 为什么要有这条：`templates/AGENTS.md` 曾经指向 `WORKFLOW.md`（那个文件不随模板
+# 分发，生成出来的项目里根本没有），三个角色提示词指向 `architecture.md` 里不存在
+# 的小节。这类断链只能靠人读到才发现，而这套规则的价值恰恰在于「换个人/AI 接手时
+# 顺着指针能找到东西」。
+#
+# 只查**活文档**：根目录的 md、docs/、skills/、tasks/README.md、tasks/_template/。
+# `tasks/<任务>/` 是快照，任务结束后可能改过名、删过文件，那里的断链是历史，不是缺陷。
+#
+# 只查**像文件**的引用（最后一段带扩展名）。纯目录引用（`src/`、`docs/adr/`）不查：
+# 空目录进不了 git，模板里也用它们做示意。
+check_links() {
+    local f ref line n=0 out="" total=0
+    local -a files=()
+    while IFS= read -r f; do
+        case "$f" in
+            # 任务目录是快照：任务结束后文件可能改名、删除，那里的断链是历史不是缺陷。
+            # `_template/` 也一样——它是**填空模板**，里面的 `第 3 个切片`、示例路径
+            # 本来就指向还不存在的东西。
+            ./tasks/*) continue ;;
+        esac
+        files+=("${f#./}")
+    done < <(find . -name '*.md' -type f 2>/dev/null | sort)
+    total="${#files[@]}"
+    [ "$total" -gt 0 ] || return 0
+
+    while IFS=$'\t' read -r f ref; do
+        [ -n "$ref" ] || continue
+        [ -e "$ref" ] && continue
+        line="  [x] $f: 引用的 $ref 不存在"
+        out="$out$line
+"
+        n=$((n + 1))
+    done < <(awk -v kind=links -f "$AWK_PROG" "${files[@]}" 2>/dev/null | sort -u)
+
+    [ "$n" -gt 0 ] && printf '检查文档内的相对引用（%d 个文件）\n' "$total"
+    emit_violations "$out"
+}
+
+# ADR 的引用与取代关系。见 check-gates.awk 的 adr_check。
+check_adr() {
+    local -a adrs=()
+    local p
+    for p in docs/adr/[0-9][0-9][0-9][0-9]-*.md; do
+        [ -f "$p" ] && adrs+=("$p")
+    done
+    [ "${#adrs[@]}" -gt 0 ] || return 0
+    emit_violations "$(awk -v kind=adr -f "$AWK_PROG" "${adrs[@]}" 2>/dev/null)"
+}
 
 # 任务是否已经「开工」——决定 T2/T3 的裁决单要不要。
 # 判据是「任务目录里除了 prd.md / journal.md / review.md 还有没有别的文件」，
@@ -465,6 +521,10 @@ main() {
 
     # 架构：模块表 vs 实际目录。仓库状态不变量，两种模式都跑
     check_architecture "$staged" "$root"
+
+    # 文档内相对引用 + ADR 互链：都是「仓库状态」不变量，和具体任务无关
+    check_links
+    check_adr
 
     # 要检查哪些任务目录
     local dirs=()

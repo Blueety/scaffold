@@ -40,6 +40,12 @@ BEGIN {
 {
     line = $0
 
+    # kind=adr / kind=links 要一次扫多个文件（互链要跨文件判、断链要一次跑完），
+    # 记下每个文件的起止：L[] 是跨文件累积的，不留边界就会把 A 的行算到 B 头上。
+    if ((kind == "adr" || kind == "links") && FNR == 1) {
+        FIDX++; FSTART[FIDX] = NL + 1; FNAME[FIDX] = FILENAME
+    }
+
     # 剥掉 markdown 注释（含跨行）。模板注释里会出现「应该可以」
     # 「（从 prd.md 提取）」这类字样，不剥掉的话会误报。
     while (1) {
@@ -86,6 +92,8 @@ END {
         print (high ? "yes" : "no"); exit
     }
     if (kind == "status")  { print md_token("结束状态"); exit }
+    if (kind == "links")   { links_dump(); exit }
+    if (kind == "adr")     { adr_check(); exit }
     if (kind == "modules") { modules_dump(); exit }
     if      (kind == "plan")    plan_check()
     else if (kind == "prd")     prd_check()
@@ -673,4 +681,164 @@ function review_check(   i, undecided) {
     gsub(/[[:space:]]/, "", undecided)
     if (undecided == "")
         V("「## 审查者明确未判断的」留空了（一条都没有就写「无」）——把「没判断」显式化，人才能看出盲区在哪")
+}
+
+# ---------------------------------------------------------------- 文档内的相对引用
+
+# 输出 `文件<TAB>引用`，由 bash 逐个 stat。放在 awk 里是为了
+# 「一个 markdown 解析器」——围栏代码块、行内代码、注释的剥离规则和别的检查同一套，
+# 否则会出现「文档里贴了一段命令，闸门把命令里的路径当真」。
+#
+# 跳过的东西（都是模板里真实存在的写法）：
+#   - 围栏代码块内的内容（示例命令、目录树）
+#   - 带占位符的路径：`<日期>` `{x}` `*` `$`
+#   - 外部链接、锚点、绝对路径
+function links_dump(   i, j, end, l, fence, segs, n, k, s, r) {
+    for (i = 1; i <= FIDX; i++) {
+        end = (i < FIDX ? FSTART[i + 1] : NL + 1)
+        fence = 0
+        for (j = FSTART[i]; j < end; j++) {
+            l = L[j]
+            if (l ~ /^[ \t]*(```|~~~)/) { fence = !fence; continue }
+            if (fence) continue
+
+            # 行内代码：`path`
+            n = split(l, segs, "`")
+            for (k = 2; k <= n; k += 2) emit_link(FNAME[i], trim(segs[k]))
+
+            # markdown 链接：[文字](path)
+            r = l
+            while (match(r, /\]\([^)]+\)/)) {
+                s = substr(r, RSTART + 2, RLENGTH - 3)
+                emit_link(FNAME[i], trim(s))
+                r = substr(r, RSTART + RLENGTH)
+            }
+        }
+    }
+}
+
+function trim(s) {
+    sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s)
+    sub(/^["']/, "", s); sub(/["']$/, "", s)
+    return s
+}
+
+function emit_link(file, s,   tail, last) {
+    if (s == "") return
+    # 不是相对路径：外部 URL、锚点、绝对路径、带占位符/通配符的
+    if (s ~ /^[a-zA-Z]+:\/\//) return
+    if (s ~ /^#/) return
+    if (s ~ /^\//) return
+    if (s ~ /[<>{}*$|]/) return
+    if (s ~ /\.\.\./) return
+    if (s ~ /NNNN/) return
+    if (s ~ /[ \t]/) return
+    if (index(s, "/") == 0) return
+    # 只查**像文件**的引用：最后一段要带扩展名。
+    # 纯目录引用（`src/`、`tasks/_archive/`、`docs/adr/`）不查——空目录进不了 git，
+    # 模板里也用它们做示意；查了只会让每个新项目一开张就红。
+    last = s
+    sub(/[\/]+$/, "", last)
+    sub(/.*\//, "", last)
+    if (index(last, ".") == 0) return
+    # 去掉行尾的标点（中文句读紧跟在反引号外的情形）
+    sub(/[，。；：、）)]+$/, "", s)
+    if (s == "" || index(s, "/") == 0) return
+    print file "\t" s
+}
+
+# ---------------------------------------------------------------- ADR
+
+# 一次扫 docs/adr/*.md。检查两件事：
+#   1. 任何 `ADR-<4 位数字>` 引用都要有对应的文件
+#   2. 被取代必须互链：A 写 Superseded-By: ADR-0007，0007 就得写 Supersedes: ADR-0001
+#
+# 为什么必须互链：只说「这被取代了」而不说「被谁取代」，半年后读的人走到断头路；
+# 只在新的那篇里写「我取代了旧的」，旧的那篇就会继续被人当成现行决定引用。
+function adr_check(   i, j, end, l, id, ids, n, k, r, t, have) {
+    for (i = 1; i <= FIDX; i++) {
+        end = (i < FIDX ? FSTART[i + 1] : NL + 1)
+        id = adr_id(FNAME[i])
+        if (id == "") continue
+        ADR_FILE[id] = FNAME[i]
+
+        for (j = FSTART[i]; j < end; j++) {
+            l = L[j]
+
+            if (match(l, /Superseded-By:[ \t]*ADR-[0-9][0-9][0-9][0-9]/)) {
+                t = substr(l, RSTART, RLENGTH); sub(/.*ADR-/, "", t)
+                SUPER_BY[id] = SUPER_BY[id] " " t
+            }
+            if (match(l, /Supersedes:[ \t]*ADR-[0-9][0-9][0-9][0-9]/)) {
+                t = substr(l, RSTART, RLENGTH); sub(/.*ADR-/, "", t)
+                SUPERSEDES[id] = SUPERSEDES[id] " " t
+            }
+            if (match(l, /^Status:[ \t]*[A-Za-z-]+/)) {
+                t = substr(l, RSTART, RLENGTH); sub(/^Status:[ \t]*/, "", t)
+                STATUS[id] = tolower(t)
+            }
+
+            # 正文/小节里出现的所有引用
+            r = l
+            while (match(r, /ADR-[0-9][0-9][0-9][0-9]/)) {
+                t = substr(r, RSTART + 4, 4)
+                ALSO[id] = ALSO[id] " " t
+                r = substr(r, RSTART + RLENGTH)
+            }
+        }
+    }
+
+    # 1. 引用存在性
+    for (i = 1; i <= FIDX; i++) {
+        id = adr_id(FNAME[i])
+        if (id == "") continue
+        n = split(ALSO[id] " " SUPER_BY[id] " " SUPERSEDES[id], REFS, " ")
+        for (k = 1; k <= n; k++) {
+            t = REFS[k]
+            if (t == "" || t == id) continue
+            if (!(t in ADR_FILE)) {
+                if (index(SEEN[id ">" t], "x") == 0) {
+                    SEEN[id ">" t] = "x"
+                    print "  [x] " FNAME[i] ": 引用了 ADR-" t "，但 docs/adr/ 里没有这个文件"
+                }
+            }
+        }
+    }
+
+    # 2. 互链
+    for (i = 1; i <= FIDX; i++) {
+        id = adr_id(FNAME[i])
+        if (id == "") continue
+
+        n = split(SUPER_BY[id], REFS, " ")
+        for (k = 1; k <= n; k++) {
+            t = REFS[k]
+            if (t == "" || !(t in ADR_FILE)) continue
+            if (index(" " SUPERSEDES[t] " ", " " id " ") == 0)
+                print "  [x] " FNAME[i] ": 写了 Superseded-By: ADR-" t "，但 ADR-" t " 里没有 `Supersedes: ADR-" id "`"
+        }
+
+        n = split(SUPERSEDES[id], REFS, " ")
+        for (k = 1; k <= n; k++) {
+            t = REFS[k]
+            if (t == "" || !(t in ADR_FILE)) continue
+            if (index(" " SUPER_BY[t] " ", " " id " ") == 0)
+                print "  [x] " FNAME[i] ": 写了 Supersedes: ADR-" t "，但 ADR-" t " 里没有 `Superseded-By: ADR-" id "`"
+        }
+    }
+
+    # 3. 归档/取代过的 ADR 不该还写着 accepted
+    for (i = 1; i <= FIDX; i++) {
+        id = adr_id(FNAME[i])
+        if (id == "" || SUPER_BY[id] == "") continue
+        if (STATUS[id] != "" && STATUS[id] != "superseded")
+            print "  [x] " FNAME[i] ": 已经写了 Superseded-By，但 Status 是 '" STATUS[id] "'（应为 superseded）"
+    }
+}
+
+function adr_id(f,   b, id) {
+    b = f; sub(/.*\//, "", b)
+    if (b !~ /^[0-9][0-9][0-9][0-9]-/) return ""
+    id = substr(b, 1, 4)
+    return id
 }
