@@ -14,6 +14,7 @@
 - `scripts/scaffold-update.sh` —— 把脚手架更新推到**已生成的项目**里：逐文件三方合并（项目现状 / 生成时的旧模板 / 当前模板），保留本地改动，冲突写标记并返回 1（**不随项目分发**；bash 4+）。配套 `scaffold-update.ps1`（Windows 入口，纯 ASCII）与 `fixtures/update-test.sh`（54 项验收）。`fixtures/gate-test.sh` 是闸门检查器的 33 项验收（规模底线含跨提交累计、空索引豁免与模板目录排除 / 模块表一格多路径 / seam 措辞一致性 / 目标必填 / 纯重命名豁免 / 拍平归档 / journal 去向）。
 - `.githooks/pre-commit` —— 提交前自动跑上面那个自检器（全量）。
 - `README.md` —— 用法，以及**唯一一份**生成物目录树。
+- `INTRO.md` —— 给第一次接触的人看的介绍：解决什么问题、一个任务走一遍、四道闸门、关键取舍、不适用场景。
 - `WORKFLOW.md` —— 生成项目的完整工作流程（写给用户看，不是本仓库的贡献指南）。
 - `web-chat-templates/` —— Phase 1 网页对话用的提示词模板（不随项目分发）。
 
