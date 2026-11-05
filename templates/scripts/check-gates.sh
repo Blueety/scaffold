@@ -34,6 +34,8 @@
 #                      tasks/ 整个跳过——那是快照，断链属于历史。
 #   - docs/adr/：任何 `ADR-NNNN` 引用都要有文件；`Superseded-By` 与 `Supersedes`
 #                必须互指；写了 Superseded-By 就不能还是 `Status: accepted`
+#   - 决策锚点（只提示，不影响退出码）：代码里的 `# 决策: ADR-NNNN` 注释，
+#                指向不存在的 ADR 或没写目标时打一条 [!]。
 #   - 架构：docs/architecture.md 的模块表 vs 实际模块目录（双向，模块根默认 src）。
 #          表里全是宽声明（模块根本身或它的祖先）时，全量自查会提示一句：新增子目录不会被检查。
 #          模块目录 = 模块根下**非空**的直接子目录（含还没 git add 的），点目录和被
@@ -187,6 +189,67 @@ check_adr() {
     done
     [ "${#adrs[@]}" -gt 0 ] || return 0
     emit_violations "$(awk -v kind=adr -f "$AWK_PROG" "${adrs[@]}" 2>/dev/null)"
+}
+
+# 代码里的决策锚点：`# 决策: ADR-0003`（`//` 同理）。
+#
+# 只做**提示**（note，不影响退出码），因为它三条判据的价值不对称：
+# 「悬空锚点」该修；「这条 ADR 没有代码引用」不该报（「用 SQLite」这类决定本来
+# 就不落在某一行代码上）；「锚点格式不对」也可能只是注释里的自然行文。
+# 加进失败会让全量自查常年红，而常年红的结果就是没人再看它。
+#
+# 为什么值得有：`docs/architecture.md` 讲的是模块级，「这行为什么这么写」在代码里
+# 没有出口。注释指向 ADR 是唯一的低成本路径，而注释最容易在重构中变成死链。
+check_anchors() {
+    local staged="$1" root="$2" hits=""
+    local -a adrs=()
+    local p id line rest num found
+    for p in "$root"/docs/adr/[0-9][0-9][0-9][0-9]-*.md; do
+        [ -f "$p" ] || continue
+        id="${p##*/}"; adrs+=("${id:0:4}")
+    done
+
+    if [ "$staged" -eq 1 ]; then
+        hits="$(git -C "$root" grep -I -n --cached -e '决策:' -- \
+            ':(exclude)*.md' ':(exclude)*check-gates.sh' \
+            ':(exclude)node_modules/*' ':(exclude)*/node_modules/*' 2>/dev/null || true)"
+    elif git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
+        hits="$(git -C "$root" grep --untracked --exclude-standard -I -n -e '决策:' -- \
+            ':(exclude)*.md' ':(exclude)*check-gates.sh' \
+            ':(exclude)node_modules/*' ':(exclude)*/node_modules/*' 2>/dev/null || true)"
+    else
+        hits="$( cd "$root" && find . -type f \
+            ! -path './.git/*' ! -path '*/node_modules/*' \
+            ! -name '*.md' ! -name 'check-gates.sh' \
+            -exec grep -H -I -n '决策:' {} + 2>/dev/null | sed 's|^\./||' || true)"
+    fi
+    [ -n "$hits" ] || return 0
+
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        case "$line" in
+            *ADR-*) ;;
+            *) note "锚点没写目标（应写成「决策: ADR-0001」）：$line"; continue ;;
+        esac
+        # 取 ADR- 之后的**前导数字**。不用 `substr`/`${v:0:4}`：
+        # C locale 下那是按字节切，中文会被切坏（见 check-gates.awk 里同一类坑）。
+        rest="${line#*ADR-}"
+        num="${rest%%[!0-9]*}"
+        case "$num" in
+            [0-9][0-9][0-9][0-9]) ;;
+            *) note "锚点的 ADR 编号不是 4 位数字：$line"; continue ;;
+        esac
+        if [ "${#adrs[@]}" -eq 0 ]; then
+            note "锚点指向 ADR-$num，但 docs/adr/ 里还没有任何 ADR：$line"
+            continue
+        fi
+        found=0
+        for id in "${adrs[@]}"; do
+            [ "$id" = "$num" ] && { found=1; break; }
+        done
+        [ "$found" -eq 1 ] || note "锚点指向 ADR-$num，但 docs/adr/ 里没有这个文件：$line"
+    done <<< "$hits"
+    return 0
 }
 
 # 任务是否已经「开工」——决定 T2/T3 的裁决单要不要。
@@ -525,6 +588,8 @@ main() {
     # 文档内相对引用 + ADR 互链：都是「仓库状态」不变量，和具体任务无关
     check_links
     check_adr
+    # 代码里的 `决策: ADR-NNNN` 锚点：只提示，不影响退出码
+    check_anchors "$staged" "$root"
 
     # 要检查哪些任务目录
     local dirs=()

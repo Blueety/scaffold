@@ -215,6 +215,29 @@ printf '\n另见 ADR-0009。\n' >> "$P/docs/adr/0002-b.md"
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 has "ADR-0009" "$out" "引用不存在的 ADR 被报出来"
 
+echo "== G-anchor: 代码里的决策锚点（只提示，不失败）=="
+P="$TMP/ganc"; new_project "$P" || { echo "建项目失败"; exit 2; }
+printf '# 甲\n\nStatus: accepted\n' > "$P/docs/adr/0001-a.md"
+printf 'x=1  # 决策: ADR-0001 用整数\n' > "$P/src/a.py"
+( cd "$P" && git add -A ) >/dev/null 2>&1
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"; rc=$?
+not "[!] 锚点" "$out" "锚点指向存在的 ADR 时不提示"
+[ "$rc" -eq 0 ] && ok "有效锚点不影响退出码" || no "有效锚点不影响退出码"
+# 悬空锚点：提示，但闸门仍然通过
+printf 'y=2  # 决策: ADR-0009\n' >> "$P/src/a.py"
+( cd "$P" && git add -A ) >/dev/null 2>&1
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"; rc=$?
+has "ADR-0009" "$out" "指向不存在的 ADR 被提示"
+[ "$rc" -eq 0 ] && ok "悬空锚点不拦截提交" || no "悬空锚点不拦截提交"
+# 没写目标
+printf 'z=3  # 决策: 以后再说\n' >> "$P/src/a.py"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "锚点没写目标" "$out" "没写目标的锚点被提示"
+# .md 里的同类字样不算锚点（文档里会写这个约定本身）
+printf '\n写法：`# 决策: ADR-0099`\n' >> "$P/docs/adr/README.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+not "ADR-0099" "$out" "markdown 文档里的示例不算锚点"
+
 echo "== G2: plan.md 的「目标」为空要报 =="
 P="$TMP/g2"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-02-x"
