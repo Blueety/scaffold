@@ -313,6 +313,26 @@ sed -i 's|`skin/tokens.css`（真实路径|`nope/tokens.css`（真实路径|' "$
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 has "nope/tokens.css" "$out" "后缀解析对不上的仍要报"
 
+echo "== G-link-6: --staged 不得把 .gitignore 里的产物当成断链 =="
+P="$TMP/gl6"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/reports"; printf 'x\n' > "$P/reports/backtest.md"
+printf 'reports/\n' >> "$P/.gitignore"
+printf '\n产物：`reports/backtest.md`\n' >> "$P/AGENTS.md"
+( cd "$P" && git add -A && git -c user.email=t@t -c user.name=t -c core.hooksPath=/dev/null commit -qm add >/dev/null 2>&1 )
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+not "reports/backtest.md" "$out" "全量自查：产物不被当断链"
+printf 'x\n' > "$P/src/touch.sh"; ( cd "$P" && git add -A ) >/dev/null 2>&1
+out="$(run_staged "$P")"
+not "reports/backtest.md" "$out" "--staged：产物不被当断链（钩子不该每次提交都红）"
+
+echo "== G-link-7: 只查活文档，第三方目录里的 README 不扫 =="
+P="$TMP/gl7"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/vendor/pkg"; printf '第三方：见 `../nowhere.md`\n' > "$P/vendor/pkg/README.md"
+printf '\n活文档断链：`docs/not-here.md`\n' >> "$P/docs/pitfalls.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+not "nowhere.md" "$out" "vendor 里的第三方 README 不被扫"
+has "docs/not-here.md" "$out" "活文档里的断链照报"
+
 echo "== G2: plan.md 的「目标」为空要报 =="
 P="$TMP/g2"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-02-x"
