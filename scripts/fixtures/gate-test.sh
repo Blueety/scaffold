@@ -276,6 +276,43 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 not "docs/nowhere.md" "$out" "tasks/_template/ 跳过（填空模板）"
 not "docs/gone.md" "$out" "任务目录跳过（快照）"
 
+echo "== G-link-4: 扫描尊重 .gitignore（不扫 venv 之类）=="
+P="$TMP/gl4"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/venv/lib/pkg"
+printf 'venv/\n' > "$P/.gitignore"
+printf '上游包自带的说明，见 `their/missing.md`。\n' > "$P/venv/lib/pkg/README.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+not "their/missing.md" "$out" ".gitignore 里的目录不被扫"
+# 负向：同样内容放进已跟踪目录时必须报（不是「含 venv 就跳过」）
+mkdir -p "$P/docs"; printf '见 `their/missing.md`。\n' > "$P/docs/x.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "their/missing.md" "$out" "被跟踪的文档里的断链照报"
+
+echo "== G-link-5: 更多非路径写法（日期占位 / 类名 / 模块属性 / npm 包 / 简称）=="
+P="$TMP/gl5"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/web/static/skin"; printf 'x\n' > "$P/web/static/skin/tokens.css"
+printf 'x\n' > "$P/web/app.py"
+cat >> "$P/AGENTS.md" <<'EOF'
+
+- 产物：`reports/YYYY-MM-DD.md`
+- 样式：`.card/.kpi-card/.topbar`
+- 常量：`src/econ_calendar.KINDS`；属性：`web/app.py:_ASSET_FILES`、`src/env_util.require_env`
+- 依赖：`@scope/pkg@1.2.0`
+- 简称：`skin/tokens.css`（真实路径 `web/static/skin/tokens.css`）
+EOF
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+not "YYYY-MM-DD" "$out" "日期占位符不是断链"
+not ".card/.kpi-card" "$out" "类名列表不是断链"
+not "econ_calendar.KINDS" "$out" "常量引用不是断链"
+not "env_util.require_env" "$out" "模块函数引用不是断链"
+not "@scope/pkg@1.2.0" "$out" "npm 包名不是断链"
+not "skin/tokens.css" "$out" "子目录简称能按后缀解析到"
+not "web/app.py" "$out" "模块属性只判文件部分，文件在就不报"
+# 负向：把简称改成一个确实不存在的前缀，仍要报（后缀解析不能变成万能放行）
+sed -i 's|`skin/tokens.css`（真实路径|`nope/tokens.css`（真实路径|' "$P/AGENTS.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "nope/tokens.css" "$out" "后缀解析对不上的仍要报"
+
 echo "== G2: plan.md 的「目标」为空要报 =="
 P="$TMP/g2"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-02-x"

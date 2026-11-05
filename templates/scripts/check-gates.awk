@@ -33,6 +33,10 @@ BEGIN {
     REVIEW_SECS[3] = "逐条处理"
     REVIEW_SECS[4] = "审查者明确未判断的"
     REVIEW_SECS[5] = "结论"
+
+    # 断链检查只认这些扩展名。见 emit_link 里的说明。
+    _n = split("md sh awk bash ps1 cmd py pyi js mjs cjs ts tsx jsx json jsonc yaml yml toml ini cfg conf css scss sass less html htm vue svelte astro go rs java kt kts c h cc cpp hpp cs fs rb php pl lua sql txt csv tsv lock xml svg png jpg ico", _e, " ")
+    for (_i = 1; _i <= _n; _i++) LINK_EXT[_e[_i]] = 1
 }
 
 # ---------------------------------------------------------------- 读入
@@ -723,7 +727,7 @@ function trim(s) {
     return s
 }
 
-function emit_link(file, s,   last, t) {
+function emit_link(file, s,   last, t, ext) {
     if (s == "") return
     # 不是相对路径：外部 URL、锚点、绝对路径、带占位符/通配符的
     if (s ~ /^[a-zA-Z]+:\/\//) return
@@ -732,25 +736,38 @@ function emit_link(file, s,   last, t) {
     if (s ~ /[<>{}*$|]/) return
     if (s ~ /\.\.\./) return
     if (s ~ /NNNN/) return
+    # 日期占位符：`reports/YYYY-MM-DD.md`、`history_YYYY-MM.json`。
+    # 命名约定不是路径，但它们的扩展名看着像文件，只能靠 YYYY 认出来。
+    if (index(s, "YYYY") > 0) return
+    # 以点开头的是类名/选择器列表（`.card/.kpi-card/.topbar`）。真正的相对路径
+    # 只有 `./x` 一种写法，单独放行。
+    if (substr(s, 1, 1) == "." && substr(s, 1, 2) != "./") return
     if (s ~ /[ \t]/) return
     # env 赋值 / shell 片段：`KEY=/path`、`--out=docs/x.md`。
     # 用「前缀 + =」而不是「整串含 =」：后者会漏掉 `src/a=b.py` 这种真文件名。
     if (s ~ /^[A-Za-z_][A-Za-z0-9_]*=/ || s ~ /^--[A-Za-z0-9-]+=/) return
-    # 后缀不属于路径：pytest node id `path::test_x`、行号 `path:120`。
-    # 先剥 `::` 再剥 `:120`，复合写法 `x.md:12::foo` 需要这个顺序（反了就剩 `x.md:12`）。
+    # 后缀不属于路径：pytest node id `path::test_x`、行号 `path:120`、
+    # 模块属性 `web/app.py:_ASSET_FILES`。剥掉之后**只判文件那一段**。
+    # 先剥 `::` 再剥 `:120` / `:IDENT`，复合写法 `x.md:12::foo` 需要这个顺序。
     sub(/::.*$/, "", s)
     sub(/:[0-9]+$/, "", s)
+    sub(/:[A-Za-z_][A-Za-z0-9_]*$/, "", s)
     if (s == "") return
     if (index(s, "/") == 0) return
-    # 只查**像文件**的引用：最后一段要带扩展名。
-    # 纯目录引用（`src/`、`tasks/_archive/`、`docs/adr/`）不查——空目录进不了 git，
-    # 模板里也用它们做示意；查了只会让每个新项目一开张就红。
+
+    # **只查认得扩展名的引用。** 这一条同时挡掉模块属性（`env_util.require_env`）、
+    # 常量引用（`x.KINDS`）、npm 包名（`@scope/pkg@1.2.0`）、点号表达式（`.is_readonly(`）
+    # ——它们的「扩展名」是标识符片段，不是文件类型。
+    # 代价：项目用了列表外的后缀时查不到；加后缀比加特例便宜。
     last = s
     sub(/[\/]+$/, "", last)
     # 裸域名（`youtu.be/`）：去掉尾斜杠后没有内部 `/`，不是相对路径
     if (index(last, "/") == 0) return
     sub(/.*\//, "", last)
-    if (index(last, ".") == 0) return
+    ext = tolower(last)
+    if (ext !~ /\./) return
+    sub(/.*\./, "", ext)
+    if (!(ext in LINK_EXT)) return
     # 去掉行尾的标点（中文句读紧跟在反引号外的情形）
     sub(/[，。；：、）)]+$/, "", s)
     if (s == "" || index(s, "/") == 0) return

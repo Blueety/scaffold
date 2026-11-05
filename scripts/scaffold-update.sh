@@ -507,14 +507,14 @@ record_decisions() {
         DEC_STRAT["$p"]="keep-local"
         DEC_SHA["$p"]="$(template_sha "$WORK/theirs/$p")"
         DNEW["$p"]=1
-        note "记下裁决: keep-local $p"
+        note "登记裁决（收尾统一写盘）: keep-local $p"
     done
     for p in ${UNIONS[@]+"${UNIONS[@]}"}; do
         [ -f "$WORK/theirs/$p" ] || die "--union 的路径不在 templates/ 里: $p"
         DEC_STRAT["$p"]="union"
         DEC_SHA["$p"]="$(template_sha "$WORK/theirs/$p")"
         DNEW["$p"]=1
-        note "记下裁决: union $p"
+        note "登记裁决（收尾统一写盘）: union $p"
     done
 }
 if [ "${#KEEP_LOCAL[@]}" -gt 0 ] || [ "${#UNIONS[@]}" -gt 0 ]; then
@@ -815,6 +815,10 @@ if [ "$WRITE" -eq 1 ]; then
 
     gate_report
     write_version_file "$record" "$BASE_SOURCE"
+    # 报一句写盘结果：裁决打印了却没落盘这种状态，不该靠事后 diff 才发现。
+    if [ "${#DEC_STRAT[@]}" -gt 0 ]; then
+        note "已写入 ${#DEC_STRAT[@]} 条裁决到 .scaffold-version"
+    fi
 fi
 
 # ---------------------------------------------------------------- 汇总

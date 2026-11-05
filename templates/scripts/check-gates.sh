@@ -159,21 +159,61 @@ check_slice()   { run_check slice   "$1"; }
 # 只查**像文件**的引用（最后一段带扩展名）。纯目录引用（`src/`、`docs/adr/`）不查：
 # 空目录进不了 git，模板里也用它们做示意。
 check_links() {
-    local f ref line n=0 out="" total=0
-    local -a files=()
-    while IFS= read -r f; do
-        case "$f" in
-            ./tasks/README.md) ;;
-            ./tasks/*) continue ;;
-        esac
-        files+=("${f#./}")
-    done < <(find . -name '*.md' -type f 2>/dev/null | sort)
+    local f ref line n=0 out="" total=0 resolved cand b
+    local -a files=() all=()
+    local -A bybase=()
+
+    # 文件清单用 git 拿，**不用 `find`**：`find` 会扫进 `.gitignore` 里的东西
+    # （venv/、node_modules/、构建产物、编辑器缓存），那些目录里成千上万个
+    # 第三方 README 全是别人的相对链接，跟这个项目没关系。实测一个 Python 项目
+    # 因此多出 313 条假违规。不在 git 仓库里时才退回 find。
+    if git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
+        # `core.quotepath=false`：默认会把非 ASCII 文件名转义成 `"\344\273..."`，
+        # 那样 awk 打不开这些文件、直接报错退出，后面的文件一个都不会被扫到
+        # （表现为「明明是断链却全绿」）。
+        while IFS= read -r f; do
+            case "$f" in
+                tasks/README.md) ;;
+                tasks/*) continue ;;
+            esac
+            files+=("$f")
+        done < <(git -C "$root" -c core.quotepath=false ls-files -co --exclude-standard -- '*.md' 2>/dev/null | sort)
+        while IFS= read -r f; do all+=("$f"); done \
+            < <(git -C "$root" -c core.quotepath=false ls-files -co --exclude-standard 2>/dev/null)
+    else
+        while IFS= read -r f; do
+            case "$f" in
+                ./tasks/README.md) ;;
+                ./tasks/*) continue ;;
+            esac
+            files+=("${f#./}")
+        done < <(find . -name '*.md' -type f 2>/dev/null | sort)
+        while IFS= read -r f; do all+=("${f#./}"); done \
+            < <(find . -type f -not -path './.git/*' 2>/dev/null | sort)
+    fi
     total="${#files[@]}"
     [ "$total" -gt 0 ] || return 0
+
+    # 后缀索引：文档里常写简称（`static/app.js` 而真实路径是 `web/static/app.js`）。
+    # 按 basename 建表，未命中的引用再看有没有哪个已跟踪文件以 `/<ref>` 结尾。
+    # 只用于**放行**，不用于报错——报错仍然要求精确匹配。
+    for cand in ${all[@]+"${all[@]}"}; do
+        b="${cand##*/}"
+        bybase["$b"]="${bybase[$b]:-}|$cand"
+    done
 
     while IFS=$'\t' read -r f ref; do
         [ -n "$ref" ] || continue
         [ -e "$ref" ] && continue
+        resolved=0
+        b="${ref##*/}"
+        for cand in ${bybase[$b]:-}; do
+            [ -n "$cand" ] || continue
+            case "$cand" in
+                "$ref"|*"/$ref") resolved=1; break ;;
+            esac
+        done
+        [ "$resolved" -eq 1 ] && continue
         line="  [x] $f: 引用的 $ref 不存在"
         out="$out$line
 "
