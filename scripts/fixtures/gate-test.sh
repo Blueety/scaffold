@@ -741,10 +741,8 @@ printf '# 乙\n\n- **Status**: accepted\n- **Supersedes**: ADR-0099\n' > "$P/doc
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 has "ADR-0099" "$out" "加粗的 Supersedes 也要检查引用的文件是否存在"
 
-P="$TMP/adb2"; new_project "$P" || { echo "建项目失败"; exit 2; }
-printf '\n参见 `NOTHERE.md`。\n' >> "$P/AGENTS.md"
-out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
-has "NOTHERE.md" "$out" "不带 / 的根级引用也要查断链"
+# 不带 `/` 的根级引用**不查**：模板自己的示例名（`0001-slug.md`、`NN-描述.md`）
+# 会被判断链，新项目一生成就红。这条边界写进 AGENTS.md，不在这里断言。
 
 P="$TMP/adb3"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/docs" && echo x > "$P/docs/我 的.md"

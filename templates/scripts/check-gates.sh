@@ -420,7 +420,9 @@ check_links() {
             continue
         fi
         printf '%s\t%s\n' "$f" "$ref"
-    done < <(awk -v kind=links -f "$AWK_PROG" "${files[@]}" 2>/dev/null | sort -u) > "$refs_tmp"
+    # LC_ALL=C：百分号解码用 `sprintf("%c", 0xE6)` 生成**字节**，在 UTF-8 locale 下
+    # gawk 会把它编码成 U+00E6（`æ`），中文路径就再也对不上了。C locale 下按字节输出。
+    done < <(LC_ALL=C awk -v kind=links -f "$AWK_PROG" "${files[@]}" 2>/dev/null | sort -u) > "$refs_tmp"
 
     out="$(awk -F'\t' -v idx="$idx_tmp" '
         BEGIN {

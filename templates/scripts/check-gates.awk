@@ -946,10 +946,11 @@ function emit_link(file, s,   last, t, ext, had_pct) {
     sub(/:[0-9]+$/, "", s)
     sub(/:[A-Za-z_][A-Za-z0-9_]*$/, "", s)
     if (s == "") return
-    # 不带 `/` 的引用也要查，只要它像个文件名（有扩展名）：`` `NOTHERE.md` `` 是断链，
-    # `plan.md` 这类同目录简写也一样。纯词（`README` 之类）仍然放过——它们多半是
-    # 正文里提到的名字，不是路径。
-    if (index(s, "/") == 0 && s !~ /\.[A-Za-z0-9]+$/) return
+    # 不带 `/` 的引用不查。曾经想查（`` `NOTHERE.md` ``），结果模板里的示例名
+    # （`0001-slug.md`、`NN-描述.md`）全部被判断链——每个新项目一生成就红 4 条。
+    # 文档里不带 `/` 的名字绝大多数是**示例或简称**，机器分不清它和真断链；
+    # 这条留给 self-audit 用眼睛看。
+    if (index(s, "/") == 0) return
 
     # **只查认得扩展名的引用。** 这一条同时挡掉模块属性（`env_util.require_env`）、
     # 常量引用（`x.KINDS`）、npm 包名（`@scope/pkg@1.2.0`）、点号表达式（`.is_readonly(`）
@@ -957,9 +958,8 @@ function emit_link(file, s,   last, t, ext, had_pct) {
     # 代价：项目用了列表外的后缀时查不到；加后缀比加特例便宜。
     last = s
     sub(/[\/]+$/, "", last)
-    # 裸域名（`youtu.be/`）：去掉尾斜杠后没有内部 `/`，不是相对路径。
-    # 但**根级文件名**（`NOTHERE.md`）要查——用扩展名区分这两种。
-    if (index(last, "/") == 0 && last !~ /\.[A-Za-z0-9]+$/) return
+    # 裸域名（`youtu.be/`）：去掉尾斜杠后没有内部 `/`，不是相对路径
+    if (index(last, "/") == 0) return
     sub(/.*\//, "", last)
     ext = tolower(last)
     if (ext !~ /\./) return
@@ -967,8 +967,7 @@ function emit_link(file, s,   last, t, ext, had_pct) {
     if (!(ext in LINK_EXT)) return
     # 去掉行尾的标点（中文句读紧跟在反引号外的情形）
     sub(/[，。；：、）)]+$/, "", s)
-    if (s == "") return
-    if (index(s, "/") == 0 && s !~ /\.[A-Za-z0-9]+$/) return
+    if (s == "" || index(s, "/") == 0) return
     print file "\t" s
 }
 
