@@ -128,17 +128,23 @@ usage() {
 # 归一化之后判据只剩一种写法：`[DEBUG-`。
 # 代价：`[DEBUG中文-]` 会被判成残留——安全方向的误报。
 normalize_mark() {
-    sed -e 's/［/[/g' -e 's/］/]/g' -e 's/[－–—]/-/g' -e 's/[[:cntrl:]]//g' |
+    # 连字符必须**一条一条替换**，不能写成 `[－–—]`：`LC_ALL=C` 下那是字节集合
+    # `{EF,BC,8D,E2,80,93,94}`，会把 U+200B 的 `E2 80 8B` 改写成 `--8B`，
+    # 归一化后的 `[DEBUG` 直接断开（实测整类零宽变体在 C locale 下失效）。
+    sed -e 's/［/[/g' -e 's/］/]/g' \
+        -e 's/－/-/g' -e 's/–/-/g' -e 's/—/-/g' \
+        -e 's/[[:cntrl:]]//g' |
         tr -d '\200-\377'
 }
 
 check_gate_b() {
     local staged="$1" root="$2" hits
-    # 预筛用**带间隙**的模式：`[`/`D`/`E`/`B`/`U`/`G` 之间允许最多 10 个任意字节。
-    # 插几个、插什么码点都进候选；判据在归一化之后，所以预筛宽一点没有代价。
+    # 预筛用**带间隙**的模式：`[`/`D`/`E`/`B`/`U`/`G` 之间允许任意字节（`{0,}`）。
+    # 限长度会漏：`[DE中文中文BUG-]` 有 12 字节间隙，插 4 个汉字就足以让预筛在
+    # 归一化之前把行丢掉。判据在归一化之后，预筛宽一点没有代价。
     local -a pat=(-i -E
-        -e '\[.{0,10}D.{0,10}E.{0,10}B.{0,10}U.{0,10}G'
-        -e '［.{0,10}D.{0,10}E.{0,10}B.{0,10}U.{0,10}G')
+        -e '\[.{0,}D.{0,}E.{0,}B.{0,}U.{0,}G'
+        -e '［.{0,}D.{0,}E.{0,}B.{0,}U.{0,}G')
     # 归一化之后只认 ASCII：`[DEBUG-` / `[DEBUG -`（空白允许）。
     local -a narrow=(-E -e '\[DEBUG[[:space:]]*-')
     # 后缀只写一份：git 的 pathspec 和 find 回退都从它生成，两处各写一份必然会漂
@@ -183,20 +189,26 @@ check_gate_b() {
     # 豁免必须锚定在**行首的命令位置**：`console.log("tag", "[DEBUG-x]")` 里
     # 有个 `ag`，用子串匹配就把整行豁免了（实测能过）。判据是「第一个词就是
     # 搜索命令」，允许前面有 `xargs` / `if` / `git` 这类前缀。
-    # 豁免只对「marker 就在搜索命令的参数里」成立：
-    # `grep -q x f && echo "[DEBUG-]"` 里 marker 在 `&&` 之后，那是真的调试输出，
-    # 不能整行豁免（实测能过）。判定方式：只取第一个 shell 段（到 `&&` / `||` / `;` /
-    # `|` 为止），段首是搜索工具、且 marker 落在这一段内，才豁免。
+    # 豁免只对「marker 就在搜索命令的参数里」成立，判据分两步：
+    #   1. 第一个 shell 段（到 `&&` / `||` / `;` / `|` 为止）的首命令是搜索工具；
+    #   2. **整行里 marker 只出现在这一段内**。
+    # 只看首段有没有 `debug` 字样是不够的：`grep -q foo debug.txt && echo "[DEBUG-]"` 里
+    # `debug.txt` 就让整行被豁免了（实测）。也不接受 `command`/`VAR=value` 之外的前缀。
     hits="$(printf '%s\n' "$hits" | awk '
         {
             s = $0
             sub(/^[^:]*:[0-9]+:/, "", s)
+            low = tolower(s)
             seg = s
             sub(/(&&|\|\||[;|]).*/, "", seg)
-            low = tolower(seg)
-            if (index(low, "debug") == 0) { print; next }
-            if (low ~ /^[ \t]*((xargs|sudo|time|env|git|if|then|elif|while|until|!)[ \t]+([A-Za-z_][A-Za-z0-9_]*=[^ \t]+[ \t]+)*)*([^ \t]*\/)?(grep|rg|ag|ack)([ \t]|$)/) next
-            print
+            lowseg = tolower(seg)
+            # 搜索命令必须在段首（允许 xargs/sudo/env/command/赋值前缀等包装）
+            if (lowseg !~ /^[ \t]*((command|xargs|sudo|time|env|git|if|then|elif|while|until|!|lc_all=[^ \t]*|lang=[^ \t]*)[ \t]+([A-Za-z_][A-Za-z0-9_]*=[^ \t]+[ \t]+)*)*([^ \t]*\/)?(grep|rg|ag|ack)([ \t]|$)/) { print; next }
+            # marker 只能出现在这一段里：段外还有，就是真的调试输出
+            rest = substr(s, length(seg) + 1)
+            lowrest = tolower(rest)
+            if (index(lowrest, "debug") > 0) { print; next }
+            next
         }' 2>/dev/null || true)"
     if [ -n "$hits" ]; then
         printf '%s\n' "$hits" | while IFS= read -r line; do
@@ -550,11 +562,20 @@ check_review_by_scope() {
             fi
         done
         if [ "$high" -eq 0 ]; then
+            # 档位来源只有三类：plan.md、prd.md、切片（NN-*.md）——与 task_is_high_tier 同一张
+            # 名单。把目录里所有 .md 都读会让 journal 里写一行 `档位: T2` 触发审查（实测），
+            # 而文档从没把 journal 当档位来源。
+            # 每个文件同样读三版本：只读工作区的话，HEAD 里的 T2 被改成 T1 或直接删掉
+            # 就能绕开归属检查（实测两条都能过）。
             local tf
             while IFS= read -r tf; do
                 [ -n "$tf" ] || continue
-                case "$tf" in "$d/plan.md") continue ;; esac
-                if [ "$(awk -v kind=tier -f "$AWK_PROG" "$root/$tf" 2>/dev/null)" = "yes" ]; then
+                case "$tf" in
+                    "$d/plan.md") continue ;;
+                    "$d/prd.md"|"$d"/[0-9][0-9][-_]*.md|"$d"/[0-9][-_]*.md) ;;
+                    *) continue ;;
+                esac
+                if [ "$(plan_versions_tier "$root" "$tf")" = "yes" ]; then
                     high=1; break
                 fi
             done < <(git -C "$root" -c core.quotepath=false ls-files -- "$d" 2>/dev/null;
@@ -600,6 +621,24 @@ check_review_by_scope() {
         [ -n "$hit" ] || continue
         fail "$d: 本次提交的 $hit 写在这个任务的「相关文件」里，而它是 T2/T3 且还没有非空的 review.md —— 独立审查要在代码进主干之前做完（3.8）。如果这些改动不属于这个任务，把它们拆到自己的提交里（先出裁决单再提交代码，或把计划里的文件范围写准）"
     done
+}
+
+# 一个文件（相对仓库根）在「索引 / HEAD / 工作区」三个版本里，任一版本声明了
+# T2/T3 就返回 yes。用于 prd.md 与切片——它们和 plan.md 一样是档位来源，
+# 单版本判定会给「HEAD 写 T2、工作区改 T1」留下后门。
+plan_versions_tier() {
+    local root="$1" f="$2" v
+    for v in ":$f" "HEAD:$f"; do
+        if [ "$(git -C "$root" cat-file blob "$v" 2>/dev/null |
+                awk -v kind=tier -f "$AWK_PROG" - 2>/dev/null)" = "yes" ]; then
+            printf 'yes'; return 0
+        fi
+    done
+    if [ -f "$root/$f" ] &&
+       [ "$(awk -v kind=tier -f "$AWK_PROG" "$root/$f" 2>/dev/null)" = "yes" ]; then
+        printf 'yes'; return 0
+    fi
+    printf 'no'
 }
 
 # 一个任务计划文本的「最佳可得版本」：索引 → HEAD → 工作区。
@@ -1040,11 +1079,12 @@ main() {
             printf '  [x] 无法把 git 索引物化到临时目录（checkout-index 失败），--staged 中止\n' >&2
             exit 2
         fi
-        # 物化结果必须**逐条核对存在性**：checkout-index 会跳过 skip-worktree（稀疏
-        # 检出正是靠这个位），被跳过的 plan.md / 任务目录会从视野里整个消失，而提交
-        # 照进——「检查的内容」不再等于「提交的内容」。宁可中止（exit 2）。
-        # 内容不必再逐字节比：实测 checkout-index 写出的是 blob 原文，不套 smudge
-        # 过滤器（过滤器只在写工作区时生效）；逐文件对比会为每个文件起一个进程。
+        # 物化结果必须**逐条核对**，两件事：
+        #   1. 存在性——checkout-index 跳过 skip-worktree（稀疏检出就靠这个位），
+        #      被跳过的 plan.md / 任务目录从视野里整个消失，提交照进；
+        #   2. 内容——checkout-index **会套 smudge 过滤器**（索引 blob 是 `AAA`，
+        #      物化出来可以是 `BBB`），于是检查器读的是被洗白的那份。
+        # 任一不符就中止（exit 2）：在不可信的副本上给出的「通过」没有意义。
         if ! verify_materialized "$root" "$check_tree_tmp"; then
             printf '  [x] 无法可信地物化 git 索引（工作区与索引不一致，见上），--staged 中止\n' >&2
             exit 2
@@ -1080,11 +1120,28 @@ main() {
         fi
         if [ "$hp_norm" != ".githooks" ]; then
             note "core.hooksPath 不是 .githooks（当前：${hp:-未设置}）：提交前闸门不会自动执行。跑一次 \`git config core.hooksPath .githooks\`。"
-        elif [ ! -f "$root/.githooks/pre-commit" ] ||
-             ! git -C "$root" cat-file -e :.githooks/pre-commit 2>/dev/null; then
+        fi
+        # 可执行位：clone 到 Linux / macOS 后，没有 +x 的钩子 git 会静默跳过。
+        # Windows 上没有这个概念，跳过这段。
+        case "$(uname -s 2>/dev/null)" in
+            MINGW*|MSYS*|CYGWIN*) ;;
+            *)
+                for f in .githooks/pre-commit .githooks/pre-merge-commit; do
+                    [ -f "$root/$f" ] || continue
+                    if [ -n "$(git -C "$root" ls-files -s -- "$f" | awk '$1 != "100755"')" ]; then
+                        fail "$f 在索引里不是可执行文件（100755）—— clone 到 Linux / macOS 后 git 会静默跳过这个钩子。跑 \`git update-index --chmod=+x $f\`"
+                    fi
+                done
+                ;;
+        esac
+        if [ "$hp_norm" = ".githooks" ] &&
+           { [ ! -f "$root/.githooks/pre-commit" ] ||
+             ! git -C "$root" cat-file -e :.githooks/pre-commit 2>/dev/null ||
+             [ ! -f "$root/.githooks/pre-merge-commit" ] ||
+             ! git -C "$root" cat-file -e :.githooks/pre-merge-commit 2>/dev/null; }; then
             # 钩子被删了但配置还指着它 —— 这时候「配置正确」是假象，闸门一次都不会跑。
             # 只提示不够：这是**唯一**能发现「闸门整个没装」的地方。
-            fail "core.hooksPath 指向 .githooks，但 .githooks/pre-commit 不在工作区或索引里 —— 提交前闸门根本没有执行（git 找不到钩子就静默跳过）。恢复它（\`git checkout -- .githooks/\`）再继续"
+            fail "core.hooksPath 指向 .githooks，但 .githooks/{pre-commit,pre-merge-commit} 有缺失（工作区或索引） —— 提交前闸门根本没有执行（git 找不到钩子就静默跳过）。恢复它（\`git checkout -- .githooks/\`）再继续"
         fi
     fi
 

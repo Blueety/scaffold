@@ -45,7 +45,7 @@ CI 上（`.github/workflows/check.yml`）跑同一组不变量，外加三个 fi
 
 - 不手写可推导的内容（目录树、文件数、目录数）——留一份源，其余引用它。
 - 不「顺手」改 `templates/` 里的规则文件（skill / 流程 / 角色提示词）：那是所有未来项目的流程，属于设计决策，先说清楚再动。
-- 不把 `scripts/check-tree.ps1` 塞进 `templates/`：它是本仓库的工具，不随项目走。生成项目里的闸门是 `templates/scripts/check-gates.sh` + `templates/.githooks/pre-commit`。
+- 不把 `scripts/check-tree.ps1` 塞进 `templates/`：它是本仓库的工具，不随项目走。生成项目里的闸门是 `templates/scripts/check-gates.sh` + `templates/.githooks/pre-commit` + `templates/.githooks/pre-merge-commit`。
 - 不给 `templates/` 加 BOM、不加 CRLF、不改编码。
 
 ## clone 到新机器后

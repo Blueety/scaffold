@@ -19,7 +19,7 @@ root="$(git -c core.quotepath=false rev-parse --show-toplevel 2>/dev/null)" || e
 # 位的文件改了也不报（实测可绕过）。这里直接比**字节哈希**：索引 blob 对工作区
 # 内容（走 clean 过滤器，与哈希索引时同一口径）。
 #
-# 三个文件都在范围内——钩子自己也是闸门的一部分，改掉它等于关掉闸门。
+# 四个文件都在范围内——两个钩子自己也是闸门的一部分，改掉它等于关掉闸门。
 # ---------------------------------------------------------------------------
 bad=""
 for f in scripts/check-gates.sh scripts/check-gates.awk .githooks/pre-commit .githooks/pre-merge-commit; do

@@ -718,6 +718,54 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
 not "无法可信地物化" "$out" "恢复标记后闸门正常工作"
 if [ "$rc" -eq 0 ]; then ok "恢复标记后退出码回到 0"; else no "恢复标记后退出码回到 0（实际 $rc）"; fi
 
+echo "== G-loc: LC_ALL=C 下同样有效 + 预筛间隙 =="
+P="$TMP/lc1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/src"
+printf 'const a = "[DEB\342\200\213UG-1]";\n' > "$P/src/zw-bug.js"
+printf 'const b = "[DEBU\342\201\245G-2]";\n' > "$P/src/u2065.js"
+printf 'const c = "[DE\342\200\213BUG-3]";\n' > "$P/src/zw-de.js"
+# 12 字节间隙（4 个汉字）：预筛若限长度，归一化根本没机会跑
+printf 'const d = "[DE\344\270\255\346\226\207\344\270\255\346\226\207BUG-4]";\n' > "$P/src/gap.js"
+git -C "$P" add -A
+out="$( cd "$P" && LC_ALL=C "$B" scripts/check-gates.sh --staged 2>&1 )"
+has "zw-bug.js" "$out" "LC_ALL=C 下零宽变体仍要拦（连字符替换不能写字节类）"
+has "u2065.js" "$out" "LC_ALL=C 下 U+2065 仍要拦"
+has "zw-de.js" "$out" "LC_ALL=C 下零宽插在 D/E 之间仍要拦"
+has "gap.js" "$out" "预筛间隙不限长度（12 字节间隙也要进候选）"
+
+echo "== G-exempt2: 豁免的两个方向 =="
+P="$TMP/ex9"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/src" "$P/scripts"
+printf 'grep -q foo debug.txt && echo "[DEBUG-1] x"\n' > "$P/src/and-echo.js"
+printf 'LC_ALL=C grep -q "[DEBUG-x]" f\n' > "$P/scripts/clean-lc.sh"
+printf 'command grep -q "[DEBUG-x]" f\n' > "$P/scripts/clean-cmd.sh"
+out="$(staged_run "$P")"
+has "and-echo.js" "$out" "首段里出现 debug.txt 不能豁免整行（marker 在 && 之后）"
+not "clean-lc.sh" "$out" "LC_ALL=C grep 是工具行，不该报"
+not "clean-cmd.sh" "$out" "command grep 是工具行，不该报"
+
+echo "== G-tier-head: prd / 切片的档位也取三版本 =="
+P="$TMP/th1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-25-t" "$P/src"
+printf '# 需求\n\n- **档位**: `T2`\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-25-t/prd.md"
+plan_text T1 > "$P/tasks/2026-01-25-t/plan.md"
+wip_commit "$P"
+# 工作区把 prd 的档位改成 T1（不 stage），HEAD 里仍是 T2
+printf '# 需求\n\n- **档位**: `T1`\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-25-t/prd.md"
+( cd "$P" && printf 'echo a\n' > src/a.sh && git add src/a.sh )
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
+has "review.md" "$out" "prd.md 的 T2 在 HEAD 里，工作区改小也躲不过"
+
+echo "== G-tier-note: journal 不是档位来源 =="
+P="$TMP/tn1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-26-t" "$P/src"
+plan_text T1 > "$P/tasks/2026-01-26-t/plan.md"
+printf '# 日志\n\n- **档位**: `T2`\n' > "$P/tasks/2026-01-26-t/journal.md"
+wip_commit "$P"
+( cd "$P" && printf 'echo a\n' > src/a.sh && git add src/a.sh )
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
+not "review.md" "$out" "journal 里写「档位: T2」不触发审查（它不是档位来源）"
+
 echo "== G-norm: 归一化（控制字符 / 未列出的格式字符 / locale）=="
 P="$TMP/nm1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src"
@@ -753,6 +801,13 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 has "编号必须是 4 位" "$out" "5 位编号不能被静默截成 4 位"
 n="$(printf '%s' "$out" | grep -c '编号必须是 4 位')"
 if [ "$n" -le 1 ]; then ok "同一处编号只报一次"; else no "同一处编号只报一次（实际 $n 次）"; fi
+
+echo "== G-hookmode: 钩子缺失与可执行位 =="
+P="$TMP/hm1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+( cd "$P" && rm -f .githooks/pre-merge-commit )
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"; rc=$?
+has "有缺失" "$out" "工作区缺 pre-merge-commit 时全量自查要判失败（否则 merge 不经过任何检查）"
+if [ "$rc" -eq 1 ]; then ok "缺 merge 钩子时退出码 1"; else no "缺 merge 钩子时退出码 1（实际 $rc）"; fi
 
 echo "== G-revdel: 删掉裁决单也要拦 =="
 P="$TMP/rd1"; new_project "$P" || { echo "建项目失败"; exit 2; }
