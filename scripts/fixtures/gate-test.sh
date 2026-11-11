@@ -726,6 +726,15 @@ if [ "$rc" -eq 0 ]; then ok "全新项目 --staged 零违规"; else no "全新�
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"; rc=$?
 if [ "$rc" -eq 0 ]; then ok "全新项目全量自查零违规"; else no "全新项目全量自查零违规（实际 $rc）"; printf '%s\n' "$out" | head -5; fi
 
+echo "== G-first: 尚无 HEAD 的首次提交也必须零违规 =="
+P="$TMP/first"; rm -rf "$P"
+( cd "$TMP" && "$B" "$INIT" first >/dev/null 2>&1 )
+( cd "$P" && git add -A )
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
+if [ "$rc" -eq 0 ]; then ok "无 HEAD 时 --staged 通过"; else no "无 HEAD 时 --staged 通过（实际 $rc）"; printf '%s\n' "$out" | head -5; fi
+( cd "$P" && git -c user.email=t@t -c user.name=t commit -qm init >/dev/null 2>&1 )
+if [ "$( cd "$P" && git rev-list --count HEAD 2>/dev/null )" = "1" ]; then ok "首次提交成功（钩子也过）"; else no "首次提交成功"; fi
+
 echo "== G-rootref: 不带 / 的引用是**已知边界**（断言它不被报）=="
 P="$TMP/rr1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 printf '\n参见 \140NOTHERE.md\140。\n' >> "$P/AGENTS.md"
