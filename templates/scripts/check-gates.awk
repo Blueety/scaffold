@@ -80,11 +80,31 @@ END {
     #  所以这里不能有「找到就停」的状态，否则只有第一个文件会被看到。）
     # 放在 END 里而不是读行循环里：要等整个文件读完才能看「值换行写在下一行」。
     if (kind == "tier") {
+        j = 0
         for (i = 1; i <= NL; i++) {
-            # 规范写法是 `- **档位**: ...`，但「写歪一行」不能变成免检通道：
-            # 只要这一行同时出现「档位」和 T2/T3，就按高档处理（宽进严出）。
-            if (index(L[i], "档位") > 0 && L[i] ~ /[Tt]2|[Tt]3/) high = 1
-            if (L[i] !~ /^[[:space:]]*[-*+][[:space:]]+\*\*/ || index(L[i], "档位") == 0) continue
+            # 档位可能写歪（没有 bullet、没有粗体）。这时不能整行扫 T2/T3——
+            # `- **档位**: T1（若到 4 文件就升 T2）` 会被误判成 T2，反而绕开规模底线。
+            # 判据固定为「档位二字后面的冒号，冒号之后第一个 T0–T3」。
+            if (L[i] ~ /^[[:space:]]*#/) continue
+            if (index(L[i], "档位") == 0) continue
+            v = ""
+            if (match(L[i], /档位/)) {
+                v = substr(L[i], RSTART + RLENGTH)
+                sub(/^[[:space:]]*\**[[:space:]]*[:：][[:space:]]*/, "", v)
+                if (v !~ /^[[:space:]]*[`Tt]/) {
+                    # 冒号不在这一行，看看是不是换行写的
+                    if (v ~ /^[[:space:]]*$/) {
+                        j = i
+                        while (++j <= NL) {
+                            if (L[j] ~ /^[[:space:]]*[-*+][[:space:]]+\*\*/) break
+                            if (L[j] ~ /^[[:space:]]*#/) break
+                            if (L[j] !~ /^[[:space:]]*$/) { v = L[j]; break }
+                        }
+                    } else v = ""
+                }
+            }
+            if (v != "" && token_of(v) ~ /^T[23]/) high = 1
+            if (L[i] !~ /^[[:space:]]*[-*+][[:space:]]+\*\*/ || index(L[i], "**档位**") == 0) continue
             v = field_value_of(L[i])
             if (v == "") {
                 j = i
@@ -210,7 +230,7 @@ function field_value_of(r,   v) {
 }
 function field_value(lbl,   i, v) {
     for (i = 1; i <= NL; i++) {
-        if (L[i] !~ /^[[:space:]]*[-*+][[:space:]]+\*\*/ || index(L[i], lbl) == 0) continue
+        if (L[i] !~ /^[[:space:]]*[-*+][[:space:]]+\*\*/ || index(L[i], "**" lbl "**") == 0) continue
         v = field_value_of(L[i])
         if (v != "") return v
         # 同行是空的：值可能换行写在下一行（`- **档位**:` 换行再写 `` `T3` — … ``）。
@@ -471,10 +491,12 @@ function related_dump(   i, n, l, v) {
         gsub(/`/, "", l)
         sub(/[[:space:]]*——.*$/, "", l)
         sub(/[[:space:]]*[（(].*$/, "", l)
-        sub(/[，。；、,;]+$/, "", l)
         l = trim(l)
         if (l == "") continue
+        # 一行写多个路径时取第一个（`src/a.py, src/b.py`）：逗号在空格之后，
+        # 所以要先切空格再剥标点，否则会带出一个 `src/a.py,` 这种拼不上文件的串。
         sub(/[[:space:]].*$/, "", l)
+        sub(/[，。；、,;]+$/, "", l)
         if (l == "") continue
         print l
     }
@@ -499,6 +521,25 @@ function diff_range_filled(   t, n, A, i, l, v) {
     return 0
 }
 
+# 「相关文件」里至少有一条**像路径**的条目（含 `/`、`\`，或以已知源码后缀结尾）。
+# 只看非空判别的话，`  - 无` 这种列表形态会让整栏「已填」。
+function related_has_path(   i, n, out) {
+    n = field_block("相关文件")
+    if (n <= 0) return 0
+    out = ""
+    for (i = 2; i <= n; i++) {
+        out = B[i]
+        sub(/^[[:space:]]*[-*+][[:space:]]*/, "", out)
+        sub(/<!--.*-->/, "", out)
+        gsub(/`/, "", out)
+        gsub(/[[:space:]]/, "", out)
+        if (out == "") continue
+        if (index(out, "/") > 0 || index(out, "\\") > 0) return 1
+        if (out ~ /\.[A-Za-z0-9]+$/) return 1
+    }
+    return 0
+}
+
 function plan_check(   tier, type, n, filled, hy, t) {
     if (!has_section("任务概要")) { V("缺「## 任务概要」一节"); return }
 
@@ -517,7 +558,11 @@ function plan_check(   tier, type, n, filled, hy, t) {
     if (!field_filled("目标")) V("「目标」为空")
     else if (t == "无" || t == "无。" || t == "没有" || tolower(t) == "none")
         V("「目标」写的是「" t "」——没有目标就没有这次任务，缺目标说明还没想清楚要做什么")
+    # 列表形态的「无」（`- **相关文件**:` 下一行 `  - 无`）也要算空：
+    # 计划没说要动哪些文件，就没法判断实施有没有跑偏，也没法把提交归属到这个任务。
     if (!field_filled("相关文件")) V("「相关文件」为空")
+    else if (!related_has_path())
+        V("「相关文件」里没有一个像路径的条目——写目录或文件，别写「无」")
     if (!field_filled("验证命令")) V("「验证命令」为空")
 
     if (table_rows(section_text("步骤"), 1) == 0) V("「## 步骤」表里没有任何步骤")
@@ -900,15 +945,18 @@ function adr_check(   i, j, end, l, ll, id, ids, n, k, r, t, have, fence) {
             ll = tolower(l)
 
             if (match(ll, /superseded-by:[ \t]*adr-[0-9][0-9][0-9][0-9]/)) {
-                t = substr(l, RSTART, RLENGTH); sub(/.*ADR-/, "", t)
+                # 从小写那份里取编号：原行可能是 `adr-0002`，用 /ADR-/ 剥会剥不掉，
+                # 整段匹配就成了「引用了 ADR-Superseded-By:」这种伪造违规。
+                t = substr(ll, RSTART, RLENGTH); sub(/.*adr-/, "", t)
                 SUPER_BY[id] = SUPER_BY[id] " " t
             }
             if (match(ll, /supersedes:[ \t]*adr-[0-9][0-9][0-9][0-9]/)) {
-                t = substr(l, RSTART, RLENGTH); sub(/.*ADR-/, "", t)
+                t = substr(ll, RSTART, RLENGTH); sub(/.*adr-/, "", t)
                 SUPERSEDES[id] = SUPERSEDES[id] " " t
             }
-            if (match(ll, /^status:[ \t]*[a-z-]+/)) {
-                t = substr(ll, RSTART, RLENGTH); sub(/^status:[ \t]*/, "", t)
+            # 冒号前允许空格：`Status : accepted` 是合法的 YAML 风格写法
+            if (match(ll, /^status[ \t]*:[ \t]*[a-z-]+/)) {
+                t = substr(ll, RSTART, RLENGTH); sub(/^status[ \t]*:[ \t]*/, "", t)
                 STATUS[id] = tolower(t)
             }
 

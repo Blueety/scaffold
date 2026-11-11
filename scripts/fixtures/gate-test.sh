@@ -614,7 +614,13 @@ P="$TMP/atk4"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-11-skip"
 printf '# 随便\n\n没有类型字段\n' > "$P/tasks/2026-01-11-skip/100-x.md"
 out="$(staged_run "$P")"
-has "不认识的任务文件名" "$out" "3 位编号的切片名要报出来，不能静默跳过整个任务目录"
+# 三位以上数字开头按 tasks/README.md 的约定是笔记：只提示，不算违规。
+has "当笔记处理" "$out" "3 位编号的文件按笔记处理（有提示，不静默）"
+not "不认识的任务文件名" "$out" "笔记文件名不报违规"
+
+printf '# 随便\n\n没有类型字段\n' > "$P/tasks/2026-01-11-skip/upper.MD"
+out="$(staged_run "$P")"
+has "不认识的任务文件名" "$out" "真·不认识的文件名（大写 .MD）要报出来"
 
 # 链接变体
 P="$TMP/atk5"; new_project "$P" || { echo "建项目失败"; exit 2; }
@@ -628,6 +634,50 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 has "docs/nope.md" "$out" "带 #锚点 的断链要报"
 has "docs/nope2.md" "$out" "带链接标题的断链要报"
 has "docs/nope4.md" "$out" "带查询串的断链要报"
+
+echo "== G-extra: 复核抓到的假阴性 / 假阳性 =="
+
+# 列表形态的「无」不能算已填
+P="$TMP/ex1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-12-rel"
+plan_text T1 > "$P/tasks/2026-01-12-rel/plan.md"
+subst "$P/tasks/2026-01-12-rel/plan.md" 's|^  - src/a.sh$|  - 无|'
+out="$(staged_run "$P")"
+has "没有一个像路径的条目" "$out" "「相关文件」写成列表形态的「无」要拦"
+
+# 目标的「非目标」顶替
+P="$TMP/ex2"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-13-shadow"
+plan_text T1 > "$P/tasks/2026-01-13-shadow/plan.md"
+subst "$P/tasks/2026-01-13-shadow/plan.md" 's|^- \*\*目标\*\*: .*|- **非目标**: 这次什么都不做|'
+out="$(staged_run "$P")"
+has "「目标」为空" "$out" "「非目标」不能顶替「目标」"
+
+# 架构表里的双斜杠 / 内部点段
+P="$TMP/ex3"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/src/auth" && echo x > "$P/src/auth/a.py"
+printf '%s\n' '# 架构' '' '## 模块划分' '' '| 模块 | 路径 | 负责人 |' '|---|---|---|' '| 认证 | `src//auth` | 我 |' > "$P/docs/architecture.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+not "模块表里没有它" "$out" "src//auth 与 src/auth 等价"
+printf '%s\n' '# 架构' '' '## 模块划分' '' '| 模块 | 路径 | 负责人 |' '|---|---|---|' '| 认证 | `src/./auth` | 我 |' > "$P/docs/architecture.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+not "模块表里没有它" "$out" "src/./auth 与 src/auth 等价"
+
+# 预估 diff 三行都写「无」是合法写法
+P="$TMP/ex4"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-14-diff"
+plan_text T1 > "$P/tasks/2026-01-14-diff/plan.md"
+out="$(staged_run "$P")"
+not "预估 diff 范围" "$out" "预估 diff 三行写「无」不算空"
+
+# 档位注释里提到 T2 不能改变档位（也就不能换来规模豁免）
+P="$TMP/ex5"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-15-annot" "$P/src"
+plan_text T1 > "$P/tasks/2026-01-15-annot/plan.md"
+subst "$P/tasks/2026-01-15-annot/plan.md" 's|^- \*\*档位\*\*: .*|- **档位**: `T1`（若到 4 文件就升 T2）|'
+for i in 1 2 3 4; do printf 'x\n' > "$P/src/z$i.py"; done
+out="$(staged_run "$P")"
+has "没有声明 T2/T3" "$out" "档位注释里提到 T2 不算声明，规模底线仍生效"
 
 echo "== G-env: 模块根缺失与钩子丢失要说出来（只提示，不拦）=="
 P="$TMP/genv"; new_project "$P" || { echo "建项目失败"; exit 2; }

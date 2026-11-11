@@ -11,6 +11,16 @@ root="$(git -c core.quotepath=false rev-parse --show-toplevel 2>/dev/null)" || e
 # 闸门执行的是**工作区**的 check-gates.sh。所以「把工作区那份改成 exit 0、不暂存」
 # 就能让闸门空转，而提交进去的仍是原版检查器——事后从历史里完全看不出来。
 # 这一段只做一件事：两个检查器文件的工作区版本与索引版本不一致时拒绝提交。
+# 先确认两个文件还在**索引**里：`git rm --cached` 之后工作区副本仍在，
+# `git diff --quiet` 看不到差异，提交会把检查器从仓库里删掉而钩子毫无察觉。
+for f in scripts/check-gates.sh scripts/check-gates.awk; do
+    if ! git -C "$root" ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
+        printf '\n提交被拦下：%s 不在索引里（被 git rm --cached 了？）。\n' "$f" >&2
+        printf '闸门脚本必须随项目一起提交，否则下一个 clone 的项目没有闸门。\n\n' >&2
+        exit 1
+    fi
+done
+
 if ! git -C "$root" diff --quiet -- scripts/check-gates.sh scripts/check-gates.awk 2>/dev/null; then
     printf '\n提交被拦下：闸门脚本的工作区版本与索引不一致。\n' >&2
     printf '  scripts/check-gates.sh / scripts/check-gates.awk\n' >&2

@@ -48,6 +48,11 @@
 #          .gitignore 命中的除外；空目录不算——git 不跟踪空目录，声明它反而会卡住提交。
 #          模块根本身不查存在性（空目录进不了 git，clone 之后它会消失）
 #
+#   - 只改代码的提交（--staged）：如果这次动的文件出现在某个 T2/T3 任务 plan.md 的
+#          「相关文件」里，而那个任务还没有非空的 review.md，拦下——这是「先提交代码、
+#          后补审查」的入口。计划与裁决单都取索引版本。
+#   - 任务目录里的文件名：只认 plan / prd / journal / review 与 NN-*.md（NN 1–2 位）；
+#          三位以上数字开头的按笔记算（只提示），其余报错——否则整份文件静默免检。
 #   - 规模底线（仅 --staged）：任务在模块根下**累计**改动的文件数 ≥ 4 时，必须有任务目录
 #          声明 T2/T3。累计从 plan.md 进入历史的那次提交之前算起——按单次提交算的话，
 #          把 T2 的活拆成两次提交就能溜过去。只查低报：T0 / T1 的档位声明不再等人确认，
@@ -101,10 +106,11 @@ usage() {
 #
 # 变体也认：全角括号 `［DEBUG-］`、零宽字符插在中间（`[DEBU\u200bG-`）、
 # 全角连字符。这些都是「看起来像但不是」，而闸门的价值就在于不给它留后门。
-# 清理脚本里写着 `grep '[DEBUG-'` 不算残留——那行本身是找标记的工具。
+# 清理脚本里写着 `grep '[DEBUG-'` 不算残留——那行本身是找标记的工具
+# （`xargs grep`、`if grep -q`、`git grep` 这些形态都认）。
 check_gate_b() {
     local staged="$1" root="$2" hits
-    local -a pat=(-e '\[DEBUG-' -E -e '［DEBUG[-－]' -e '\[DEBU.{1,6}G-')
+    local -a pat=(-e '\[DEBUG-' -E -e '［DEBUG[-－]' -e '\[DEBU.{1,6}G.{0,4}-')
     local -a skip=(
         ':(exclude,icase)*.md'
         ':(exclude)scripts/check-gates.sh' ':(exclude)scripts/check-gates.awk'
@@ -114,6 +120,12 @@ check_gate_b() {
         ':(exclude,icase)*.pdf' ':(exclude,icase)*.zip' ':(exclude,icase)*.gz'
         ':(exclude,icase)*.svgz' ':(exclude,icase)*.woff' ':(exclude,icase)*.woff2'
         ':(exclude,icase)*.ttf' ':(exclude,icase)*.otf' ':(exclude,icase)*.eot'
+        ':(exclude,icase)*.jar' ':(exclude,icase)*.war' ':(exclude,icase)*.class'
+        ':(exclude,icase)*.pyc' ':(exclude,icase)*.so' ':(exclude,icase)*.dll'
+        ':(exclude,icase)*.exe' ':(exclude,icase)*.bin' ':(exclude,icase)*.pdf'
+        ':(exclude,icase)*.xlsx' ':(exclude,icase)*.docx' ':(exclude,icase)*.pptx'
+        ':(exclude,icase)*.mp3' ':(exclude,icase)*.mp4' ':(exclude,icase)*.mov'
+        ':(exclude,icase)*.wav' ':(exclude,icase)*.db' ':(exclude,icase)*.sqlite'
     )
     if [ "$staged" -eq 1 ]; then
         hits="$(git -C "$root" grep -a -i -n --cached "${pat[@]}" -- "${skip[@]}" 2>/dev/null || true)"
@@ -132,13 +144,13 @@ check_gate_b() {
                 ! -iname '*.ico' ! -iname '*.webp' ! -iname '*.pdf' ! -iname '*.zip' \
                 ! -iname '*.gz' ! -iname '*.svgz' ! -iname '*.woff' ! -iname '*.woff2' \
                 ! -iname '*.ttf' ! -iname '*.otf' ! -iname '*.eot' \
-                -exec grep -H -a -i -n -E '\[DEBUG-|［DEBUG[-－]|\[DEBU.{1,6}G-' {} + 2>/dev/null | sed 's|^\./||' || true)"
+                -exec grep -H -a -i -n -E '\[DEBUG-|［DEBUG[-－]|\[DEBU.{1,6}G.{0,4}-' {} + 2>/dev/null | sed 's|^\./||' || true)"
         fi
     fi
     # 一行本身在「找这个标记」（清理脚本、文档里的说明命令）不算残留。
     # 判据窄：整行以 grep / rg / ag / ack 开头，或含 `grep ... DEBUG-`——真调试埋点
     # 不会长这样。
-    hits="$(printf '%s\n' "$hits" | grep -v -E '^[^:]*:[0-9]+:[[:space:]]*(grep|rg|ag|ack)[[:space:]]' 2>/dev/null || true)"
+    hits="$(printf '%s\n' "$hits" | grep -v -E '^[^:]*:[0-9]+:.*(grep|rg|ag|ack)[^:]*\[DEBUG' 2>/dev/null || true)"
     if [ -n "$hits" ]; then
         printf '%s\n' "$hits" | while IFS= read -r line; do
             printf '  [x] 闸门 B: %s —— 调试标记残留\n' "$line"
@@ -238,10 +250,11 @@ check_links() {
     # 后缀索引用的文件清单也是「存在的文件」，--staged 时取两边的并集：
     # 只取物化树会漏掉被引用的产物，只取工作区会漏掉「已暂存、工作区还没建」的新文件。
     if [ "$staged_mode" -eq 1 ]; then
+        # 只认**索引物化树**里的文件。并进工作区的未跟踪文件会让「已经从索引里删掉、
+        # 工作区还留着」的目标被判存在——提交进去的树里它已经没了，链接是死的。
+        # 产物（被 .gitignore 命中的）另有精确存在性豁免，不靠这份清单。
         while IFS= read -r f; do [ -n "$f" ] && all+=("${f#./}"); done \
             < <(find . -type f 2>/dev/null | sort)
-        while IFS= read -r f; do [ -n "$f" ] && all+=("$f"); done \
-            < <(git -C "$root" -c core.quotepath=false ls-files -co --exclude-standard 2>/dev/null)
     elif git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
         while IFS= read -r f; do all+=("$f"); done \
             < <(git -C "$root" -c core.quotepath=false ls-files -co --exclude-standard 2>/dev/null)
@@ -430,16 +443,20 @@ check_review_by_scope() {
     done < <(git -C "$root" -c core.quotepath=false diff --cached --name-only --diff-filter=ACMRD -- "${MODULE_ROOT%/}" 2>/dev/null)
     [ "${#changed[@]}" -gt 0 ] || return 0
 
-    for d in "$root"/tasks/*/; do
-        d="${d%/}"; d="${d#"$root"/}"
+    # plan.md / review.md 一律从**索引物化树**读（--staged 时 cwd 就是它）：
+    # 读工作区的话，「未跟踪的空 review.md」或「未暂存地改掉计划的文件列表」
+    # 都能让这条检查静默放行，而那正是它要防的东西。
+    for d in tasks/*/; do
+        d="${d%/}"
         case "$d" in tasks/_template|tasks/_archive) continue ;; esac
-        [ -f "$root/$d/plan.md" ] || continue
+        [ -f "$d/plan.md" ] || continue
         task_is_high_tier "$d" || continue
-        [ -f "$root/$d/review.md" ] && continue
+        # 空裁决单不算有：`-s` 才认（一份 0 字节的 review.md 顶不了审查）
+        [ -s "$d/review.md" ] && continue
         local -a rels=()
         while IFS= read -r rel; do
             [ -n "$rel" ] && rels+=("$rel")
-        done < <(awk -v kind=related -f "$AWK_PROG" "$root/$d/plan.md" 2>/dev/null)
+        done < <(awk -v kind=related -f "$AWK_PROG" "$d/plan.md" 2>/dev/null)
         [ "${#rels[@]}" -gt 0 ] || continue
         hit=""
         for f in "${changed[@]}"; do
@@ -487,7 +504,13 @@ count_code_changes() {
     local from="$1" root="$2" n=0 p range=()
     [ -n "$from" ] && range=("$from")
     while IFS= read -r p; do
-        case "$p" in "${MODULE_ROOT%/}"/*) n=$((n + 1)) ;; esac
+        case "$p" in "${MODULE_ROOT%/}"/*) ;; *) continue ;; esac
+        # 只数**代码**。模块根下也可能放文档、图片、快照；把它们算进「改了 4 个文件
+        # 就是 T2」，会让「补 4 篇文档」被当成大改动。用法注释写的就是「文档不计」。
+        case "${p##*.}" in
+            md|markdown|txt|rst|png|jpg|jpeg|gif|svg|webp|ico|pdf|csv|json|yml|yaml) continue ;;
+        esac
+        n=$((n + 1))
     done < <(git -c core.quotepath=false -C "$root" diff --cached --name-only -M \
              --diff-filter=ACMRD ${range[@]+"${range[@]}"} -- "${MODULE_ROOT%/}" 2>/dev/null)
     printf '%s' "$n"
@@ -665,9 +688,13 @@ check_architecture() {
     case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) fold=1 ;; esac
     norm_path() {
         local v="$1"
-        v="${v//\\//}"
+        v="${v//\\//}"                       # 反斜杠 → 斜杠
         while [ "${v#./}" != "$v" ]; do v="${v#./}"; done
-        while [ "${v//\/\//}" != "$v" ]; do v="${v//\/\//}"; done
+        # 连续斜杠压成一个。注意是压成 `/`，不是删掉——删掉会把 `src//a` 变成
+        # `srca`，成了另一个路径（这条曾经是真实 bug）。
+        v="$(printf '%s' "$v" | sed 's|//*|/|g')"
+        # 中间的 `./` 段（`src/./a`）
+        v="$(printf '%s' "$v" | sed 's|/\./|/|g')"
         v="${v%/}"
         [ "$fold" -eq 1 ] && v="$(printf '%s' "$v" | tr 'A-Z' 'a-z')"
         printf '%s' "$v"
@@ -941,17 +968,20 @@ main() {
             check_slice "$s"
             any=1
         done
-        # 文件名不在约定里（`100-x.md`、`01-upper.MD`）时，上面所有分支都不会碰它，
-        # 任务目录于是整条免检。宁可报出来让人改名，也不要静默跳过。
-        if [ "$any" -eq 0 ]; then
-            local u
-            for u in "$d"/*.[mM][dD]; do
-                [ -f "$u" ] || continue
-                fail "$u: 不认识的任务文件名 —— 任务目录里只可能是 plan.md / prd.md / journal.md / review.md，或 NN-*.md 切片（NN 是 1–2 位数字）"
-                any=1
-                break
-            done
-        fi
+        # 文件名不在约定里时，上面所有分支都不会碰它，那个文件于是整条免检。
+        # **无条件**扫（有 plan.md 时也一样）：`100-x.md` 混进一个正常任务目录，
+        # 同样会被静默跳过。三位以上数字开头的是笔记（tasks/README.md 的约定），只提示。
+        local u
+        for u in "$d"/*.[mM][dD]; do
+            [ -f "$u" ] || continue
+            case "${u##*/}" in
+                plan.md|prd.md|journal.md|review.md) continue ;;
+                [0-9][0-9][-_]*.md|[0-9][-_]*.md) continue ;;
+                [0-9][0-9][0-9]*) note "$u: 三位以上数字开头，按 tasks/README.md 的约定当笔记处理，不检查"; continue ;;
+            esac
+            fail "$u: 不认识的任务文件名 —— 任务目录里只可能是 plan.md / prd.md / journal.md / review.md，或 NN-*.md 切片（NN 是 1–2 位数字）"
+            any=1
+        done
         [ "$any" -eq 1 ] || printf '%s\n' "跳过 $d（还没有 plan.md / journal.md / NN-*.md）"
     done
 
