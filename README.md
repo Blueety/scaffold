@@ -252,8 +252,8 @@ git config core.hooksPath .githooks
 
 | 任务 | 跑什么 | 为什么是这个平台 |
 |---|---|---|
-| `windows` | `check-tree.ps1` 全量 + 两个 fixture | 唯一能做「README 树 vs 两脚本产物」全量比对的平台 |
-| `linux` | `templates/` vs `init.sh` 产物逐字节比对 + 两个 fixture | 覆盖 GNU 工具链；比对前按项目名展开占位符 |
+| `windows` | `check-tree.ps1` 全量 + 三个 fixture | 唯一能做「README 树 vs 两脚本产物」全量比对的平台 |
+| `linux` | `templates/` vs `init.sh` 产物逐字节比对 + 三个 fixture（项目名一致性那项会跳过） | 覆盖 GNU 工具链；比对前按项目名展开占位符 |
 | `macos` | 用系统 `/bin/bash`（3.2）生成项目，再用系统 `/bin/sh` 跑闸门 | 证明生成的项目不依赖 bash 4 —— 这条约束只有真在 3.2 上跑才算数 |
 
 三组都是红的就说明不变量破了；红了别合，和本地钩子一个标准。
