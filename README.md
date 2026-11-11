@@ -28,11 +28,12 @@
 | | 要求 |
 |---|---|
 | 公共 | `git`（两个脚本都会 `git init` 并写 `.git/config`） |
-| Windows | PowerShell 5.1 或 pwsh；用更新器时另需 Git for Windows 的 bash |
+| Windows | PowerShell 5.1 或 pwsh |
 | Linux / macOS / WSL | `bash`（3.2 即可）、`awk`、`sed` |
-| 更新已生成的项目 | bash 4 以上（macOS 自带的 3.2 不够，`brew install bash`） |
 
 生成的**项目**不需要 Node / Python / 任何运行时——闸门是 bash + awk。
+
+更新器的额外要求（bash 4）写在 [`UPDATE.md`](UPDATE.md) 里——那是另一件事。
 
 ## 用法
 
