@@ -162,7 +162,7 @@ bash scripts/scaffold-update.sh /path/to/my-project --write    # 写盘（脚本
 
 ## 想试的话
 
-1. 生成一个项目，`git init` + `git config core.hooksPath .githooks`，提交一次空骨架；
+1. 生成一个项目，直接 `git add -A && git commit -m "init"` 提交空骨架（`git init` 和钩子脚本已经由生成器做完了）；
 2. 让 AI 读 `WORKFLOW.md` 的 Phase 2，把技术栈、`docs/commands.md`、`docs/architecture.md` 填出来——这一步**不写业务代码**；
 3. 找一个真需求走一遍 Phase 3，感受 T1 全程不打断、T2 那两次打断分别在审什么。
 
