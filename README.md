@@ -4,7 +4,7 @@
 
 ![闸门演示：提交被拦下，补上内容后通过](assets/demo.svg)
 
-**生成出来的是什么**：30 余份 markdown（规范、两个角色提示词、七个流程 skill、任务模板、四份活文档）+ 两个 bash 脚本（闸门检查器 + 提交钩子）。**不含语言、框架、依赖**——技术栈由你自己 `npm init` / `uv init`，骨架只管「AI 按什么流程干活」。它配合任意能读 `AGENTS.md` 的编码 agent 使用（Cursor / Claude Code / Codex 等），不在运行时挂钩子。
+**生成出来的是什么**：29 个文件——23 份 markdown（项目规范、两个角色提示词、七个流程 skill、五份任务模板、四份活文档（`architecture` / `commands` / `pitfalls` / `CONTEXT`）、三份目录索引）+ 检查器与钩子（两个 bash 脚本、一个 awk）+ 三份配置。**不含语言、框架、依赖**——技术栈由你自己 `npm init` / `uv init`，骨架只管「AI 按什么流程干活」。配合任意能读 `AGENTS.md` 的编码 agent 使用（Cursor / Claude Code / Codex 等），运行时不需要它。
 
 > **English (short)** — One command scaffolds a project skeleton that encodes an **AI workflow with
 > executable checks**: task state in git, a gate checker on `pre-commit`, and planning / implementation /
@@ -170,10 +170,10 @@ powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
 
 | 改的东西 | 跑什么 |
 |---|---|
-| `templates/` 或 `init.*` | `check-tree.ps1`（上面那个，约 20 秒） |
-| 项目名校验（`init.sh` / `init.ps1`） | `bash scripts/fixtures/name-test.sh` —— 19 项：同一张名字表分别喂两个脚本，接受 / 拒绝必须一致；没有 PowerShell 的机器会跳过 |
-| 闸门（`scripts/check-gates.*`） | `bash scripts/fixtures/gate-test.sh` —— 约 270 秒、71 项：规模底线含跨提交累计、空索引豁免与模板目录排除、文档断链、gitignore、产物与后缀解析、ADR 互链、决策锚点、模块表一格多路径、seam 措辞一致性、目标必填、纯重命名豁免、拍平归档、journal 去向 |
-| 更新器（`scripts/scaffold-update.sh`） | `bash scripts/fixtures/update-test.sh` —— 约 230 秒、55 项：冲突现场、脏树、裁决、并集、基线阈值、adopt、闸门计数、机制文件、MANIFEST / JSON、`--quiet` |
+| `templates/` 或 `init.*` | `check-tree.ps1`（上面那个，约 10–20 秒） |
+| 项目名校验（`init.sh` / `init.ps1`） | `bash scripts/fixtures/name-test.sh` —— 约 1 分钟、19 项：同一张名字表分别喂两个脚本，接受 / 拒绝必须一致；没有 PowerShell 的机器会跳过 |
+| 闸门（`scripts/check-gates.*`） | `bash scripts/fixtures/gate-test.sh` —— 约 4–5 分钟、71 项：规模底线含跨提交累计、空索引豁免与模板目录排除、文档断链、gitignore、产物与后缀解析、ADR 互链、决策锚点、模块表一格多路径、seam 措辞一致性、目标必填、纯重命名豁免、拍平归档、journal 去向 |
+| 更新器（`scripts/scaffold-update.sh`） | `bash scripts/fixtures/update-test.sh` —— 约 2–4 分钟、55 项：冲突现场、脏树、裁决、并集、基线阈值、adopt、闸门计数、机制文件、MANIFEST / JSON、`--quiet` |
 
 ### 自动跑
 
