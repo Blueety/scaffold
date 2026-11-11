@@ -43,9 +43,12 @@ ok() { printf '  ok   %s\n' "$1"; pass=$((pass + 1)); }
 no() { printf '  FAIL %s\n' "$1"; fail=$((fail + 1)); }
 
 # 一轮对照：$1=标签 $2=bash 侧的字面量（用 printf 生成，避免 shell 吃掉控制字符）
-#            $3=PowerShell 侧的表达式
+#            $3=PowerShell 侧的表达式  $4=期望（accept | reject，省略则只比一致性）
+#
+# 为什么必须有 $4：只比「两边结果相同」，两个脚本**同时放过**一个非法名字也会 PASS。
+# 曾经的真实缺陷正是两边一起放过 C1 控制字符——一致性检查对它无能为力。
 compare() {
-    local label="$1" bash_val="$2" ps_expr="$3" r1 r2 a b
+    local label="$1" bash_val="$2" ps_expr="$3" want="${4:-}" r1 r2 a b
     rm -rf "$TMP/sh" "$TMP/ps"; mkdir -p "$TMP/sh" "$TMP/ps"
 
     ( cd "$TMP/sh" && "$B" "$INIT_SH" "$bash_val" ) >/dev/null 2>&1
@@ -56,37 +59,40 @@ compare() {
 
     a=$([ "$r1" -eq 0 ] && echo 接受 || echo 拒绝)
     b=$([ "$r2" -eq 0 ] && echo 接受 || echo 拒绝)
-    if [ "$a" = "$b" ]; then
-        ok "$label：两边都$a"
-    else
+    case "$want" in accept) want="接受" ;; reject) want="拒绝" ;; esac
+    if [ "$a" != "$b" ]; then
         no "$label：init.sh $a（exit $r1）但 init.ps1 $b（exit $r2）"
+    elif [ -n "$want" ] && [ "$a" != "$want" ]; then
+        no "$label：两边都$a，但应当$want"
+    else
+        ok "$label：两边都$a"
     fi
 }
 
 echo "== 名字接受集：init.sh vs init.ps1 =="
 
 # 应当两边都接受
-compare "普通 ASCII"            'ok-name'            "'ok-name'"
-compare "下划线与点"            'a_b.c'              "'a_b.c'"
-compare "非 ASCII（中文）"      '中文名'             "'中文名'"
-compare "非 ASCII（希腊字母）"  'αβγ'                "'αβγ'"
+compare "普通 ASCII"            'ok-name'            "'ok-name'" accept
+compare "下划线与点"            'a_b.c'              "'a_b.c'" accept
+compare "非 ASCII（中文）"      '中文名'             "'中文名'" accept
+compare "非 ASCII（希腊字母）"  'αβγ'                "'αβγ'" accept
 
 # 应当两边都拒绝
-compare "前导连字符"            '-abc'               "'-abc'"
-compare "尾随点"                'abc.'               "'abc.'"
-compare "空格"                  'a b'                "'a b'"
-compare "斜杠"                  'a/b'                "'a/b'"
-compare "分号"                  'a;b'                "'a;b'"
-compare "星号"                  'a*b'                "'a*b'"
-compare "点目录"                '.'                  "'.'"
-compare "双点目录"              '..'                 "'..'"
-compare ".git"                  '.git'               "'.git'"
-compare "保留设备名 CON"        'CON'                "'CON'"
-compare "保留设备名 com1.txt"   'com1.txt'           "'com1.txt'"
-compare "尾随换行"              $'abc\n'             "([string]'abc' + [char]10)"
-compare "C0 制表符"             $'a\tb'              "([string]'a' + [char]9 + 'b')"
-compare "C1 U+0085"             $'a\u0085b'          "([string]'a' + [char]0x85 + 'b')"
-compare "C1 U+009B"             $'a\u009bb'          "([string]'a' + [char]0x9B + 'b')"
+compare "前导连字符"            '-abc'               "'-abc'" reject
+compare "尾随点"                'abc.'               "'abc.'" reject
+compare "空格"                  'a b'                "'a b'" reject
+compare "斜杠"                  'a/b'                "'a/b'" reject
+compare "分号"                  'a;b'                "'a;b'" reject
+compare "星号"                  'a*b'                "'a*b'" reject
+compare "点目录"                '.'                  "'.'" reject
+compare "双点目录"              '..'                 "'..'" reject
+compare ".git"                  '.git'               "'.git'" reject
+compare "保留设备名 CON"        'CON'                "'CON'" reject
+compare "保留设备名 com1.txt"   'com1.txt'           "'com1.txt'" reject
+compare "尾随换行"              $'abc\n'             "([string]'abc' + [char]10)" reject
+compare "C0 制表符"             $'a\tb'              "([string]'a' + [char]9 + 'b')" reject
+compare "C1 U+0085"             $'a\u0085b'          "([string]'a' + [char]0x85 + 'b')" reject
+compare "C1 U+009B"             $'a\u009bb'          "([string]'a' + [char]0x9B + 'b')" reject
 
 printf '\n结果: PASS %d / FAIL %d\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

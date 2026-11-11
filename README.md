@@ -4,7 +4,9 @@
 
 ![闸门演示：提交被拦下，补上内容后通过](assets/demo.svg)
 
-**生成出来的是什么**：29 个文件——23 份 markdown（项目规范、两个角色提示词、七个流程 skill、五份任务模板、四份活文档（`architecture` / `commands` / `pitfalls` / `CONTEXT`）、三份目录索引）+ 检查器与钩子（两个 bash 脚本、一个 awk）+ 三份配置。**不含语言、框架、依赖**——技术栈由你自己 `npm init` / `uv init`，骨架只管「AI 按什么流程干活」。配合任意能读 `AGENTS.md` 的编码 agent 使用（Cursor / Claude Code / Codex 等），运行时不需要它。
+**生成出来的是什么**：29 个文件——23 份 markdown（一份规范、一份定档规则、两个角色提示词、七个流程 skill、五份任务模板、四份活文档、三份目录索引），外加检查器与钩子（一个 bash 脚本、一份 awk、一个 POSIX sh 钩子）和三份配置。**不含语言、框架、依赖**——技术栈由你自己 `npm init` / `uv init`，骨架只管「AI 按什么流程干活」。
+
+**它需要什么样的 agent**：能派**独立子 agent** 的工具（Claude Code、Codex CLI、任何能开子会话的编排器）——整套设计的核心是「写计划的人和实施的人不共享上下文」。没有这个原语的编辑器（比如 Cursor 的对话式 Composer）也能用其余部分，但规划 / 实施分离会退化成同一个上下文里自演，那一条只能靠人自觉。
 
 > **English (short)** — One command scaffolds a project skeleton that encodes an **AI workflow with
 > executable checks**: task state in git, a gate checker on `pre-commit`, and planning / implementation /
@@ -120,9 +122,10 @@ my-project-name/
 
 ## 生成后要做的事
 
-1. **初始化技术栈**：在项目目录里运行 `npm init`、`create-next-app`、`uv init` 等。
-2. **让 Agent 填写规范**：配置文件就位后，让本地 Agent 读配置文件并填写 AGENTS.md、CONTEXT.md 和 docs/（含把 Task Handoff 里的决策落成 `docs/adr/0001-*.md`）。
-3. **提交**：`git add . && git commit -m "init: 项目脚手架 + 技术栈"`
+1. **确认模块根**：闸门默认只在 `src/` 下数模块和文件。如果技术栈把代码放在别处（`app/`、`web/`、`cmd/`），现在就说清楚——用 `MODULE_ROOT=app` 跑闸门，或改 `scripts/check-gates.sh` 里那一行默认值。不改的话，模块表比对和规模底线会**静默空转**，闸门一片绿。
+2. **初始化技术栈**：在项目目录里运行 `npm init`、`create-next-app`、`uv init` 等。
+3. **让 Agent 填写规范**：配置文件就位后，让本地 Agent 读配置文件并填写 AGENTS.md、CONTEXT.md 和 docs/（含把 Task Handoff 里的决策落成 `docs/adr/0001-*.md`）。
+4. **提交**：`git add . && git commit -m "init: 项目脚手架 + 技术栈"`
 
 生成脚本已经做过的事（不用重来）：`git init`、`core.quotepath=false`（否则中文路径会被转义成八进制）、把 `.githooks/` 挂成 pre-commit 钩子。
 
@@ -172,7 +175,7 @@ powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
 |---|---|
 | `templates/` 或 `init.*` | `check-tree.ps1`（上面那个，约 10–20 秒） |
 | 项目名校验（`init.sh` / `init.ps1`） | `bash scripts/fixtures/name-test.sh` —— 约 1 分钟、19 项：同一张名字表分别喂两个脚本，接受 / 拒绝必须一致；没有 PowerShell 的机器会跳过 |
-| 闸门（`scripts/check-gates.*`） | `bash scripts/fixtures/gate-test.sh` —— 约 4–5 分钟、71 项：规模底线含跨提交累计、空索引豁免与模板目录排除、文档断链、gitignore、产物与后缀解析、ADR 互链、决策锚点、模块表一格多路径、seam 措辞一致性、目标必填、纯重命名豁免、拍平归档、journal 去向 |
+| 闸门（`scripts/check-gates.*`） | `bash scripts/fixtures/gate-test.sh` —— 约 4–5 分钟、78 项：环境提示（模块根缺失 / 钩子丢失）、去向必须是四种之一、规模底线含跨提交累计、空索引豁免与模板目录排除、文档断链、gitignore、产物与后缀解析、ADR 互链、决策锚点、模块表一格多路径、seam 措辞一致性、目标必填、纯重命名豁免、拍平归档、journal 去向 |
 | 更新器（`scripts/scaffold-update.sh`） | `bash scripts/fixtures/update-test.sh` —— 约 2–4 分钟、55 项：冲突现场、脏树、裁决、并集、基线阈值、adopt、闸门计数、机制文件、MANIFEST / JSON、`--quiet` |
 
 ### 自动跑

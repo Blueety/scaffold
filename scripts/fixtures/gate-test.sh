@@ -491,10 +491,41 @@ has "第一条没有去向" "$out" "顿号编号的条目被单独检查"
 has "第三条也没有去向" "$out" "全角括号编号的条目被单独检查"
 not "第二条 → pitfalls" "$out" "写了去向的顿号条目不被误报"
 
+# 去向必须是四种之一：写个箭头就算，等于没校验
+write_journal "- 改 A 必须同步 B → 以后再说"
+out="$(staged_run)"
+has "没有去向" "$out" "箭头后面不是四种去向之一，照样报"
+
+write_journal "- 改 A 必须同步 B → 任务分级阈值"
+out="$(staged_run)"
+not "没有去向" "$out" "「→ 任务分级阈值」算有效去向"
+
+write_journal "- 改 A 必须同步 B → skills/tdd"
+out="$(staged_run)"
+not "没有去向" "$out" "「→ skills/<名>」算有效去向"
+
 # 散文（没有条目符号）也要能在报错里看到原文，而不是空着
 write_journal "这是一句散文，没有条目符号也没有去向"
 out="$(staged_run)"
 has "这是一句散文" "$out" "散文条目的报错带原文（不是空消息）"
+
+echo "== G-env: 模块根缺失与钩子丢失要说出来（只提示，不拦）=="
+P="$TMP/genv"; new_project "$P" || { echo "建项目失败"; exit 2; }
+
+# init.sh 会建空 src/，但 git 不跟踪空目录 —— 模拟 clone 之后的样子
+rmdir "$P/src" 2>/dev/null || true
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "模块根" "$out" "模块根不存在时给出提示（否则闸门全绿但什么都没查）"
+( cd "$P" && "$B" scripts/check-gates.sh >/dev/null 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] && ok "模块根提示不影响退出码" || no "模块根提示把退出码变成了 $rc"
+
+mkdir -p "$P/src"
+( cd "$P" && git config core.hooksPath other-hooks ) >/dev/null 2>&1
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "core.hooksPath" "$out" "钩子目录不是 .githooks 时提示（钩子丢了是静默的）"
+( cd "$P" && git config core.hooksPath .githooks ) >/dev/null 2>&1
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+not "core.hooksPath" "$out" "设置正确后不再提示"
 
 printf '\n结果: PASS %d / FAIL %d\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

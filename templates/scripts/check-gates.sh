@@ -575,6 +575,14 @@ check_architecture() {
         return
     fi
 
+    # 模块根不存在 ⇒ 架构比对和规模底线都在空转，「闸门通过」是假的。
+    # 不能 fail：`src/` 是空目录，git 不跟踪空目录，刚 clone 的仓库里它就不在。
+    # 但必须说出来 —— 代码不在 src/ 的项目（`uv init`、`create-next-app` 的 app/）
+    # 会得到一个全绿的闸门，而什么都没查。
+    if [ ! -d "$root/$MODULE_ROOT" ]; then
+        note "模块根 \`$MODULE_ROOT\` 不存在：模块表比对与规模底线都不生效。代码不在这个目录时，用 \`MODULE_ROOT=<真实目录> bash scripts/check-gates.sh\`，或改脚本里 MODULE_ROOT 的默认值。"
+    fi
+
     # 规则 1：声明的路径必须真实存在。
     # 例外：模块根本身（及它的祖先）不查 —— `src/` 是空目录，git 不跟踪空目录，
     # clone 之后它就不在了，而 Phase 2 的模块表正要求写宽路径 `src`。
@@ -688,6 +696,14 @@ main() {
     check_architecture "$staged" "$root"
 
     # 文档内相对引用 + ADR 互链：都是「仓库状态」不变量，和具体任务无关
+    if [ "$staged" -eq 0 ]; then
+        local hp
+        hp="$(git -C "$root" config core.hooksPath 2>/dev/null)"
+        if [ "$hp" != ".githooks" ]; then
+            note "core.hooksPath 不是 .githooks（当前：${hp:-未设置}）：提交前闸门不会自动执行。跑一次 \`git config core.hooksPath .githooks\`。"
+        fi
+    fi
+
     check_links "$staged"
     check_adr
     # 代码里的 `决策: ADR-NNNN` 锚点：只提示，不影响退出码
