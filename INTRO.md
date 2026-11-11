@@ -33,7 +33,7 @@
 bash init.sh my-project-name
 ```
 
-生成 29 个文件、16 个目录。`git init`、`core.quotepath=false`、`.githooks` 钩子都已经设好，不用重来。
+生成完整骨架（文件清单见 README 的「生成的目录结构」）。`git init`、`core.quotepath=false`、`.githooks` 钩子都已经设好，不用重来。
 
 唯一要记住的是：`core.hooksPath` 存在 `.git/config` 里，**不随 clone 走**——把项目 clone 到别的机器后要重跑一次：
 

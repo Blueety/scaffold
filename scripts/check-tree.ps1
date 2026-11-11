@@ -30,6 +30,23 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# This checker only makes sense on Windows: it invokes init.ps1 (Windows path
+# semantics), locates Git for Windows' bash, and joins/compares Windows paths. On a
+# POSIX box it can only produce failures unrelated to the repo's state, so say so and
+# stop. Exit code 3 means "environment unsupported", not "check failed"; Linux and
+# macOS coverage lives in .github/workflows/check.yml.
+#
+# Keep this file pure ASCII: PowerShell 5.1 decodes a BOM-less .ps1 with the ANSI code
+# page, and a multi-byte character can swallow the following newline, merging the next
+# line into a comment (that is how a guard like this one silently stops running).
+$onWindows = ($env:OS -eq 'Windows_NT')
+if (-not $onWindows -and $PSVersionTable.PSVersion.Major -ge 6) { $onWindows = [bool]$IsWindows }
+if (-not $onWindows) {
+    Write-Host 'check-tree.ps1: this checker runs on Windows only (init.ps1 + Git for Windows bash).'
+    Write-Host '                Linux / macOS are covered by the linux and macos CI jobs.'
+    exit 3
+}
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 $RepoRoot    = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -215,11 +232,13 @@ function Compare-TemplateContent([string]$Label, [string]$TemplateRoot, [string]
 }
 
 function Find-Bash {
-    $candidates = @(
-        (Join-Path $env:ProgramFiles 'Git\bin\bash.exe'),
-        (Join-Path ${env:ProgramFiles(x86)} 'Git\bin\bash.exe'),
-        (Join-Path $env:LOCALAPPDATA 'Programs\Git\bin\bash.exe')
-    )
+    # Join-Path throws when the base is $null (the three variables above only exist on
+    # Windows), so filter first - otherwise a POSIX box gets a .NET binding error that
+    # looks like a repository failure.
+    $candidates = @()
+    foreach ($base in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA)) {
+        if ($base) { $candidates += (Join-Path $base 'Git\bin\bash.exe') }
+    }
     # Git for Windows may live elsewhere; derive its root from git.exe itself.
     # Do NOT assume <root>\cmd\git.exe and take the two-level parent: under Git's own
     # sh (which is where the pre-commit hook runs) PATH resolves git.exe to
@@ -305,6 +324,26 @@ if ($crFiles.Count -gt 0) {
     Write-Host '         scripts would produce different output. Normalize the file to LF.' -ForegroundColor Red
 } else {
     Write-Host '  ok   templates/ has no CR (both init scripts stay byte-identical)' -ForegroundColor Green
+}
+
+# Keep every .ps1 in this repo pure ASCII. PowerShell 5.1 decodes a BOM-less .ps1 with
+# the ANSI code page; a multi-byte character there can swallow the following newline and
+# merge the next line into a comment, which silently disables whatever it defined. That
+# failure mode is invisible on a machine whose ANSI page is UTF-8, so check the bytes.
+$nonAscii = @()
+foreach ($f in @(Get-ChildItem -LiteralPath $RepoRoot -Recurse -File -Filter '*.ps1' -Force |
+                 Where-Object { $_.FullName -notlike '*\.git\*' })) {
+    $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+    if (@($bytes | Where-Object { $_ -gt 127 }).Count -gt 0) {
+        $nonAscii += $f.FullName.Substring($RepoRoot.Length + 1)
+    }
+}
+if ($nonAscii.Count -gt 0) {
+    Fail "PowerShell sources must be pure ASCII, found non-ASCII bytes in: $($nonAscii -join ', ')"
+    Write-Host '         PS 5.1 reads a BOM-less .ps1 with the ANSI code page; one multi-byte' -ForegroundColor Red
+    Write-Host '         character can join the next line into a comment. Write them in ASCII.' -ForegroundColor Red
+} else {
+    Write-Host '  ok   all .ps1 sources are pure ASCII' -ForegroundColor Green
 }
 
 # ---------------------------------------------------------------- Phase B

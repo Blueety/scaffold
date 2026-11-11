@@ -17,6 +17,7 @@ powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
 # 改过闸门检查器或更新器时，另跑对应验收
 bash scripts/fixtures/gate-test.sh     # 71 项
 bash scripts/fixtures/update-test.sh   # 55 项
+bash scripts/fixtures/name-test.sh     # 19 项（项目名接受集；没有 PowerShell 的机器会跳过）
 ```
 
 提交时 `.githooks/pre-commit` 会自动跑第一项（全量，约 20 秒）。被拦下就修，**不要**用 `git commit --no-verify` 绕过。

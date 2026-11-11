@@ -1,4 +1,4 @@
-# 锁 LF。本机系统级 gitconfig 设了 core.autocrlf=true（D:/Claude/Git/etc/gitconfig）：
+# 锁 LF。有些机器的全局 gitconfig 设了 core.autocrlf=true：
 # 不锁的话，索引里仍是 LF（autocrlf=true 只转换检出方向），所以 git clone 不受影响；
 # 但任何一次检出都会把工作区文件改写成 CRLF，而本仓库的实际分发方式是
 # 直接拷贝工作目录去跑 init.sh / init.ps1，CRLF 会随模板带进目标平台。

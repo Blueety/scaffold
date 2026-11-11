@@ -20,6 +20,10 @@ jobs:
           powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1 -BashPath "C:\Program Files\Git\bin\bash.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: 项目名接受集验收（init.sh vs init.ps1）
+        shell: bash
+        run: bash scripts/fixtures/name-test.sh
+
       - name: 闸门检查器验收
         shell: bash
         run: bash scripts/fixtures/gate-test.sh
@@ -48,6 +52,11 @@ jobs:
           done
           diff -r -x src -x .git tpl_norm probe-app
           echo "templates/ 与 init.sh 产物一致"
+
+      # 这一组没有 PowerShell，name-test 会打印「跳过」并返回 0 —— 这条路也要走一遍，
+      # 免得哪天它变成「没有 PowerShell 就报错」。
+      - name: 项目名接受集验收（本机无 PowerShell，应跳过）
+        run: bash scripts/fixtures/name-test.sh
 
       - name: 闸门检查器验收
         run: bash scripts/fixtures/gate-test.sh

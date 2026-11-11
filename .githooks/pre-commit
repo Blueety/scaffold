@@ -14,8 +14,9 @@
 # 临时跳过：git commit --no-verify
 # 手动全量：powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
 #
-# 非 Windows 机器上没装 PowerShell 时**不拦**（本仓库暂无 POSIX 版检查器），
-# 只提示一句；装了 pwsh 就会自动跑起来。
+# 非 Windows 机器上**不跑**：权威检查器依赖 init.ps1 与 Git for Windows 的路径语义，
+# 在这些机器上只会得到与仓库状态无关的失败。Linux / macOS 的覆盖在 CI
+# （.github/workflows/check.yml 的 linux / macos 任务），本地只提示一句。
 
 set -u
 
@@ -24,6 +25,15 @@ root="$(git -c core.quotepath=false rev-parse --show-toplevel 2>/dev/null)" || {
     exit 0
 }
 cd "$root" || exit 0
+
+# 只在这几个平台跑（Git for Windows 的 bash 报 MINGW* / MSYS*）。
+case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*) ;;
+    *)
+        echo "pre-commit: 脚手架自检（check-tree.ps1）只在 Windows 上跑，跳过；Linux / macOS 由 CI 覆盖。" >&2
+        exit 0
+        ;;
+esac
 
 checker="$root/scripts/check-tree.ps1"
 if [ ! -f "$checker" ]; then

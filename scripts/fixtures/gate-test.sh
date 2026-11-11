@@ -21,6 +21,12 @@ trap 'rm -rf "$TMP"' EXIT
 pass=0; fail=0
 ok()  { printf '  ok   %s\n' "$1"; pass=$((pass + 1)); }
 no()  { printf '  FAIL %s\n' "$1"; fail=$((fail + 1)); }
+# 原地替换。不能用 `sed -i`：BSD（macOS 自带）的 -i 必须带备份后缀，
+# 写成 `sed -i '...' file` 在 macOS 上直接报 invalid command code。
+subst() { # $1=文件 $2=sed 脚本
+    sed "$2" "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+}
+
 has() { if printf '%s' "$2" | grep -qF -- "$1"; then ok "$3"; else no "$3"; fi; }
 not() { if printf '%s' "$2" | grep -qF -- "$1"; then no "$3"; else ok "$3"; fi; }
 
@@ -121,7 +127,7 @@ out="$(run_staged "$P")"
 not "但它不存在" "$out" "一格两个路径都真实存在时不报错"
 
 echo "== G-arch-2: 一格里的第二个路径不存在仍要报 =="
-sed -i 's|`src/a/x.sh` + `src/b/y.sh`|`src/a/x.sh` + `src/b/nope.sh`|' "$P/docs/architecture.md"
+subst "$P/docs/architecture.md" 's|`src/a/x.sh` + `src/b/y.sh`|`src/a/x.sh` + `src/b/nope.sh`|'
 ( cd "$P" && git add -A ) >/dev/null 2>&1
 out="$(run_staged "$P")"
 has "但它不存在" "$out" "第二段不存在时照样拦下（修复不能变成静默忽略）"
@@ -129,7 +135,7 @@ has "但它不存在" "$out" "第二段不存在时照样拦下（修复不能�
 echo "== G-arch-3: 相对段按上一段目录解析 =="
 mkdir -p "$P/src/c/d"; printf 'x\n' > "$P/src/c/d/one.sh"; printf 'x\n' > "$P/src/c/d/two.sh"
 # 先把 G-arch-2 的坏行改回来，再加一行「绝对路径 + 相对名」
-sed -i 's|`src/a/x.sh` + `src/b/nope.sh`|`src/a/x.sh` + `src/b/y.sh`|' "$P/docs/architecture.md"
+subst "$P/docs/architecture.md" 's|`src/a/x.sh` + `src/b/nope.sh`|`src/a/x.sh` + `src/b/y.sh`|'
 printf '| c | `src/c/d/one.sh` + `two.sh` | 相对段 |\n' >> "$P/docs/architecture.md"
 ( cd "$P" && git add -A ) >/dev/null 2>&1
 out="$(run_staged "$P")"
@@ -189,7 +195,7 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 has "docs/nope.md" "$out" "指向不存在文件的相对路径被报出来"
 # 围栏代码块里的路径不算引用（示例命令常出现不存在的路径）
 printf '\n```bash\ncat docs/nope.md\n```\n' >> "$P/AGENTS.md"
-sed -i 's|见 `docs/nope.md`。|见 `docs/commands.md`。|' "$P/AGENTS.md"
+subst "$P/AGENTS.md" 's|见 `docs/nope.md`。|见 `docs/commands.md`。|'
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 not "docs/nope.md" "$out" "围栏代码块里的路径不检查、改对之后不报"
 # 带占位符的示例路径不检查
@@ -207,7 +213,7 @@ has "没有" "$out" "只写 Supersedes、旧篇没写 Superseded-By → 报"
 printf '# 甲\n\nStatus: accepted\nSuperseded-By: ADR-0002\n' > "$P/docs/adr/0001-a.md"
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 has "应为 superseded" "$out" "写了 Superseded-By 却仍是 accepted → 报"
-sed -i 's/^Status: accepted$/Status: superseded/' "$P/docs/adr/0001-a.md"
+subst "$P/docs/adr/0001-a.md" 's/^Status: accepted$/Status: superseded/'
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 not "[x]" "$out" "两边互指且状态正确 → 通过"
 # 引用了不存在的编号
@@ -309,7 +315,7 @@ not "@scope/pkg@1.2.0" "$out" "npm 包名不是断链"
 not "skin/tokens.css" "$out" "子目录简称能按后缀解析到"
 not "web/app.py" "$out" "模块属性只判文件部分，文件在就不报"
 # 负向：把简称改成一个确实不存在的前缀，仍要报（后缀解析不能变成万能放行）
-sed -i 's|`skin/tokens.css`（真实路径|`nope/tokens.css`（真实路径|' "$P/AGENTS.md"
+subst "$P/AGENTS.md" 's|`skin/tokens.css`（真实路径|`nope/tokens.css`（真实路径|'
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 has "nope/tokens.css" "$out" "后缀解析对不上的仍要报"
 
@@ -341,7 +347,7 @@ plan_text T1 1 > "$P/tasks/2026-01-02-x/plan.md"
 out="$(run_staged "$P")"
 has "「目标」为空" "$out" "空目标被报出来"
 # 反向：填上就不该报
-sed -i 's/^- \*\*目标\*\*:$/- **目标**: 写清楚了/' "$P/tasks/2026-01-02-x/plan.md"
+subst "$P/tasks/2026-01-02-x/plan.md" 's/^- \*\*目标\*\*:$/- **目标**: 写清楚了/'
 ( cd "$P" && git add -A ) >/dev/null 2>&1
 out="$(run_staged "$P")"
 not "「目标」为空" "$out" "填上目标后不再报"

@@ -217,7 +217,7 @@ powershell -ExecutionPolicy Bypass -File scripts\scaffold-update.ps1 ..\my-proje
 
 这个**更新器**需要 bash 4 以上（macOS 自带的是 3.2，用 `brew install bash` 装的那个）。**生成出来的项目不需要**——`scripts/check-gates.sh` 只用 bash 3.2 就有的语法，macOS 上 `/bin/sh` 直接能跑（CI 的 macos 任务就是在验这条）。
 
-改了这个脚本要跑它自己的验收：`bash scripts/fixtures/update-test.sh`（约 230 秒，55 项断言：冲突现场、脏树、裁决、并集、基线阈值、adopt、闸门计数、机制文件、MANIFEST / JSON、`--quiet`）。闸门本身另有 `bash scripts/fixtures/gate-test.sh`（约 270 秒，71 项：规模底线含跨提交累计、空索引豁免与模板目录排除、文档断链、gitignore、产物与后缀解析、ADR 互链、决策锚点、模块表一格多路径、seam 措辞一致性、目标必填、纯重命名豁免、拍平归档、journal 去向）。
+改了这个脚本要跑它自己的验收：`bash scripts/fixtures/update-test.sh`（约 230 秒，55 项断言：冲突现场、脏树、裁决、并集、基线阈值、adopt、闸门计数、机制文件、MANIFEST / JSON、`--quiet`）。改了 `init.*` 的名字校验要跑 `bash scripts/fixtures/name-test.sh`（19 项：同一张名字表分别喂给两个脚本，接受/拒绝必须一致；没有 PowerShell 的机器会跳过）。闸门本身另有 `bash scripts/fixtures/gate-test.sh`（约 270 秒，71 项：规模底线含跨提交累计、空索引豁免与模板目录排除、文档断链、gitignore、产物与后缀解析、ADR 互链、决策锚点、模块表一格多路径、seam 措辞一致性、目标必填、纯重命名豁免、拍平归档、journal 去向）。
 
 ## 自检
 
