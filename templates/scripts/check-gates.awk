@@ -415,11 +415,19 @@ function count_listitems(text,   n, i, c) {
 
 # 结果条目：列表项，但**不是标签行**——`- 未运行的检查及原因:` 这种以冒号结尾的是
 # 让人去填的小标题，不是一条结果。只看「有没有列表项」会被模板里这一行骗过去。
-function count_result_items(text,   n, i, c) {
+function count_result_items(text,   n, i, c, t) {
     n = split(text, ROWS, "\n"); c = 0
     for (i = 1; i <= n; i++) {
         if (ROWS[i] !~ /^[[:space:]]*([-*+][[:space:]]+|(（|\()?[0-9]+([.]|、|\)|）)[[:space:]]*)[^[:space:]]/) continue
         if (ROWS[i] ~ /(:|：)[[:space:]]*$/) continue
+        # 占位符不算「有结果」：`- TODO`、`- 无`、`- 未运行的检查及原因: 无` 都是
+        # 照抄模板就能出现的行，算进来的话「验证结果非空」这条检查等于没有。
+        t = ROWS[i]
+        sub(/^[[:space:]]*([-*+][[:space:]]+|(（|\()?[0-9]+([.]|、|\)|）)[[:space:]]*)/, "", t)
+        sub(/^[[:space:]]*/, "", t)
+        if (is_placeholder(t)) continue
+        if (t ~ /^[^:：]*[:：][[:space:]]*$/) continue
+        if (t ~ /^\*\*(未运行的检查|没跑|未运行)[^*]*\*\*[[:space:]]*[:：]?[[:space:]]*$/) continue
         # 模板自带的固定字段不是「验证结果」：`- 返工: 0 次` 只要照抄模板就会出现，
         # 算进来的话这一节永远非空，「没有一行结果」这条检查就废了。
         if (ROWS[i] ~ /^[[:space:]]*[-*+][[:space:]]*(返工|被打回)[[:space:]]*[:：]/) continue
@@ -533,7 +541,12 @@ function diff_range_filled(   t, n, A, i, l, v) {
 function related_has_path(   i, n, out) {
     n = field_block("相关文件")
     if (n <= 0) return 0
-    out = ""
+    # 第 1 行是字段行本身：`- **相关文件**: src/a.sh` 这种写在同一行的也要算。
+    out = field_value("相关文件")
+    sub(/<!--.*-->/, "", out)
+    gsub(/`/, "", out)
+    gsub(/[[:space:]]/, "", out)
+    if (out != "" && (index(out, "/") > 0 || index(out, "\\") > 0 || out ~ /\.[A-Za-z0-9]+$/)) return 1
     for (i = 2; i <= n; i++) {
         out = B[i]
         sub(/^[[:space:]]*[-*+][[:space:]]*/, "", out)
@@ -586,7 +599,7 @@ function plan_check(   tier, type, n, filled, hy, t) {
     else {
         t = section_text("确认")
         if (count_checkboxes(t, 1) == 0)
-            V("「## 确认」里一条确认项都没有（照模板抄 6 条；确实不需要就写明为什么）")
+            V("「## 确认」里一条确认项都没有。照模板抄下来逐条勾选；确实不适用的条目**保留**并把理由写在条目后面（`- [x] 只改一个文件——本次只动一个函数`），不要删掉整节")
         n = count_checkboxes(t, 0)
         if (n != 0) V("「## 确认」还有 " n " 项没勾")
     }
@@ -783,7 +796,7 @@ function slice_check(   type, tier, prio, st, n, t) {
     else {
         t = section_text("确认")
         if (count_checkboxes(t, 1) == 0)
-            V("「## 确认」里一条确认项都没有（照模板抄；确实不需要就写明为什么）")
+            V("「## 确认」里一条确认项都没有。照模板抄下来逐条勾选；确实不适用的条目**保留**并把理由写在条目后面，不要删掉整节")
         n = count_checkboxes(t, 0)
         if (n != 0) V("「## 确认」还有 " n " 项没勾")
     }
@@ -859,12 +872,41 @@ function trim(s) {
     return s
 }
 
+# 百分号解码：CommonMark 允许 `%XX`。只处理 `%20` 的话，中文文件名
+# （`docs/%E6%88%91.md`）会被判成断链。按字节解成对应字符即可——我们只拿它
+# 跟文件系统比，不关心它是不是合法 UTF-8 序列。
+function pct_decode(s,   out, i, hex, n, b) {
+    out = ""
+    n = length(s)
+    for (i = 1; i <= n; i++) {
+        if (substr(s, i, 1) == "%" && i + 2 <= n &&
+            substr(s, i + 1, 2) ~ /^[0-9A-Fa-f][0-9A-Fa-f]$/) {
+            hex = substr(s, i + 1, 2)
+            b = hex_val(hex)
+            out = out sprintf("%c", b)
+            i += 2
+        } else {
+            out = out substr(s, i, 1)
+        }
+    }
+    return out
+}
+
+function hex_val(h,   i, v, d) {
+    v = 0
+    for (i = 1; i <= 2; i++) {
+        d = index("0123456789abcdef", tolower(substr(h, i, 1)))
+        v = v * 16 + (d - 1)
+    }
+    return v
+}
+
 function emit_link(file, s,   last, t, ext, had_pct) {
     if (s == "") return
     # `%20` 是 URL 编码的空格（CommonMark 里合法）。先解码，否则含空格的真路径
     # 会被下面「含空格 = 不是路径」那条误判成断链。
     had_pct = 0
-    if (index(s, "%20") > 0) { gsub(/%20/, " ", s); had_pct = 1 }
+    if (index(s, "%") > 0) { s = pct_decode(s); had_pct = 1 }
     # 不是相对路径：外部 URL、锚点、绝对路径、带占位符/通配符的
     if (s ~ /^[a-zA-Z]+:\/\//) return
     if (s ~ /^#/) return
@@ -904,7 +946,10 @@ function emit_link(file, s,   last, t, ext, had_pct) {
     sub(/:[0-9]+$/, "", s)
     sub(/:[A-Za-z_][A-Za-z0-9_]*$/, "", s)
     if (s == "") return
-    if (index(s, "/") == 0) return
+    # 不带 `/` 的引用也要查，只要它像个文件名（有扩展名）：`` `NOTHERE.md` `` 是断链，
+    # `plan.md` 这类同目录简写也一样。纯词（`README` 之类）仍然放过——它们多半是
+    # 正文里提到的名字，不是路径。
+    if (index(s, "/") == 0 && s !~ /\.[A-Za-z0-9]+$/) return
 
     # **只查认得扩展名的引用。** 这一条同时挡掉模块属性（`env_util.require_env`）、
     # 常量引用（`x.KINDS`）、npm 包名（`@scope/pkg@1.2.0`）、点号表达式（`.is_readonly(`）
@@ -912,8 +957,9 @@ function emit_link(file, s,   last, t, ext, had_pct) {
     # 代价：项目用了列表外的后缀时查不到；加后缀比加特例便宜。
     last = s
     sub(/[\/]+$/, "", last)
-    # 裸域名（`youtu.be/`）：去掉尾斜杠后没有内部 `/`，不是相对路径
-    if (index(last, "/") == 0) return
+    # 裸域名（`youtu.be/`）：去掉尾斜杠后没有内部 `/`，不是相对路径。
+    # 但**根级文件名**（`NOTHERE.md`）要查——用扩展名区分这两种。
+    if (index(last, "/") == 0 && last !~ /\.[A-Za-z0-9]+$/) return
     sub(/.*\//, "", last)
     ext = tolower(last)
     if (ext !~ /\./) return
@@ -921,7 +967,8 @@ function emit_link(file, s,   last, t, ext, had_pct) {
     if (!(ext in LINK_EXT)) return
     # 去掉行尾的标点（中文句读紧跟在反引号外的情形）
     sub(/[，。；：、）)]+$/, "", s)
-    if (s == "" || index(s, "/") == 0) return
+    if (s == "") return
+    if (index(s, "/") == 0 && s !~ /\.[A-Za-z0-9]+$/) return
     print file "\t" s
 }
 
@@ -950,6 +997,11 @@ function adr_check(   i, j, end, l, ll, id, ids, n, k, r, t, have, fence) {
             # 键名大小写不敏感：`superseded-by:` / `Supersedes:` 都是同一个字段。
             # 只认一种写法等于给「写歪一格」开后门——互指检查会静默不触发。
             ll = tolower(l)
+            # 加粗写法 `- **Status**: accepted` 也要认：去掉行首列表符号与 `**`，
+            # 否则三条 ADR 检查（存在性 / 互指 / 状态）会一起静默跳过。
+            sub(/^[ \t]*[-*+][ \t]+/, "", ll)
+            gsub(/\*\*/, "", ll)
+            ll = trim(ll)
 
             if (match(ll, /superseded-by:[ \t]*adr-[0-9][0-9][0-9][0-9]/)) {
                 # 从小写那份里取编号：原行可能是 `adr-0002`，用 /ADR-/ 剥会剥不掉，

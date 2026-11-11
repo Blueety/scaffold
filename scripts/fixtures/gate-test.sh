@@ -718,6 +718,40 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
 not "无法可信地物化" "$out" "恢复标记后闸门正常工作"
 if [ "$rc" -eq 0 ]; then ok "恢复标记后退出码回到 0"; else no "恢复标记后退出码回到 0（实际 $rc）"; fi
 
+echo "== G-fw: 全角字母与 tab 注释 =="
+P="$TMP/fw1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/src" "$P/scripts"
+printf 'x = "[\357\274\244EBUG-1]"\n' > "$P/src/fwD.js"
+printf 'x = "[D\357\274\245BUG-2]"\n' > "$P/src/fwE.js"
+printf 'x = "[DEBU\357\274\247-3]"\n' > "$P/src/fwG.js"
+printf 'grep -q foo f\t# [DEBUG-tab]\n' > "$P/src/tabcomment.js"
+printf "grep -E 'foo|\\[DEBUG-' src/\n" > "$P/scripts/squote.sh"
+out="$(staged_run "$P")"
+has "fwD.js" "$out" "全角 D 也要拦"
+has "fwE.js" "$out" "全角 E 也要拦"
+has "fwG.js" "$out" "全角 G 也要拦"
+has "tabcomment.js" "$out" "tab 后的行尾注释里的 marker 也要报"
+not "squote.sh" "$out" "单引号里的 | 不是分隔符（工具行豁免）"
+
+echo "== G-adr-bold: 加粗字段 / 根级断链 / 百分号 / 验证结果占位符 =="
+P="$TMP/adb"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/docs/adr" "$P/docs"
+printf '# 甲\n\n- **Status**: accepted\n' > "$P/docs/adr/0001-a.md"
+printf '# 乙\n\n- **Status**: accepted\n- **Supersedes**: ADR-0099\n' > "$P/docs/adr/0002-b.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "ADR-0099" "$out" "加粗的 Supersedes 也要检查引用的文件是否存在"
+
+P="$TMP/adb2"; new_project "$P" || { echo "建项目失败"; exit 2; }
+printf '\n参见 `NOTHERE.md`。\n' >> "$P/AGENTS.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "NOTHERE.md" "$out" "不带 / 的根级引用也要查断链"
+
+P="$TMP/adb3"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/docs" && echo x > "$P/docs/我 的.md"
+printf '\n[看](docs/%%E6%%88%%91%%20%%E7%%9A%%84.md)\n' >> "$P/docs/commands.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+not "我 的" "$out" "百分号编码的中文文件名不该被误报断链"
+
 echo "== G-comment: 注释里的 marker 不算命令参数 =="
 P="$TMP/cm1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
