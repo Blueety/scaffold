@@ -1,0 +1,11 @@
+#!/bin/sh
+#
+# 合并提交也要过闸门。git 在 merge 时**不调用** pre-commit，只调用
+# pre-merge-commit（有冲突解决、需要新建提交时）。没有这个文件，
+# `git merge` 进来的一切都不会被检查——实测把 pre-commit 改成永远失败，
+# merge / cherry-pick / rebase 照样成功。
+#
+# cherry-pick / rebase / am 没有钩子入口，只能靠 CI 或 pre-push 兜。
+#
+root="$(git -c core.quotepath=false rev-parse --show-toplevel 2>/dev/null)" || exit 0
+exec "$root/.githooks/pre-commit"

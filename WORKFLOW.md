@@ -678,6 +678,8 @@ scripts/check-gates.sh --staged     # 检查索引内容（pre-commit 钩子用�
 
 它随项目分发，并在 `git init` 后被 `core.hooksPath` 挂成 pre-commit 钩子——所以闸门 B 是**自动**过的，不靠自觉。临时绕过用 `git commit --no-verify`。
 
+覆盖范围要说清：`git commit` 走 `.githooks/pre-commit`，`git merge` 走 `.githooks/pre-merge-commit`（两者是同一份检查）；`cherry-pick` / `rebase` / `am` **不触发任何钩子**，那三种操作之后补跑一次全量自查，或者把闸门架上 CI。
+
 `--staged` 检查的是**索引里的内容**，不是工作区：「先 `git add` 了坏版本、事后又把文件改好」不会放行。任务目录只挑这次改动涉及的那些，其余检查（闸门 B、架构）和全量自查同范围。
 
 `--staged` 还做一件全量自查做不了的事：数这个任务**累计**改了几个 `$MODULE_ROOT` 下的文件（从 `plan.md` 进入历史的那次提交算起），**≥ 4 而没有 T2 / T3 的声明就拦下**。这是 6 条信号里唯一可数的「文件数」，也是 T0 / T1 的档位声明不再等人确认之后的机械底线——不打扰的前提是别把 T2 的活说成 T1。

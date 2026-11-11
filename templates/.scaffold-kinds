@@ -12,6 +12,7 @@
 # 加一行 = 改一次所有项目的同步行为，改之前想清楚。
 
 mechanism .githooks/pre-commit
+mechanism .githooks/pre-merge-commit
 mechanism .scaffold-kinds
 mechanism scripts/check-gates.sh
 mechanism scripts/check-gates.awk

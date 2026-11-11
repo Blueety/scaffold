@@ -104,13 +104,27 @@ usage() {
 # 用 -a 强制当文本扫，多花的代价是二进制文件里可能命中同样的字节，所以改成
 # **按后缀排除**（图片 / 压缩包 / 字体 / 快照），而不是让 git 猜。
 #
-# 变体也认：全角括号 `［DEBUG-］`、零宽字符插在中间（`[DEBU\u200bG-`）、
+# 变体也认：全角括号 `［DEBUG-］`、零宽字符插在任意位置（`[DEBU\u200bG-`、`[DEBUG\u200b-`）、
 # 全角连字符。这些都是「看起来像但不是」，而闸门的价值就在于不给它留后门。
 # 清理脚本里写着 `grep '[DEBUG-'` 不算残留——那行本身是找标记的工具
 # （`xargs grep`、`if grep -q`、`git grep` 这些形态都认）。
+# 删掉零宽字符再匹配。用「模式里给插入点留空位」的办法是堵不完的：
+# `.{1,6}G.{0,4}-` 只覆盖了 DEBU 与 G 之间、G 与 - 之间；`[DEBUG\u200b-`
+# 这种插在 G 后面的照样溜过去（实测过）。先把不可见字符本身删掉，判据就只剩一种。
+strip_zw() {
+    local -a z=($'\xe2\x80\x8b' $'\xe2\x80\x8c' $'\xe2\x80\x8d' $'\xe2\x80\x8e' $'\xe2\x81\xa0' $'\xef\xbb\xbf')
+    local -a a=() c
+    for c in "${z[@]}"; do a+=(-e "s|$c||g"); done
+    sed "${a[@]}"
+}
+
 check_gate_b() {
     local staged="$1" root="$2" hits
-    local -a pat=(-e '\[DEBUG-' -E -e '［DEBUG[-－]' -e '\[DEBU.{1,6}G.{0,4}-')
+    # 预筛必须放宽到 `[DE`：零宽字符可能插在 `DEBU` 中间（`[DE\u200bBUG-`），
+    # 原始字节里连 `[DEB` 都不连续。用窄模式预筛等于第一步就漏掉，后面判什么都看不到。
+    # 误报由后面的窄判据兜住（去零宽后必须真的是 `[DEBUG-`）。
+    local -a pat=(-E -e '\[DE' -e '［DE')
+    local -a narrow=(-E -e '\[DEBUG-' -e '［DEBUG[-－]' -e '\[DEBU.{1,6}G.{0,4}-')
     local -a skip=(
         ':(exclude,icase)*.md'
         ':(exclude)scripts/check-gates.sh' ':(exclude)scripts/check-gates.awk'
@@ -144,13 +158,20 @@ check_gate_b() {
                 ! -iname '*.ico' ! -iname '*.webp' ! -iname '*.pdf' ! -iname '*.zip' \
                 ! -iname '*.gz' ! -iname '*.svgz' ! -iname '*.woff' ! -iname '*.woff2' \
                 ! -iname '*.ttf' ! -iname '*.otf' ! -iname '*.eot' \
-                -exec grep -H -a -i -n -E '\[DEBUG-|［DEBUG[-－]|\[DEBU.{1,6}G.{0,4}-' {} + 2>/dev/null | sed 's|^\./||' || true)"
+                -exec grep -H -a -i -n -E '\[DE|［DE' {} + 2>/dev/null | sed 's|^\./||' || true)"
         fi
+    fi
+    if [ -n "$hits" ]; then
+        hits="$(printf '%s\n' "$hits" | strip_zw | grep "${narrow[@]}" 2>/dev/null || true)"
     fi
     # 一行本身在「找这个标记」（清理脚本、文档里的说明命令）不算残留。
     # 判据窄：整行以 grep / rg / ag / ack 开头，或含 `grep ... DEBUG-`——真调试埋点
     # 不会长这样。
-    hits="$(printf '%s\n' "$hits" | grep -v -E '^[^:]*:[0-9]+:.*(grep|rg|ag|ack)[^:]*\[DEBUG' 2>/dev/null || true)"
+    # 豁免必须锚定在**行首的命令位置**：`console.log("tag", "[DEBUG-x]")` 里
+    # 有个 `ag`，用子串匹配就把整行豁免了（实测能过）。判据是「第一个词就是
+    # 搜索命令」，允许前面有 `xargs` / `if` / `git` 这类前缀。
+    hits="$(printf '%s\n' "$hits" |
+        grep -v -E '^[^:]*:[0-9]+:[[:space:]]*((xargs|sudo|time|git)[[:space:]]+)*[-[:alnum:]_./ ]*(grep|rg|ag|ack)([[:space:]]|$)'         2>/dev/null || true)"
     if [ -n "$hits" ]; then
         printf '%s\n' "$hits" | while IFS= read -r line; do
             printf '  [x] 闸门 B: %s —— 调试标记残留\n' "$line"
@@ -406,7 +427,11 @@ task_has_started() {
     # 文件、目录、非 .md 都算：`handoff.md` 和 `research/` 同样说明这个任务在推进。
     for p in "$d"/*; do
         [ -e "$p" ] || continue
-        case "${p##*/}" in prd.md|journal.md|review.md) ;; *) return 0 ;; esac
+        # plan.md 也算「规划产物」：计划落盘（3.5）之后才派执行者（3.5b）、
+        # 才有代码，审查（3.8）在代码之后。把 plan.md 当成「已开工」会让
+        # 「先提交计划、再提交代码」这条正常路径直接卡死——而卡死的结果不是补审查，
+        # 是有人不提交计划，检查反而更弱。
+        case "${p##*/}" in prd.md|plan.md|journal.md|review.md) ;; *) return 0 ;; esac
     done
     # 裁决单本身在（哪怕还空着）也算开工：它出现就说明任务已经走到 3.8 了。
     # 少了这一条，`prd + journal(状态空) + 空 review.md` 会因为「没开工」跳过
@@ -436,32 +461,55 @@ check_review() {
 # 本次提交的代码文件，是否属于某个「声明了 T2/T3 但还没裁决单」的在飞任务。
 # 只认 plan.md 的「相关文件」——那是唯一把文件和任务连起来的机器可读字段。
 check_review_by_scope() {
-    local root="$1" d f rel hit
-    local -a changed=()
+    local root="$1" d f rel hit t plan_txt review_ok
+    local -a changed=() dirs=()
+
     while IFS= read -r f; do
         [ -n "$f" ] && changed+=("$f")
     done < <(git -C "$root" -c core.quotepath=false diff --cached --name-only --diff-filter=ACMRD -- "${MODULE_ROOT%/}" 2>/dev/null)
     [ "${#changed[@]}" -gt 0 ] || return 0
 
-    # plan.md / review.md 一律从**索引物化树**读（--staged 时 cwd 就是它）：
-    # 读工作区的话，「未跟踪的空 review.md」或「未暂存地改掉计划的文件列表」
-    # 都能让这条检查静默放行，而那正是它要防的东西。
-    for d in tasks/*/; do
-        d="${d%/}"
-        case "$d" in tasks/_template|tasks/_archive) continue ;; esac
-        [ -f "$d/plan.md" ] || continue
-        task_is_high_tier "$d" || continue
-        # 空裁决单不算有：`-s` 才认（一份 0 字节的 review.md 顶不了审查）
-        [ -s "$d/review.md" ] && continue
+    # 候选任务取 **HEAD ∪ 索引 ∪ 工作区** 的并集。
+    # 只看索引物化树的话：计划不暂存、被 `git rm --cached`、被 skip-worktree、
+    # 或者本次提交里顺手归档，任务就从视野里消失，它范围内的代码可以免审进主干
+    # （四条都实跑过）。任务一旦声明过 T2/T3，就别想靠「这次没带上它」躲开审查。
+    while IFS= read -r f; do
+        case "$f" in tasks/*/plan.md) dirs+=("${f%/plan.md}") ;; esac
+    done < <(git -C "$root" -c core.quotepath=false ls-tree -r --name-only HEAD 2>/dev/null;
+             git -C "$root" -c core.quotepath=false ls-files 2>/dev/null;
+             find tasks -mindepth 2 -maxdepth 2 -name plan.md 2>/dev/null)
+
+    for d in ${dirs[@]+"${dirs[@]}"}; do
+        case "$d" in tasks/_template|tasks/_archive/*|tasks/_template/*) continue ;; esac
+        # 计划取「索引版优先，其次 HEAD，最后工作区」——三处都看，改哪一处都逃不掉。
+        plan_txt="$(task_plan_text "$root" "$d")"
+        [ -n "$plan_txt" ] || continue
+        printf '%s\n' "$plan_txt" | awk -v kind=tier -f "$AWK_PROG" - 2>/dev/null | grep -qx yes || continue
+        # 非空裁决单：同样三处取并集（写成 0 字节不算）
+        review_ok=0
+        for f in "$d/review.md"; do
+            if git -C "$root" cat-file -e ":$f" 2>/dev/null &&
+               [ -n "$(git -C "$root" cat-file blob ":$f" 2>/dev/null)" ]; then review_ok=1; fi
+            if git -C "$root" cat-file -e "HEAD:$f" 2>/dev/null &&
+               [ -n "$(git -C "$root" cat-file blob "HEAD:$f" 2>/dev/null)" ]; then review_ok=1; fi
+            [ -f "$root/$f" ] && [ -s "$root/$f" ] && review_ok=1
+        done
+        [ "$review_ok" -eq 1 ] && continue
+
         local -a rels=()
         while IFS= read -r rel; do
             [ -n "$rel" ] && rels+=("$rel")
-        done < <(awk -v kind=related -f "$AWK_PROG" "$d/plan.md" 2>/dev/null)
+        done < <(printf '%s\n' "$plan_txt" | awk -v kind=related -f "$AWK_PROG" - 2>/dev/null)
         [ "${#rels[@]}" -gt 0 ] || continue
         hit=""
         for f in "${changed[@]}"; do
             for rel in "${rels[@]}"; do
                 rel="${rel%/}"
+                case "$rel" in
+                    # glob 当通配符展开等于让人用 `src/*` 声明一切——但它也没法用作
+                    # 归属判据（`case` 里会被当模式）。直接跳过并留一条提示。
+                    *'*'*|*'?'*|*'['*) continue ;;
+                esac
                 case "$f" in
                     "$rel"|"$rel"/*) hit="$f"; break ;;
                 esac
@@ -469,8 +517,18 @@ check_review_by_scope() {
             [ -n "$hit" ] && break
         done
         [ -n "$hit" ] || continue
-        fail "$d: 本次提交的 $hit 写在这个任务的「相关文件」里，而它是 T2/T3 且还没有 review.md —— 独立审查要在代码进主干之前做完（3.8）。如果这些改动不属于这个任务，把它们拆到自己的提交里"
+        fail "$d: 本次提交的 $hit 写在这个任务的「相关文件」里，而它是 T2/T3 且还没有非空的 review.md —— 独立审查要在代码进主干之前做完（3.8）。如果这些改动不属于这个任务，把它们拆到自己的提交里（先出裁决单再提交代码，或把计划里的文件范围写准）"
     done
+}
+
+# 一个任务计划文本的「最佳可得版本」：索引 → HEAD → 工作区。
+# 三处取并集的原因见 check_review_by_scope 里的注释。
+task_plan_text() {
+    local root="$1" d="$2" t
+    t="$(git -C "$root" cat-file blob ":$d/plan.md" 2>/dev/null)"
+    [ -n "$t" ] || t="$(git -C "$root" cat-file blob "HEAD:$d/plan.md" 2>/dev/null)"
+    [ -n "$t" ] || t="$(cat "$root/$d/plan.md" 2>/dev/null)"
+    printf '%s' "$t"
 }
 
 # 任务档位是否落在 T2/T3：plan.md / prd.md / 切片里任何一处声明了 T2/T3 就算。
@@ -646,7 +704,7 @@ arch_path_exists() { [ -e "$1/$2" ]; }
 # 「整个 src 当一个模块」，子目录不再逐个要求；写具体子目录，则新加的子目录必须进表。
 check_architecture() {
     local staged="$1" root="$2"
-    local doc="docs/architecture.md"
+    local doc="docs/architecture.md" check_doc="docs/architecture.md"
 
     if [ "$staged" -eq 1 ]; then
         # 暂存模式下 cwd 是索引物化出的整棵树，表进了索引就是索引版本
@@ -654,8 +712,16 @@ check_architecture() {
         # 才退回工作区版本——否则会把「文件明明在仓库里」报成不存在。
         doc="$check_tree_tmp/docs/architecture.md"
         if [ ! -f "$doc" ]; then
-            mkdir -p "$check_tree_tmp/docs"
-            cp "$root/docs/architecture.md" "$doc" 2>/dev/null || rm -f "$doc"
+            # 只在「这个文件根本没进过版本库」时才看工作区（新项目第一次提交前的常见状态）。
+            # 索引里有删除记录（`git rm --cached` / `git rm`）时**必须**判「不存在」——
+            # 否则从索引里删掉架构表再提交，提交后的树里没有这个文件，闸门却报了「通过」。
+            if git -C "$root" cat-file -e "HEAD:$check_doc" 2>/dev/null ||
+               git -C "$root" cat-file -e ":$check_doc" 2>/dev/null; then
+                :
+            else
+                mkdir -p "$check_tree_tmp/docs"
+                cp "$root/docs/architecture.md" "$doc" 2>/dev/null || rm -f "$doc"
+            fi
         fi
     fi
 
@@ -753,6 +819,59 @@ check_architecture() {
     fi
 }
 
+# 校验「临时树里的内容 == 索引 blob」。不一致就返回 1（调用方中止）。
+# 用 `git hash-object --path=…` 而不是直接比字节：它走 clean 过滤器，与 git 建
+# 索引时的口径一致（core.autocrlf=true 的仓库里，物化出来的 CRLF 文件哈希仍等于
+# LF blob）。这既能容忍换行归一，又能抓出 smudge 造假。
+verify_materialized() {
+    local root="$1" tree="$2" mode sha path f bad=0
+    local -a paths=() shas=()
+
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        # 格式是 `<mode> <sha> <stage>\t<path>`：**三段空格 + 一个制表符**。
+        # 少剥一层的话 path 会带上 stage 数字与制表符，每个文件都被判「不存在」。
+        mode="${line%% *}"
+        line="${line#* }"; sha="${line%% *}"
+        path="${line#*$'\t'}"
+        [ "$path" != "$line" ] || continue            # 没有制表符：不是标准 ls-files -s 行
+        case "$mode" in 160000) continue ;; esac      # 子模块：没有 blob 可比
+        case "$path" in
+            *"
+"*) printf '  [!] 跳过含换行的路径：%s\n' "$path" >&2; continue ;;
+        esac
+        paths+=("$path"); shas+=("$sha")
+    done < <(git -C "$root" -c core.quotepath=false ls-files -s 2>/dev/null)
+
+    local i n="${#paths[@]}"
+    local -a missing=() forged=()
+    for ((i = 0; i < n; i++)); do
+        f="$tree/${paths[i]}"
+        if [ ! -f "$f" ]; then
+            missing+=("${paths[i]}")
+            continue
+        fi
+        local cur
+        cur="$(git -C "$root" hash-object --path="${paths[i]}" -- "$f" 2>/dev/null)"
+        [ "$cur" = "${shas[i]}" ] || forged+=("${paths[i]}")
+    done
+
+    if [ "${#missing[@]}" -gt 0 ] || [ "${#forged[@]}" -gt 0 ]; then
+        if [ "${#missing[@]}" -gt 0 ]; then
+            printf '  [x] 索引里有、物化树里没有（skip-worktree / 稀疏检出？）：\n' >&2
+            printf '        %s\n' "${missing[@]:0:10}" >&2
+        fi
+        if [ "${#forged[@]}" -gt 0 ]; then
+            printf '  [x] 物化出来的内容与索引 blob 不同（smudge 过滤器改写了内容？）：\n' >&2
+            printf '        %s\n' "${forged[@]:0:10}" >&2
+        fi
+        printf '  检查的内容必须等于提交的内容；请关掉相关过滤/标记后重试（--no-verify 不能），\n' >&2
+        printf '  或直接提交、再对结果跑一次全量自查。\n' >&2
+        bad=1
+    fi
+    [ "$bad" -eq 0 ]
+}
+
 # ---------------------------------------------------------------- 主流程
 
 main() {
@@ -810,6 +929,14 @@ main() {
             printf '  [x] 无法把 git 索引物化到临时目录（checkout-index 失败），--staged 中止\n' >&2
             exit 2
         fi
+        # 物化结果必须**逐条核对**：checkout-index 会跳过 skip-worktree（稀疏检出就靠
+        # 这个位）、smudge 过滤器还能在写出时改内容。两种情况下「检查的内容」不再等于
+        # 「提交的内容」——检查器看到坏 plan 被洗白、或整个任务从视野里消失，而提交照进。
+        # 宁可中止（exit 2），不要在一个不可信的副本上给出「通过」。
+        if ! verify_materialized "$root" "$check_tree_tmp"; then
+            printf '  [x] 无法可信地物化 git 索引（工作区与索引不一致，见上），--staged 中止\n' >&2
+            exit 2
+        fi
         cd "$check_tree_tmp" || exit 2
     else
         cd "$root" || exit 2
@@ -827,6 +954,10 @@ main() {
         hp="$(git -C "$root" config core.hooksPath 2>/dev/null)"
         if [ "$hp" != ".githooks" ]; then
             note "core.hooksPath 不是 .githooks（当前：${hp:-未设置}）：提交前闸门不会自动执行。跑一次 \`git config core.hooksPath .githooks\`。"
+        elif ! git -C "$root" cat-file -e :.githooks/pre-commit 2>/dev/null; then
+            # 钩子被删了但配置还指着它 —— 这时候「配置正确」是假象，闸门一次都不会跑。
+            # 只提示不够：这是**唯一**能发现「闸门整个没装」的地方。
+            fail "core.hooksPath 指向 .githooks，但 .githooks/pre-commit 不在索引里 —— 提交前闸门根本没有执行。恢复它（\`git checkout -- .githooks/\`）再继续"
         fi
     fi
 

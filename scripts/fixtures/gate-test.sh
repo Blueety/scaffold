@@ -580,6 +580,8 @@ mkdir -p "$P/src" "$P/scripts"
 # 全角括号 / 零宽字符 / -diff 属性 / 同名后缀 / 大写 .MD / 清理脚本
 printf 'x=1 # ［DEBUG-fw］\n' > "$P/src/fw.py"
 printf 'x=1 # [DEBU\342\200\213G-zw]\n' > "$P/src/zw.py"
+printf 'x=1 # [DEBUG\342\200\213-zw2]\n' > "$P/src/zw2.py"      # 插在 G 之后
+printf 'x=1 # [DEBUG\357\273\277-zw3]\n' > "$P/src/zw3.py"      # BOM
 printf 'x=1 # [DEBUG-diff]\n' > "$P/src/d.py"
 printf '*.py -diff\n' >> "$P/.gitattributes"
 printf 'x=1 # [DEBUG-suffix]\n' > "$P/src/my-check-gates.sh"
@@ -587,7 +589,9 @@ printf 'u=1 # [DEBUG-upper]\n' > "$P/src/UPPER.MD"
 printf 'grep -rn .\[DEBUG- src/\n' > "$P/scripts/clean-debug.sh"
 out="$(staged_run "$P")"
 has "fw.py" "$out" "全角括号的调试标记要拦"
-has "zw.py" "$out" "零宽字符插在中间的调试标记要拦"
+has "zw.py" "$out" "零宽字符插在 DEBU 与 G 之间的调试标记要拦"
+has "zw2.py" "$out" "零宽字符插在 G 与 - 之间的调试标记要拦"
+has "zw3.py" "$out" "BOM 插在中间的调试标记要拦"
 has "d.py" "$out" "「.gitattributes 标了 -diff」不能成为免死金牌"
 has "my-check-gates.sh" "$out" "同名后缀的文件不豁免（排除项要写精确路径）"
 not "UPPER.MD" "$out" "大写 .MD 是文档，不该当代码扫"
@@ -667,8 +671,16 @@ not "模块表里没有它" "$out" "src/./auth 与 src/auth 等价"
 P="$TMP/ex4"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-14-diff"
 plan_text T1 > "$P/tasks/2026-01-14-diff/plan.md"
+# 三行**全部**写「无」（纯文档任务的真实形态）——这里必须真的三行都改成「无」，
+# 只改一行的话测的是「至少一行有内容」这条旧路径。
+subst "$P/tasks/2026-01-14-diff/plan.md" 's|^- 新增文件: 无|- 新增文件: 无|; s|^- 修改文件: src/a.sh|- 修改文件: 无|'
 out="$(staged_run "$P")"
-not "预估 diff 范围" "$out" "预估 diff 三行写「无」不算空"
+not "预估 diff 范围" "$out" "预估 diff 三行全写「无」是合法写法（纯文档 / 纯配置任务）"
+
+plan_text T1 > "$P/tasks/2026-01-14-diff/plan.md"
+subst "$P/tasks/2026-01-14-diff/plan.md" 's|^- 新增文件: 无|- 新增文件:|; s|^- 修改文件: src/a.sh|- 修改文件:|; s|^- 删除文件: 无|- 删除文件:|'
+out="$(staged_run "$P")"
+has "预估 diff 范围" "$out" "三行值全空仍要拦（对照组）"
 
 # 档位注释里提到 T2 不能改变档位（也就不能换来规模豁免）
 P="$TMP/ex5"; new_project "$P" || { echo "建项目失败"; exit 2; }
@@ -678,6 +690,39 @@ subst "$P/tasks/2026-01-15-annot/plan.md" 's|^- \*\*档位\*\*: .*|- **档位**:
 for i in 1 2 3 4; do printf 'x\n' > "$P/src/z$i.py"; done
 out="$(staged_run "$P")"
 has "没有声明 T2/T3" "$out" "档位注释里提到 T2 不算声明，规模底线仍生效"
+
+echo "== G-idx: 检查内容必须等于提交内容 =="
+P="$TMP/idx1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-16-t2" "$P/src"
+plan_text T2 > "$P/tasks/2026-01-16-t2/plan.md"
+wip_commit "$P"
+# 索引里有、物化树里没有（skip-worktree 正是稀疏检出的实现方式）
+( cd "$P" && git update-index --skip-worktree README.md )
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
+has "无法可信地物化" "$out" "skip-worktree 让文件缺失时必须中止，不能静默跳过"
+if [ "$rc" -eq 2 ]; then ok "物化不可信时退出码是 2（环境问题，不是内容违规）"; else no "物化不可信时退出码是 2（实际 $rc）"; fi
+( cd "$P" && git update-index --no-skip-worktree README.md )
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
+not "无法可信地物化" "$out" "恢复标记后闸门正常工作"
+if [ "$rc" -eq 0 ]; then ok "恢复标记后退出码回到 0"; else no "恢复标记后退出码回到 0（实际 $rc）"; fi
+
+echo "== G-planonly: 只提交计划不该被 review 拦 =="
+P="$TMP/po1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-17-t2" "$P/src"
+plan_text T2 > "$P/tasks/2026-01-17-t2/plan.md"
+out="$(staged_run "$P")"
+not "review.md" "$out" "T2 只提交 plan.md（还没开工）不要求裁决单 —— 否则「先提交计划」这条路被堵死"
+
+echo "== G-scope: 审查归属取 HEAD ∪ 索引 ∪ 工作区 =="
+P="$TMP/su1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-18-t2" "$P/src"
+plan_text T2 > "$P/tasks/2026-01-18-t2/plan.md"
+wip_commit "$P"
+# 计划从索引里消失、只提交计划范围内的代码
+( cd "$P" && git rm -q --cached tasks/2026-01-18-t2/plan.md && printf 'echo a\n' > src/a.sh && git add src/a.sh )
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
+has "review.md" "$out" "计划被移出索引后，范围内的代码仍要求裁决单（HEAD 里还有那份计划）"
+( cd "$P" && git reset -q && git checkout -- tasks/2026-01-18-t2/plan.md 2>/dev/null )
 
 echo "== G-env: 模块根缺失与钩子丢失要说出来（只提示，不拦）=="
 P="$TMP/genv"; new_project "$P" || { echo "建项目失败"; exit 2; }
