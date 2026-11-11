@@ -232,8 +232,8 @@ check_links() {
     # 只用于**放行**，不用于报错——报错仍然要求精确匹配。
     #
     # 这段放在 awk 里而不是 bash：bash 的关联数组（`local -A`）是 4.0 才有的，
-    # 而 macOS 自带的 `/bin/sh` 是 bash 3.2，README 又让用户用 `sh scripts/check-gates.sh`
-    # 跑全量自查——用关联数组会让生成出来的项目在 macOS 上直接报错退出。
+    # 而 macOS 自带的 `/bin/sh` 是 bash 3.2（Ubuntu 上是 dash），生成出来的项目要能在这两种
+    # 环境里跑起来——用关联数组会让它在 macOS 上直接报错退出、在 dash 上根本解析不过。
     # awk 的数组在 3.2 与 5.x 上都一样，而且一次进程就够（按 ref 逐个起 grep 会慢一个量级）。
     local idx_tmp refs_tmp
     idx_tmp="$(mktemp "${TMPDIR:-/tmp}/gates-idx.XXXXXX")"

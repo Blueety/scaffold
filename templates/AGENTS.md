@@ -69,7 +69,7 @@
 - 修 bug 时：进入根因假设前，必须有一条已经实跑过、能对这个 bug 变红的命令（`skills/bug-fix/SKILL.md` 闸门 A）。
 - 写测试前：先把要测的 seam 写进 `plan.md` 的「## 测试 Seam」一节（T1 写完即继续；**T0 不建 plan**，seam 一行写在回复里；T2 / T3 随 plan 一次批准）。没写下来、或与 `plan.md` 不符的，停下来问。
 - 调试日志统一加 `[DEBUG-xxxx]` 前缀，提交前 grep 清干净。
-- 提交前闸门是**自动**的：`.githooks/pre-commit` 会跑 `scripts/check-gates.sh --staged`，检查 `[DEBUG-` 残留、`docs/architecture.md` 的模块表与实际目录是否对得上、**文档里写的相对路径是否真实存在**、**ADR 的 `Superseded-By` / `Supersedes` 是否互指**、`plan.md` 的档位/类型/闸门 A 字段、`journal.md` 的章节与验证结果、切片文件的字段、**T2 / T3 的 `review.md` 是否存在且填全**。被拦下就按提示补内容，**不要**用 `git commit --no-verify` 绕过。手动全量检查：`sh scripts/check-gates.sh`（Windows 上 `bash` 可能指向 WSL 的桩，改用 `sh`）。
+- 提交前闸门是**自动**的：`.githooks/pre-commit` 会跑 `scripts/check-gates.sh --staged`，检查 `[DEBUG-` 残留、`docs/architecture.md` 的模块表与实际目录是否对得上、**文档里写的相对路径是否真实存在**、**ADR 的 `Superseded-By` / `Supersedes` 是否互指**、`plan.md` 的档位/类型/闸门 A 字段、`journal.md` 的章节与验证结果、切片文件的字段、**T2 / T3 的 `review.md` 是否存在且填全**。被拦下就按提示补内容，**不要**用 `git commit --no-verify` 绕过。手动全量检查：`bash scripts/check-gates.sh`。Windows 的 PowerShell 里 `bash` 可能是 WSL 的桩（报错是一串 `?`），改用 Git 自带的 `sh scripts/check-gates.sh`；Ubuntu 上不要用 `sh`（那是 dash，跑不了 bash 脚本）。
 - 动手前先确认钩子真的挂上了：`git config core.hooksPath` 要输出 `.githooks`。这个设置在 `.git/config` 里，**clone 之后不会跟着来**——丢了钩子就不跑，闸门静默失效，而且没有任何提示。是空的话跑一次 `git config core.hooksPath .githooks`。
 - 提交前审查：T0 不审；T1 自己审；**T2 / T3 必须派一个全新的子 agent 审**（只给它 `prd.md`、`plan.md`、diff、相关规范，**不给它会话历史**），产出 `tasks/<日期>-<简述>/review.md`。轮次上限 2，超了升级给人。
 - 收到审查意见后按 `skills/receiving-review/SKILL.md` 逐条处理：改 / 不改+理由 / 不接受+反证，**没有第四种**；不能静默跳过任何一条。

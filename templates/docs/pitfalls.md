@@ -41,7 +41,7 @@
 
 - **现象**: 输出一串 `?????`，退出码 1——看着像「闸门有违规」，其实命令没执行到脚本
 - **原因**: PATH 里排第一的 `bash.exe` 是 `C:\Windows\System32\bash.exe`（WSL 的桩），它不认识 Windows 路径
-- **解决**: 用 Git 自带的 sh（同名桩没有顶掉它）：`sh scripts/check-gates.sh`；或在 Git Bash 里跑 `bash scripts/check-gates.sh`
+- **解决**: 在 Git Bash 里跑 `bash scripts/check-gates.sh`；或在 PowerShell 里用 Git 自带的 sh：`sh scripts/check-gates.sh`（**只在 sh 真是 bash 时**——Ubuntu 的 `/bin/sh` 是 dash，这个脚本用不了）
 
 ### PowerShell 里 `git commit` 的闸门提示是乱码
 
