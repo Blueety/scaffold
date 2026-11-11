@@ -51,7 +51,7 @@
 #
 #   - 只改代码的提交（--staged）：如果这次动的文件出现在某个 T2/T3 任务 plan.md 的
 #          「相关文件」里，而那个任务还没有非空的 review.md，拦下——这是「先提交代码、
-#          后补审查」的入口。计划与裁决单都取索引版本。
+#          后补审查」的入口。计划、prd、切片与裁决单都取 HEAD ∪ 索引 ∪ 工作区 的并集。
 #   - 任务目录里的文件名：只认 plan / prd / journal / review 与 NN-*.md（NN 1–2 位）；
 #          三位以上数字开头的按笔记算（只提示），其余报错——否则整份文件静默免检。
 #   - 索引物化可信性（仅 --staged）：物化后核对「每个索引文件都在、内容哈希等于 blob」。
@@ -204,13 +204,22 @@ check_gate_b() {
             }
             function is_search(t,   low) {
                 low = tolower(t)
-                # wrapper 的 option 可能带参数（`sudo -u root`、`git -C dir`、
-                # `xargs -I {}`），所以 `-opt` 后面再允许一个非选项词。
-                return low ~ /^[ \t]*(\([ \t]*)?((exec|command|xargs|sudo|time|env|git|nice|timeout|if|then|elif|while|until|!)[ \t]+(-[^ \t]+([ \t]+[^ \t]+)?[ \t]+|[A-Za-z_][A-Za-z0-9_]*=[^ \t]+[ \t]+)*)*([^ \t]*\/)?(grep|rg|ag|ack)([ \t]|$)/
+                # 三段前缀，任意组合、任意顺序：
+                #   1. 顶层 `VAR=value`（`FOO=1 grep`、`LC_ALL=C grep`）；
+                #   2. wrapper（`sudo`/`git`/`env`/`xargs`/...）；
+                #   3. wrapper 的 option，可能带参数（`sudo -u root`、`git -C dir`、
+                #      `xargs -I {}`）或者又是一段赋值（`env FOO=1 grep`）。
+                # 之前把赋值组只放进 wrapper 后面，`FOO=1 grep` 就不再豁免（实测）。
+                return low ~ /^[ \t]*(\([ \t]*)?([A-Za-z_][A-Za-z0-9_]*=[^ \t]+[ \t]+)*((exec|command|xargs|sudo|time|env|git|nice|if|then|elif|while|until|!)[ \t]+(-[^ \t]+([ \t]+[^ \t]+)?[ \t]+|[A-Za-z_][A-Za-z0-9_]*=[^ \t]+[ \t]+|[^ \t]+[ \t]+)*)*([^ \t]*\/)?(grep|rg|ag|ack)([ \t]|$)/
             }
             {
-                if (!match($0, /^(.+):[0-9]+:/)) { print; next }
-                s = substr($0, RLENGTH + 1)
+                # 取**第一个** `:数字:` 作分隔，不能贪婪：内容里带时间戳
+                # （`"[DEBUG-x]", "12:30:45"`）时，贪婪会把 marker 连同前半行
+                # 一起吞进「前缀」，真残留在归一化之前就被丢掉了。
+                # 路径本身带冒号（POSIX 合法）时，`src/a:b.js:1:` 的第一个候选
+                # 是 `src/a:b.js` 之后的 `:1:`，仍然正确。
+                if (!match($0, /:[0-9]+:/)) { print; next }
+                s = substr($0, RSTART + RLENGTH)
                 ns = norm(s)
                 if (ns !~ /\[DEBUG[ \t]*-/) next
                 n = 0; seg[0] = ""; q = ""
@@ -224,6 +233,13 @@ check_gate_b() {
                         continue
                     }
                     if (q != "") {
+                        # 双引号里 `\"` 是转义的引号，不结束字符串；单引号里反斜杠
+                        # 是字面量，不能吞（shell 里 `a\` + 引号就是两个字符）。
+                        if (q == "\"" && c == "\\") {
+                            seg[n] = seg[n] c substr(ns, i + 1, 1)
+                            i++
+                            continue
+                        }
                         seg[n] = seg[n] c
                         if (c == q) q = ""
                         continue
@@ -1167,6 +1183,18 @@ main() {
         # 检查的是**索引里的 mode**，这个跨平台有意义——Windows 上 worktree 的 +x
         # 没有意义，但把 `100644` 提交出去，别人 clone 后钩子就不执行。所以这段
         # 不按 uname 跳过。
+        # 工作区的 +x：索引 mode 对但工作区被 chmod -x 时（未暂存），git 也不会执行钩子。
+        # 只在 POSIX 上判断（Windows 没有这个概念）。
+        case "$(uname -s 2>/dev/null)" in
+            MINGW*|MSYS*|CYGWIN*) ;;
+            *)
+                for f in .githooks/pre-commit .githooks/pre-merge-commit; do
+                    [ -f "$root/$f" ] || continue
+                    [ -x "$root/$f" ] ||
+                        fail "$f 没有可执行位（工作区）—— git 会静默跳过它。跑 \`chmod +x $f\`"
+                done
+                ;;
+        esac
         for f in .githooks/pre-commit .githooks/pre-merge-commit; do
             [ -f "$root/$f" ] || continue
             if [ -n "$(git -C "$root" ls-files -s -- "$f" 2>/dev/null | awk '$1 != "100755"')" ]; then

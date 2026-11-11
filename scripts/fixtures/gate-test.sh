@@ -718,6 +718,17 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
 not "无法可信地物化" "$out" "恢复标记后闸门正常工作"
 if [ "$rc" -eq 0 ]; then ok "恢复标记后退出码回到 0"; else no "恢复标记后退出码回到 0（实际 $rc）"; fi
 
+echo "== G-prefix: 内容里有时间戳 / 双引号内转义 =="
+P="$TMP/px1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/src" "$P/scripts"
+printf 'console.log("[DEBUG-x]", "12:30:45");\n' > "$P/src/ts.js"
+printf 'grep -q "foo\\"|\\[DEBUG-" f\n' > "$P/scripts/esc2.sh"
+printf 'VAR=1 VAR2=2 grep -q x f\n' > "$P/scripts/assign2.sh"
+out="$(staged_run "$P")"
+has "ts.js" "$out" "内容里带时间戳不能把 marker 吞进前缀"
+not "esc2.sh" "$out" "反斜杠转义的引号不结束字符串"
+not "assign2.sh" "$out" "多个赋值前缀同样豁免"
+
 echo "== G-dash: 各类连字符与包装器参数 =="
 P="$TMP/ds1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
