@@ -58,7 +58,7 @@
 - 在只读分析末尾声明档位（一行）。**T0 / T1 是通知**——发完继续做，不等人回；**T2 / T3 的计划等你批准**（见 `docs/agents/任务分级.md` 的「人检查点与独立审查」），批准即授权这个规模，不再单独确认档位。
 - 计划保存到 `tasks/<日期>-<简述>/plan.md`（日期用当天 `YYYY-MM-DD`，简述用简短英文，如 `todo-title-search`）。
   计划包含：目标、涉及文件、实施步骤、验证命令、测试 seam、预估 diff 范围。**只有 T0 可以不落盘**；T1 / T2 / T3 都要落——实施由执行者子 agent 做，它只认 `plan.md`，对话里的计划传不过去。
-- **派执行者子 agent 实施（T1 / T2 / T3）**：写计划的人不实施。由规划者派一个**全新的子 agent** 按 `docs/agents/执行者.md` 实施，输入只给 `prd.md` + `plan.md` + 规范文件（`AGENTS.md`、`docs/architecture.md`、`docs/commands.md`、`CONTEXT.md`、`docs/pitfalls.md`），**不给规划过程的对话**——给了，它继承规划时的结论，`plan.md` 就约束不住实施。子 agent 报的「已完成」由主线程重跑关键命令复核，不能直接采信。T0 免检：不写计划，也就没有可派的东西。
+- **派执行者子 agent 实施（T1 / T2 / T3）**：写计划的人不实施。由**架构师**（写计划的那个角色）派一个**全新的子 agent** 按 `docs/agents/执行者.md` 实施，输入只给 `plan.md` + `prd.md`（T1 不要求 prd，没有就不给）+ 规范文件（`AGENTS.md`、`docs/architecture.md`、`docs/commands.md`、`CONTEXT.md`、`docs/pitfalls.md`），**不给规划过程的对话**——给了，它继承规划时的结论，`plan.md` 就约束不住实施。子 agent 报的「已完成」由主线程重跑关键命令复核，不能直接采信。T0 免检：不写计划，也就没有可派的东西。
 - 保持 diff 最小，不重构无关代码。**（只能靠人看：机器不查 diff 里有没有顺手重构）**
 - 不引入新依赖，除非先说明理由并等待确认。**（只能靠人看：闸门不解析依赖清单）**
 - 不修改 `.env`、生产配置、生成文件。**（只能靠人看；`[DEBUG-` 与架构漂移那类才有机器检查）**
@@ -69,13 +69,13 @@
 - 修 bug 时：进入根因假设前，必须有一条已经实跑过、能对这个 bug 变红的命令（`skills/bug-fix/SKILL.md` 闸门 A）。
 - 写测试前：先把要测的 seam 写进 `plan.md` 的「## 测试 Seam」一节（T1 写完即继续；**T0 不建 plan**，seam 一行写在回复里；T2 / T3 随 plan 一次批准）。没写下来、或与 `plan.md` 不符的，停下来问。
 - 调试日志统一加 `[DEBUG-xxxx]` 前缀，提交前 grep 清干净。
-- 提交前闸门是**自动**的：`.githooks/pre-commit` 会跑 `scripts/check-gates.sh --staged`，检查 `[DEBUG-` 残留、`docs/architecture.md` 的模块表与实际目录是否对得上、**文档里写的相对路径是否真实存在**、**ADR 的 `Superseded-By` / `Supersedes` 是否互指**、`plan.md` 的档位/类型/闸门 A 字段、`journal.md` 的章节与验证结果、切片文件的字段、**T2 / T3 的 `review.md` 是否存在且填全**。被拦下就按提示补内容，**不要**用 `git commit --no-verify` 绕过。注意 `review.md` 只在**提交碰到该任务目录**时才被要求：只改代码的提交里没有任务目录，这一项就不查。所以「先提交代码、后补 review」在机制上过得去，但别把它当常态——审查要在代码进入主干之前完成。手动全量检查：`bash scripts/check-gates.sh`。Windows 的 PowerShell 里 `bash` 可能是 WSL 的桩（报错是一串 `?`），改用 Git 自带的 `sh scripts/check-gates.sh`；Ubuntu 上不要用 `sh`（那是 dash，跑不了 bash 脚本）。
-- 动手前先确认钩子真的挂上了：`git config core.hooksPath` 要输出 `.githooks`。这个设置在 `.git/config` 里，**clone 之后不会跟着来**——丢了钩子就不跑，闸门静默失效，而且没有任何提示。是空的话跑一次 `git config core.hooksPath .githooks`。
+- 提交前闸门是**自动**的：`.githooks/pre-commit` 会跑 `scripts/check-gates.sh --staged`，检查 `[DEBUG-` 残留、`docs/architecture.md` 的模块表与实际目录是否对得上、**文档里写的相对路径是否真实存在**、**ADR 的 `Superseded-By` / `Supersedes` 是否互指**、`plan.md` 的档位/类型/闸门 A 字段、`journal.md` 的章节与验证结果、切片文件的字段、**T2 / T3 的 `review.md` 是否存在且填全**。被拦下就按提示补内容，**不要**用 `git commit --no-verify` 绕过。钩子跑的是**工作区**的 `scripts/check-gates.sh`，所以这两个检查器文件的工作区版本与索引不一致时钩子会直接拒绝提交——先 `git add` 改动，或 `git checkout -- scripts/` 恢复。注意 `review.md` 只在**提交碰到该任务目录**时才被要求：只改代码的提交里没有任务目录，这一项就不查。所以「先提交代码、后补 review」在机制上过得去，但别把它当常态——审查要在代码进入主干之前完成。手动全量检查：`bash scripts/check-gates.sh`。Windows 的 PowerShell 里 `bash` 可能是 WSL 的桩（报错是一串 `?`），改用 Git 自带的 `sh scripts/check-gates.sh`；Ubuntu 上不要用 `sh`（那是 dash，跑不了 bash 脚本）。
+- 动手前先确认钩子真的挂上了：`git config core.hooksPath` 要输出 `.githooks`。这个设置在 `.git/config` 里，**clone 之后不会跟着来**——丢了钩子就不跑，闸门静默失效。手动跑 `bash scripts/check-gates.sh` 时会打一条 `[!]` 提示，但钩子丢了通常也就不会去跑它——所以这一条只能靠你在动手前确认。是空的话跑一次 `git config core.hooksPath .githooks`。
 - 提交前审查：T0 不审；T1 自己审；**T2 / T3 必须派一个全新的子 agent 审**（只给它 `prd.md`、`plan.md`、diff、相关规范，**不给它会话历史**），产出 `tasks/<日期>-<简述>/review.md`。轮次上限 2，超了升级给人。
 - 收到审查意见后按 `skills/receiving-review/SKILL.md` 逐条处理：改 / 不改+理由 / 不接受+反证，**没有第四种**；不能静默跳过任何一条。
 - 验证通过后，运行 `git diff` 检查改动范围。
 - 任务结束后：可复用的规则追加到 `docs/pitfalls.md`；符合 ADR 三条准入条件的决策写进 `docs/adr/NNNN-slug.md`。
-- 任务结束后：日志写进 `tasks/<日期>-<简述>/journal.md`，内容包括目标、主要提交的 SHA、改动文件清单、验证结果、遇到的问题、下次注意什么、涉及的 ADR 编号、下一步、结束状态。
+- 任务结束后：日志写进 `tasks/<日期>-<简述>/journal.md`，内容包括目标、主要提交的 SHA、改动文件清单、验证结果、遇到的问题、下次注意什么、涉及的 ADR 编号、下一步、雾区变化、一致性走查、结束状态（11 节，闸门缺一节就红）。
 
 ## Done Means
 

@@ -80,7 +80,7 @@ clone 出来的仓库这里多半是空的——`.git/config` 不随仓库走，
 
 ### 7. `docs/adr/` —— 状态还对吗
 
-- 有哪条 ADR 事实上已经被推翻了，但没标 `Status: superseded by ADR-NNNN`？
+- 有哪条 ADR 事实上已经被推翻了，但没标 `Status: superseded` + `Superseded-By: ADR-NNNN`？
 - **不要改正文**（它记的是当时的理由），只加状态行
 
 ### 8. 模块表是不是宽声明

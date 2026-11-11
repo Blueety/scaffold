@@ -6,4 +6,17 @@
 # 临时跳过：git commit --no-verify
 # 手动全量检查：scripts/check-gates.sh
 #
-exec "$(git -c core.quotepath=false rev-parse --show-toplevel)/scripts/check-gates.sh" --staged
+root="$(git -c core.quotepath=false rev-parse --show-toplevel 2>/dev/null)" || exit 0
+
+# 闸门执行的是**工作区**的 check-gates.sh。所以「把工作区那份改成 exit 0、不暂存」
+# 就能让闸门空转，而提交进去的仍是原版检查器——事后从历史里完全看不出来。
+# 这一段只做一件事：两个检查器文件的工作区版本与索引版本不一致时拒绝提交。
+if ! git -C "$root" diff --quiet -- scripts/check-gates.sh scripts/check-gates.awk 2>/dev/null; then
+    printf '\n提交被拦下：闸门脚本的工作区版本与索引不一致。\n' >&2
+    printf '  scripts/check-gates.sh / scripts/check-gates.awk\n' >&2
+    printf '钩子跑的是工作区那份；不暂存就提交，等于用一个改过的检查器验另一份内容。\n' >&2
+    printf '把改动 git add 进来，或 git checkout -- scripts/ 恢复原版后重试。\n\n' >&2
+    exit 1
+fi
+
+exec "$root/scripts/check-gates.sh" --staged

@@ -50,7 +50,7 @@ cp tasks/_template/slice.md tasks/2026-08-04-add-login/01-schema.md
 
 ## 大需求拆成多个任务
 
-一个 prd 装不进单个会话时，拆成多个任务文件，每个声明它被谁挡着：
+一个 prd 装不进单个会话时，拆成多个**切片**（`NN-<简述>.md`，同一个任务目录里），每个声明它被谁挡着：
 
 ```
 tasks/2026-08-04-add-login/

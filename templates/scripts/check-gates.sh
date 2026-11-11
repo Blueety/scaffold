@@ -15,7 +15,8 @@
 #              全量模式还排除 .gitignore 命中的本地文件（那是数据不是代码）
 #   - plan.md：档位与类型已声明、目标 / 相关文件 / 验证命令非空、步骤表非空、
 #              确认清单至少一条且全勾、
-#              没有残留模板提示「（从 prd.md 提取）」、测试 Seam 四行要么全填要么全空、
+#              目标不能写「无」、预估 diff 范围三行不能全空、
+#              测试 Seam 四行要么全填要么全空、
 #              bug 任务的闸门 A 字段（含 ≥3 条排序假设）、bug-不可复现 必须声明 T3
 #   - prd.md：验收标准非空且有条目；档位行填了就必须合法（不强制存在）
 #   - journal.md：章节齐全（含雾区变化 / 一致性走查）、结束状态合法、验证结果有内容且不写「应该可以」、
@@ -26,9 +27,11 @@
 #   - NN-*.md（切片）：类型与状态取值合法、档位与优先级取值合法、演示与完成标准非空、
 #                      文件范围与被谁挡已填、确认清单至少一条且全勾、状态 completed 时必须回填主要提交；
 #                      决策条目则要求问题 / 结论 / 依据三字段非空
-#   - review.md（裁决单）：任务档位是 T2 / T3 时必须存在——plan.md / prd.md / 切片里
-#                          **任何一处**声明了 T2/T3 就算，不依赖 plan.md 是否存在；
-#                          章节齐全、固定点已填、逐条处理表非空、「审查者明确未判断的」不许留空
+#   - review.md（裁决单）：任务档位是 T2 / T3、且任务**已经开工**时必须存在——plan.md /
+#                          prd.md / 切片里**任何一处**声明了 T2/T3 就算，不依赖 plan.md 是否存在；
+#                          （只提交了 prd.md 的计划阶段还不要求，那时候还没东西可审）
+#                          章节齐全、固定点 / 审查者 / 给了它什么 / 轮次 / 结论都已填、
+#                          审查者原文非空、逐条处理表非空、「审查者明确未判断的」不许留空
 #   - 文档内相对引用：根目录 md、docs/、skills/、tasks/README.md 里用反引号或
 #                      markdown 链接写下的相对路径必须存在（围栏代码块、带占位符的
 #                      示例不算）。其他位置的 md 不查——第三方目录里的 README 是别人
@@ -91,31 +94,51 @@ usage() {
 #             不扫物化出来的临时树——那要先 checkout-index 把整棵树写到磁盘、再全扫一遍，
 #             3000 文件 / 20MB 的仓库上 19s vs 0.67s。
 #   全量：扫工作区（含未跟踪文件，那才是「全量」的意义）。
-# -I 跳过二进制：grep 对二进制只会回一句「Binary file X matches」，没有行号也没有内容，
-# 当成「调试标记残留」是误报（图片、fixture、快照都可能恰好含这几个字节）。
-# 大小写不敏感：写 [debug-x] 同样是没清干净的调试埋点。
+# **不用 -I**：`-I` 让 git 按「二进制」跳过文件，而「二进制」的判定包括一个 NUL 字节、
+# 也包括 `.gitattributes` 里的 `-diff`——一行 `*.py -diff` 就能让所有 .py 免疫。
+# 用 -a 强制当文本扫，多花的代价是二进制文件里可能命中同样的字节，所以改成
+# **按后缀排除**（图片 / 压缩包 / 字体 / 快照），而不是让 git 猜。
+#
+# 变体也认：全角括号 `［DEBUG-］`、零宽字符插在中间（`[DEBU\u200bG-`）、
+# 全角连字符。这些都是「看起来像但不是」，而闸门的价值就在于不给它留后门。
+# 清理脚本里写着 `grep '[DEBUG-'` 不算残留——那行本身是找标记的工具。
 check_gate_b() {
     local staged="$1" root="$2" hits
+    local -a pat=(-e '\[DEBUG-' -E -e '［DEBUG[-－]' -e '\[DEBU.{1,6}G-')
+    local -a skip=(
+        ':(exclude,icase)*.md'
+        ':(exclude)scripts/check-gates.sh' ':(exclude)scripts/check-gates.awk'
+        ':(exclude)node_modules/*' ':(exclude)*/node_modules/*'
+        ':(exclude,icase)*.png' ':(exclude,icase)*.jpg' ':(exclude,icase)*.jpeg'
+        ':(exclude,icase)*.gif' ':(exclude,icase)*.ico' ':(exclude,icase)*.webp'
+        ':(exclude,icase)*.pdf' ':(exclude,icase)*.zip' ':(exclude,icase)*.gz'
+        ':(exclude,icase)*.svgz' ':(exclude,icase)*.woff' ':(exclude,icase)*.woff2'
+        ':(exclude,icase)*.ttf' ':(exclude,icase)*.otf' ':(exclude,icase)*.eot'
+    )
     if [ "$staged" -eq 1 ]; then
-        hits="$(git -C "$root" grep -I -i -n --cached -e '\[DEBUG-' -- \
-            ':(exclude)*.md' ':(exclude)*check-gates.sh' \
-            ':(exclude)node_modules/*' ':(exclude)*/node_modules/*' 2>/dev/null || true)"
+        hits="$(git -C "$root" grep -a -i -n --cached "${pat[@]}" -- "${skip[@]}" 2>/dev/null || true)"
     else
         # 全量扫工作区。优先用 git：`--untracked --exclude-standard` = 已跟踪 +
         # 未跟踪但**不含 .gitignore 命中的**。那些是本地数据/缓存，不是要提交的
         # 代码，扫出 [DEBUG- 只会误报（全量自查常年红，人就开始无视它）。
         # 不在 git 仓库里时退回 find。
         if git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
-            hits="$(git -C "$root" grep --untracked --exclude-standard -I -i -n -e '\[DEBUG-' -- \
-                ':(exclude)*.md' ':(exclude)*check-gates.sh' \
-                ':(exclude)node_modules/*' ':(exclude)*/node_modules/*' 2>/dev/null || true)"
+            hits="$(git -C "$root" grep --untracked --exclude-standard -a -i -n "${pat[@]}" -- "${skip[@]}" 2>/dev/null || true)"
         else
             hits="$(find . -type f \
                 ! -path './.git/*' ! -path '*/node_modules/*' \
-                ! -name '*.md' ! -name 'check-gates.sh' \
-                -exec grep -H -I -i -n '\[DEBUG-' {} + 2>/dev/null | sed 's|^\./||' || true)"
+                ! -iname '*.md' ! -path './scripts/check-gates.sh' ! -path './scripts/check-gates.awk' \
+                ! -iname '*.png' ! -iname '*.jpg' ! -iname '*.jpeg' ! -iname '*.gif' \
+                ! -iname '*.ico' ! -iname '*.webp' ! -iname '*.pdf' ! -iname '*.zip' \
+                ! -iname '*.gz' ! -iname '*.svgz' ! -iname '*.woff' ! -iname '*.woff2' \
+                ! -iname '*.ttf' ! -iname '*.otf' ! -iname '*.eot' \
+                -exec grep -H -a -i -n -E '\[DEBUG-|［DEBUG[-－]|\[DEBU.{1,6}G-' {} + 2>/dev/null | sed 's|^\./||' || true)"
         fi
     fi
+    # 一行本身在「找这个标记」（清理脚本、文档里的说明命令）不算残留。
+    # 判据窄：整行以 grep / rg / ag / ack 开头，或含 `grep ... DEBUG-`——真调试埋点
+    # 不会长这样。
+    hits="$(printf '%s\n' "$hits" | grep -v -E '^[^:]*:[0-9]+:[[:space:]]*(grep|rg|ag|ack)[[:space:]]' 2>/dev/null || true)"
     if [ -n "$hits" ]; then
         printf '%s\n' "$hits" | while IFS= read -r line; do
             printf '  [x] 闸门 B: %s —— 调试标记残留\n' "$line"
@@ -248,7 +271,12 @@ check_links() {
         # 存在性回**工作区**再判一次。文档引用的常常是**产物**（`reports/*.md`、
         # 截图、生成的 json），它们落在 .gitignore 里、索引物化树里永远没有。
         # 只看物化树的话，同一个文档全量自查通过、钩子报 4 条——每次提交都被拦。
-        [ -n "${root_pwd:-}" ] && [ -e "$root_pwd/$ref" ] && continue
+        # 只有**被 .gitignore 命中的产物**才允许回工作区放行。否则「索引里已删、
+        # 工作区还在」的目标会被判存在——提交进去的树里它已经没了，链接是死的。
+        if [ -n "${root_pwd:-}" ] && [ -e "$root_pwd/$ref" ] \
+           && git -C "$root" check-ignore -q -- "$ref" 2>/dev/null; then
+            continue
+        fi
         printf '%s\t%s\n' "$f" "$ref"
     done < <(awk -v kind=links -f "$AWK_PROG" "${files[@]}" 2>/dev/null | sort -u) > "$refs_tmp"
 
@@ -392,6 +420,42 @@ check_review() {
     run_check review "$f"
 }
 
+# 本次提交的代码文件，是否属于某个「声明了 T2/T3 但还没裁决单」的在飞任务。
+# 只认 plan.md 的「相关文件」——那是唯一把文件和任务连起来的机器可读字段。
+check_review_by_scope() {
+    local root="$1" d f rel hit
+    local -a changed=()
+    while IFS= read -r f; do
+        [ -n "$f" ] && changed+=("$f")
+    done < <(git -C "$root" -c core.quotepath=false diff --cached --name-only --diff-filter=ACMRD -- "${MODULE_ROOT%/}" 2>/dev/null)
+    [ "${#changed[@]}" -gt 0 ] || return 0
+
+    for d in "$root"/tasks/*/; do
+        d="${d%/}"; d="${d#"$root"/}"
+        case "$d" in tasks/_template|tasks/_archive) continue ;; esac
+        [ -f "$root/$d/plan.md" ] || continue
+        task_is_high_tier "$d" || continue
+        [ -f "$root/$d/review.md" ] && continue
+        local -a rels=()
+        while IFS= read -r rel; do
+            [ -n "$rel" ] && rels+=("$rel")
+        done < <(awk -v kind=related -f "$AWK_PROG" "$root/$d/plan.md" 2>/dev/null)
+        [ "${#rels[@]}" -gt 0 ] || continue
+        hit=""
+        for f in "${changed[@]}"; do
+            for rel in "${rels[@]}"; do
+                rel="${rel%/}"
+                case "$f" in
+                    "$rel"|"$rel"/*) hit="$f"; break ;;
+                esac
+            done
+            [ -n "$hit" ] && break
+        done
+        [ -n "$hit" ] || continue
+        fail "$d: 本次提交的 $hit 写在这个任务的「相关文件」里，而它是 T2/T3 且还没有 review.md —— 独立审查要在代码进主干之前做完（3.8）。如果这些改动不属于这个任务，把它们拆到自己的提交里"
+    done
+}
+
 # 任务档位是否落在 T2/T3：plan.md / prd.md / 切片里任何一处声明了 T2/T3 就算。
 # 不能只看 plan.md——档位也可能只写在 prd.md 或切片里；
 # prd.md 的档位行也是同一个字段，只写在那里时同样得认。
@@ -441,8 +505,17 @@ check_scale() {
     # 从空树算起才等同于「这个任务从零开始」。
     local empty_tree=4b825dc642cb6eb9a060e54bf8d69288fbee4904
     local cands=("$@")
+    # 声明了 T2/T3 就免检——但**只有真写了计划的任务**才算数。
+    # 否则 prd 里写一行 `T2`、再放一份空 journal，同一次提交 6 个 src 文件就全绿：
+    # 没有 plan.md 就没有 3.4 的批准，也没有可审的对象，这个豁免没有任何依据。
     for d in ${cands[@]+"${cands[@]}"}; do
-        task_is_high_tier "$d" && return 0
+        if task_is_high_tier "$d"; then
+            if [ -f "$d/plan.md" ]; then
+                return 0
+            fi
+            fail "$d: 声明了 T2/T3，但没有 plan.md —— 没有计划就没有批准，也没有可审的对象。把计划落盘（3.3 / 3.5），或者这些改动不属于这个任务"
+            return 0   # 已经报过，别再叠一条规模违规
+        fi
     done
     if [ "${#cands[@]}" -eq 0 ]; then
         # 这次提交没碰任何任务目录——最常见的是「计划先提交、代码后提交」。
@@ -583,28 +656,54 @@ check_architecture() {
         note "模块根 \`$MODULE_ROOT\` 不存在：模块表比对与规模底线都不生效。代码不在这个目录时，用 \`MODULE_ROOT=<真实目录> bash scripts/check-gates.sh\`，或改脚本里 MODULE_ROOT 的默认值。"
     fi
 
+    # 路径归一化：`./src/a`、`.\src\a`、`src//a`、`src/a/` 都是同一个目录。
+    # 不归一的话，表里换一种合法写法就会被判成「表里没有它」——规则 1 用 -e 认它，
+    # 规则 2 用字符串比却不认，同一份表出现两种结论。
+    # Windows（MSYS/Cygwin）的文件系统大小写不敏感，`src/Auth` 与 `src/auth` 是同一
+    # 个目录，比较时折成小写；Linux/macOS 上大小写不同就是两个目录，不能折。
+    local fold=0
+    case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) fold=1 ;; esac
+    norm_path() {
+        local v="$1"
+        v="${v//\\//}"
+        while [ "${v#./}" != "$v" ]; do v="${v#./}"; done
+        while [ "${v//\/\//}" != "$v" ]; do v="${v//\/\//}"; done
+        v="${v%/}"
+        [ "$fold" -eq 1 ] && v="$(printf '%s' "$v" | tr 'A-Z' 'a-z')"
+        printf '%s' "$v"
+    }
+    local -a decl_norm=()
+    local pn
+    while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        pn="$(norm_path "$p")"
+        [ -n "$pn" ] || continue
+        decl_norm+=("$pn")
+    done <<< "$declared"
+
     # 规则 1：声明的路径必须真实存在。
     # 例外：模块根本身（及它的祖先）不查 —— `src/` 是空目录，git 不跟踪空目录，
     # clone 之后它就不在了，而 Phase 2 的模块表正要求写宽路径 `src`。
     # 这条要是报错，新 clone 的仓库会卡到「所有提交都过不去」。
-    local p
-    while IFS= read -r p; do
+    local mr_norm
+    mr_norm="$(norm_path "$MODULE_ROOT")"
+    for p in ${decl_norm[@]+"${decl_norm[@]}"}; do
         [ -n "$p" ] || continue
-        case "$MODULE_ROOT/" in "$p/"*) continue ;; esac
+        case "$mr_norm/" in "$p/"*) continue ;; esac
         arch_path_exists "$root" "$p" \
             || fail "docs/architecture.md 声明了模块「$p」，但它不存在"
-    done <<< "$declared"
+    done
 
     # 规则 2：$MODULE_ROOT 下的直接子目录必须被某个声明覆盖
-    local d covered q
+    local d covered q dn
     while IFS= read -r d; do
         [ -n "$d" ] || continue
         covered=0
-        while IFS= read -r q; do
-            [ -n "$q" ] || continue
-            case "$q/" in "$d/"*) covered=1; break ;; esac
-            case "$d/" in "$q/"*) covered=1; break ;; esac
-        done <<< "$declared"
+        dn="$(norm_path "$d")"
+        for q in ${decl_norm[@]+"${decl_norm[@]}"}; do
+            case "$q/" in "$dn/"*) covered=1; break ;; esac
+            case "$dn/" in "$q/"*) covered=1; break ;; esac
+        done
         [ "$covered" -eq 1 ] \
             || fail "「$d」是 $MODULE_ROOT 下的模块目录，但 docs/architecture.md 的模块表里没有它"
     done < <(arch_module_dirs "$staged" "$root")
@@ -798,6 +897,13 @@ main() {
     # 规模底线：只在 --staged 有意义（要有「这次提交」这个基准）
     check_scale "$staged" "$root" ${dirs[@]+"${dirs[@]}"}
 
+    # 计划里的文件已被提交、但这个 T2/T3 任务还没有裁决单 —— 说明「先提交代码、
+    # 后补审查」。归属靠 plan.md 的「相关文件」：它机器可读，而「哪次提交属于哪个
+    # 任务」看不出来。多次提交里只要有一次命中，审查就来不及了。
+    if [ "$staged" -eq 1 ]; then
+        check_review_by_scope "$root"
+    fi
+
     # 去重后逐个检查
     local seen="|"
     for d in ${dirs[@]+"${dirs[@]}"}; do
@@ -835,6 +941,17 @@ main() {
             check_slice "$s"
             any=1
         done
+        # 文件名不在约定里（`100-x.md`、`01-upper.MD`）时，上面所有分支都不会碰它，
+        # 任务目录于是整条免检。宁可报出来让人改名，也不要静默跳过。
+        if [ "$any" -eq 0 ]; then
+            local u
+            for u in "$d"/*.[mM][dD]; do
+                [ -f "$u" ] || continue
+                fail "$u: 不认识的任务文件名 —— 任务目录里只可能是 plan.md / prd.md / journal.md / review.md，或 NN-*.md 切片（NN 是 1–2 位数字）"
+                any=1
+                break
+            done
+        fi
         [ "$any" -eq 1 ] || printf '%s\n' "跳过 $d（还没有 plan.md / journal.md / NN-*.md）"
     done
 

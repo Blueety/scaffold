@@ -92,7 +92,7 @@ def read_frame(sock): ...
 
 `scripts/check-gates.sh`（以及 `pre-commit`）会检查：
 
-- 任何 `ADR-NNNN` 引用都必须有对应文件——写了不存在的编号会红
+- `docs/adr/` 里的 ADR 引用任何 `ADR-NNNN`，都必须有对应文件——写了不存在的编号会红（`docs/architecture.md`、`CONTEXT.md` 等处的引用不扫，那里常拿编号当例子）
 - `Superseded-By` 与 `Supersedes` 必须互指；只写一边会红
 - 写了 `Superseded-By` 却仍留着 `Status: accepted` 会红
 

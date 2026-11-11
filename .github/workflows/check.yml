@@ -33,7 +33,7 @@ jobs:
         run: bash scripts/fixtures/update-test.sh
 
   # Linux：templates/ 与 init.sh 产物必须逐字节一致（README 树的交叉核对在 windows 那组），
-  # 外加两个 fixture 都跑一遍。
+  # 外加三个 fixture 都跑一遍。
   linux:
     runs-on: ubuntu-latest
     steps:

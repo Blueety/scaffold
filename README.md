@@ -122,7 +122,7 @@ my-project-name/
 
 ## 生成后要做的事
 
-1. **确认模块根**：闸门默认只在 `src/` 下数模块和文件。如果技术栈把代码放在别处（`app/`、`web/`、`cmd/`），现在就说清楚——用 `MODULE_ROOT=app` 跑闸门，或改 `scripts/check-gates.sh` 里那一行默认值。不改的话，模块表比对和规模底线会**静默空转**，闸门一片绿。
+1. **确认模块根**：闸门默认只在 `src/` 下数模块和文件。如果技术栈把代码放在别处（`app/`、`web/`、`cmd/`），现在就说清楚——用 `MODULE_ROOT=app` 跑闸门，或改 `scripts/check-gates.sh` 里那一行默认值。不改的话，模块表比对和规模底线会空转（闸门会打一条 `[!]` 提示，但**不会拦**），你看到的是一片绿。
 2. **初始化技术栈**：在项目目录里运行 `npm init`、`create-next-app`、`uv init` 等。
 3. **让 Agent 填写规范**：配置文件就位后，让本地 Agent 读配置文件并填写 AGENTS.md、CONTEXT.md 和 docs/（含把 Task Handoff 里的决策落成 `docs/adr/0001-*.md`）。
 4. **提交**：`git add . && git commit -m "init: 项目脚手架 + 技术栈"`
@@ -175,7 +175,7 @@ powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
 |---|---|
 | `templates/` 或 `init.*` | `check-tree.ps1`（上面那个，约 10–20 秒） |
 | 项目名校验（`init.sh` / `init.ps1`） | `bash scripts/fixtures/name-test.sh` —— 约 1 分钟、19 项：同一张名字表分别喂两个脚本，接受 / 拒绝必须一致；没有 PowerShell 的机器会跳过 |
-| 闸门（`scripts/check-gates.*`） | `bash scripts/fixtures/gate-test.sh` —— 约 4–5 分钟、78 项：环境提示（模块根缺失 / 钩子丢失）、去向必须是四种之一、规模底线含跨提交累计、空索引豁免与模板目录排除、文档断链、gitignore、产物与后缀解析、ADR 互链、决策锚点、模块表一格多路径、seam 措辞一致性、目标必填、纯重命名豁免、拍平归档、journal 去向 |
+| 闸门（`scripts/check-gates.*`） | `bash scripts/fixtures/gate-test.sh` —— 约 5–7 分钟、98 项：对抗性变体、review 字段契约、计划范围归属、环境提示（模块根缺失 / 钩子丢失）、去向必须是四种之一、规模底线含跨提交累计、空索引豁免与模板目录排除、文档断链、gitignore、产物与后缀解析、ADR 互链、决策锚点、模块表一格多路径、seam 措辞一致性、目标必填、纯重命名豁免、拍平归档、journal 去向 |
 | 更新器（`scripts/scaffold-update.sh`） | `bash scripts/fixtures/update-test.sh` —— 约 2–4 分钟、55 项：冲突现场、脏树、裁决、并集、基线阈值、adopt、闸门计数、机制文件、MANIFEST / JSON、`--quiet` |
 
 ### 自动跑

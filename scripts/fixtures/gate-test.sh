@@ -67,7 +67,25 @@ plan_text() {
     printf -- '- **验证命令**: `bash scripts/check-gates.sh`\n\n'
     printf '## 步骤\n\n| # | 步骤 | 文件范围 | 风险 | 验证 |\n|---|---|---|---|---|\n'
     printf '| 1 | 改 a | src/a.sh | 低 | 跑闸门 |\n\n'
+    printf '## 预估 diff 范围\n\n- 新增文件: 无\n- 修改文件: src/a.sh\n- 删除文件: 无\n\n'
     printf '## 确认\n\n- [x] 已确认\n'
+}
+
+# 一份能过闸门的 review.md。$1 可选地挖空某处：
+#   empty_原文  empty_结论  empty_审查者
+review_text() {
+    local hole="${1:-}"
+    printf '# 审查裁决单\n\n## 审查范围\n\n'
+    [ "$hole" = "empty_审查者" ] && printf -- '- **审查者**:\n' || printf -- '- **审查者**: 独立子 agent\n'
+    printf -- '- **固定点**: `abc1234`\n'
+    printf -- '- **给了它什么**: prd.md、plan.md、diff、AGENTS.md\n'
+    printf -- '- **轮次**: 1\n\n'
+    printf '## 审查者原文\n\n'
+    [ "$hole" = "empty_原文" ] || printf '审查者：第 1 行少了一个边界判断。\n'
+    printf '\n## 逐条处理\n\n| # | 审查者发现（原文摘要） | 处理 | 依据 |\n|---|---|---|---|\n| 1 | 缺边界判断 | 改，补了 else 分支 | 重跑闸门通过 |\n\n'
+    printf '## 审查者明确未判断的\n\n- 无\n\n'
+    printf '## 结论\n\n'
+    [ "$hole" = "empty_结论" ] || printf '可以合。\n'
 }
 
 echo "== G1: 规模底线不被在飞任务短路 =="
@@ -508,6 +526,108 @@ not "没有去向" "$out" "「→ skills/<名>」算有效去向"
 write_journal "这是一句散文，没有条目符号也没有去向"
 out="$(staged_run)"
 has "这是一句散文" "$out" "散文条目的报错带原文（不是空消息）"
+
+echo "== R1: review.md 的字段契约（「填全」真的查了吗）=="
+P="$TMP/r1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-07-rev" "$P/src"
+plan_text T2 > "$P/tasks/2026-01-07-rev/plan.md"
+echo "echo hi" > "$P/src/r.sh"
+
+# 有 T2 任务、代码已在计划里、却没有裁决单
+wip_commit "$P"                      # 计划先落盘（这时任务还没开工，不要求裁决单）
+echo "echo hi" > "$P/src/a.sh"       # plan_text 的「相关文件」写的就是 src/a.sh
+out="$(staged_run "$P")"
+has "review.md" "$out" "提交计划范围内的代码时，T2 任务还没有裁决单要拦"
+
+# 裁决单只有标题：整节留空照样不该过
+review_text empty_原文 > "$P/tasks/2026-01-07-rev/review.md"
+out="$(staged_run "$P")"
+has "审查者原文" "$out" "「审查者原文」留空要拦（它才是「真的审过」的证据）"
+
+review_text empty_结论 > "$P/tasks/2026-01-07-rev/review.md"
+out="$(staged_run "$P")"
+has "结论" "$out" "「结论」留空要拦"
+
+review_text empty_审查者 > "$P/tasks/2026-01-07-rev/review.md"
+out="$(staged_run "$P")"
+has "审查者" "$out" "「审查者」留空要拦"
+
+review_text > "$P/tasks/2026-01-07-rev/review.md"
+out="$(staged_run "$P")"
+not "review.md" "$out" "填全的裁决单不再被报"
+
+echo "== R2: plan.md 的目标与预估规模 =="
+P="$TMP/r2"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-08-plan"
+plan_text T1 > "$P/tasks/2026-01-08-plan/plan.md"
+subst "$P/tasks/2026-01-08-plan/plan.md" 's/^- \*\*目标\*\*: .*/- **目标**: 无/'
+out="$(staged_run "$P")"
+has "「目标」为空" "$out" "「目标」写「无」要拦（空目标的计划等于没计划）"
+
+plan_text T1 > "$P/tasks/2026-01-08-plan/plan.md"
+subst "$P/tasks/2026-01-08-plan/plan.md" 's/^- 新增文件: 无/- 新增文件:/; s/^- 修改文件: src\/a.sh/- 修改文件:/; s/^- 删除文件: 无/- 删除文件:/'
+out="$(staged_run "$P")"
+has "预估 diff 范围" "$out" "预估规模三行全空要拦"
+
+plan_text T1 > "$P/tasks/2026-01-08-plan/plan.md"
+out="$(staged_run "$P")"
+not "预估 diff 范围" "$out" "填了预估规模的计划不再被报"
+
+echo "== G-attack: 对抗性变体（每条都来自实跑里打穿过的写法）=="
+P="$TMP/atk"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/src" "$P/scripts"
+
+# 全角括号 / 零宽字符 / -diff 属性 / 同名后缀 / 大写 .MD / 清理脚本
+printf 'x=1 # ［DEBUG-fw］\n' > "$P/src/fw.py"
+printf 'x=1 # [DEBU\342\200\213G-zw]\n' > "$P/src/zw.py"
+printf 'x=1 # [DEBUG-diff]\n' > "$P/src/d.py"
+printf '*.py -diff\n' >> "$P/.gitattributes"
+printf 'x=1 # [DEBUG-suffix]\n' > "$P/src/my-check-gates.sh"
+printf 'u=1 # [DEBUG-upper]\n' > "$P/src/UPPER.MD"
+printf 'grep -rn .\[DEBUG- src/\n' > "$P/scripts/clean-debug.sh"
+out="$(staged_run "$P")"
+has "fw.py" "$out" "全角括号的调试标记要拦"
+has "zw.py" "$out" "零宽字符插在中间的调试标记要拦"
+has "d.py" "$out" "「.gitattributes 标了 -diff」不能成为免死金牌"
+has "my-check-gates.sh" "$out" "同名后缀的文件不豁免（排除项要写精确路径）"
+not "UPPER.MD" "$out" "大写 .MD 是文档，不该当代码扫"
+not "clean-debug.sh" "$out" "清理脚本里写着 grep 模式，不算残留"
+
+# 只声明 T2、没有 plan.md、同一次提交 6 个代码文件
+P="$TMP/atk2"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-09-t2" "$P/src"
+printf '# 需求\n\n- **档位**: `T2`\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-09-t2/prd.md"
+for i in 1 2 3 4 5 6; do printf 'x\n' > "$P/src/m$i.py"; done
+out="$(staged_run "$P")"
+has "没有 plan.md" "$out" "声明 T2 却没有计划，不能豁免规模底线"
+
+# 无 bullet 的档位行也要被认成 T2/T3
+P="$TMP/atk3"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-10-t3" "$P/src"
+printf '# 需求\n\n档位: T3\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-10-t3/prd.md"
+echo "echo x" > "$P/src/x.sh"
+out="$(staged_run "$P")"
+has "没有 plan.md" "$out" "写歪的 T3 声明同样要独立审查（宽进严出）"
+
+# 任务目录里的文件名不在约定里
+P="$TMP/atk4"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-11-skip"
+printf '# 随便\n\n没有类型字段\n' > "$P/tasks/2026-01-11-skip/100-x.md"
+out="$(staged_run "$P")"
+has "不认识的任务文件名" "$out" "3 位编号的切片名要报出来，不能静默跳过整个任务目录"
+
+# 链接变体
+P="$TMP/atk5"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/docs"
+{ printf '\n'
+  printf -- '- 锚点：`docs/nope.md#section`\n'
+  printf -- '- 标题：[x](docs/nope2.md "title")\n'
+  printf -- '- 查询：`docs/nope4.md?x=1`\n'
+} >> "$P/AGENTS.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "docs/nope.md" "$out" "带 #锚点 的断链要报"
+has "docs/nope2.md" "$out" "带链接标题的断链要报"
+has "docs/nope4.md" "$out" "带查询串的断链要报"
 
 echo "== G-env: 模块根缺失与钩子丢失要说出来（只提示，不拦）=="
 P="$TMP/genv"; new_project "$P" || { echo "建项目失败"; exit 2; }

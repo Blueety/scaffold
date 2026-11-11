@@ -81,6 +81,9 @@ END {
     # 放在 END 里而不是读行循环里：要等整个文件读完才能看「值换行写在下一行」。
     if (kind == "tier") {
         for (i = 1; i <= NL; i++) {
+            # 规范写法是 `- **档位**: ...`，但「写歪一行」不能变成免检通道：
+            # 只要这一行同时出现「档位」和 T2/T3，就按高档处理（宽进严出）。
+            if (index(L[i], "档位") > 0 && L[i] ~ /[Tt]2|[Tt]3/) high = 1
             if (L[i] !~ /^[[:space:]]*[-*+][[:space:]]+\*\*/ || index(L[i], "档位") == 0) continue
             v = field_value_of(L[i])
             if (v == "") {
@@ -99,6 +102,7 @@ END {
     if (kind == "links")   { links_dump(); exit }
     if (kind == "adr")     { adr_check(); exit }
     if (kind == "modules") { modules_dump(); exit }
+    if (kind == "related") { related_dump(); exit }
     if      (kind == "plan")    plan_check()
     else if (kind == "prd")     prd_check()
     else if (kind == "journal") journal_check()
@@ -184,18 +188,15 @@ function has_section(want,   i, hl, t) {
     return 0
 }
 
-# 整份文件（剥掉注释后）里是否出现过这段字面文本。
-function has_text(want,   i) {
-    for (i = 1; i <= NL; i++) if (index(L[i], want) > 0) return 1
-    return 0
-}
-
 # `- **标签**: 值` 行的原文（第一次出现）。没找到返回空串。
 # `-` / `*` / `+` 三种列表符号都认：只认前两种的话，用 `+` 写的档位会被判「未声明」，
 # 而 task_is_high_tier 也看不见它——T2/T3 任务就此躲过 review.md。
+# 标签必须**精确**匹配 `**标签**`。
+# 用子串匹配（index(L[i], lbl)）会让 `- **非目标**: 这次什么都不做` 顶替空的
+# `- **目标**:`——判定「目标已填」，而目标根本没写。
 function field_raw(lbl,   i) {
     for (i = 1; i <= NL; i++)
-        if (L[i] ~ /^[[:space:]]*[-*+][[:space:]]+\*\*/ && index(L[i], lbl) > 0) return L[i]
+        if (L[i] ~ /^[[:space:]]*[-*+][[:space:]]+\*\*/ && index(L[i], "**" lbl "**") > 0) return L[i]
     return ""
 }
 
@@ -251,7 +252,7 @@ function field_block(lbl,   i, n, found) {
     for (i = 1; i <= NL; i++) {
         if (L[i] ~ /^[[:space:]]*[-*+][[:space:]]+\*\*/) {
             if (found) break
-            if (index(L[i], lbl) > 0) { found = 1; B[++n] = L[i]; continue }
+            if (index(L[i], "**" lbl "**") > 0) { found = 1; B[++n] = L[i]; continue }
         } else if (L[i] ~ /^[[:space:]]*#/) {
             if (found) break
         }
@@ -304,6 +305,9 @@ function is_placeholder(s,   inner) {
     }
     if (tolower(s) == "todo" || tolower(s) == "tbd" || s == "N/A" || tolower(s) == "na" || tolower(s) == "xxx") return 1
     if (s == "待办" || s == "未填" || s == "待补") return 1
+    # 「无」「没有」「暂无」在一个**必填**字段里等于没写：目标写「无」就没有这次任务，
+    # 验证命令写「无」就是没验证。逐字段放宽的地方（比如「涉及的 ADR: 无」）不走这里。
+    if (s == "无" || s == "无。" || s == "没有" || s == "暂无" || s == "None" || s == "none") return 1
     if (s == "-" || s == "--" || s == "—" || s == "…" || s == "...") return 1
     return 0
 }
@@ -370,9 +374,12 @@ function count_checkboxes(text, want,   n, i, c, fence, marks) {
             if (fence) { ROWS[i] = "" }      # 抹掉围栏内的行，下面的判定一视同仁
         }
     }
+    # `[-]` 是「待定」写法：既不是勾也不是空框，原先两边都不数 → 一项「还没想好」
+    # 能和行为「已确认」共存。判据改成「只要不是 [x]/[X] 就算没勾」。
     for (i = 1; i <= n; i++) {
+        if (!(ROWS[i] ~ /^[[:space:]]*[-*+][[:space:]]+\[[[:space:]xX-]*\]/)) continue
         if (want) { if (ROWS[i] ~ /^[[:space:]]*[-*+][[:space:]]+\[[ xX]\]/) c++ }
-        else      { if (ROWS[i] ~ /^[[:space:]]*[-*+][[:space:]]+\[[[:space:]]?\]/) c++ }
+        else      { if (ROWS[i] !~ /^[[:space:]]*[-*+][[:space:]]+\[[xX]\]/) c++ }
     }
     return c
 }
@@ -449,7 +456,48 @@ function modules_dump(   n, i, cells, nf, p, line, npaths, k, seg, prev_dir) {
     }
 }
 
+# plan.md 的「相关文件」列表：一行一个路径（去掉反引号、行尾说明、标点）。
+# 用途只有一处：判断**这次提交的代码**是不是某个 T2/T3 任务计划里的文件。
+# 归属本来靠人自觉（一个任务一个提交），但「先改代码、再补审查」时闸门原先
+# 完全看不见——代码已经进了主干，审查还没做。
+function related_dump(   i, n, l, v) {
+    n = field_block("相关文件")
+    if (n <= 0) return
+    # 第 1 行是字段行本身，从第 2 行起是路径
+    for (i = 2; i <= n; i++) {
+        l = B[i]
+        sub(/^[[:space:]]*[-*+][[:space:]]*/, "", l)
+        sub(/<!--.*-->/, "", l)
+        gsub(/`/, "", l)
+        sub(/[[:space:]]*——.*$/, "", l)
+        sub(/[[:space:]]*[（(].*$/, "", l)
+        sub(/[，。；、,;]+$/, "", l)
+        l = trim(l)
+        if (l == "") continue
+        sub(/[[:space:]].*$/, "", l)
+        if (l == "") continue
+        print l
+    }
+}
+
 # ---------------------------------------------------------------- plan.md
+
+# 「## 预估 diff 范围」里那三行有没有填东西。
+# 判据只认 `新增 / 修改 / 删除文件: <值>`，值非空且不是占位符。
+function diff_range_filled(   t, n, A, i, l, v) {
+    t = section_text("预估 diff 范围")
+    n = split(t, A, "\n")
+    for (i = 1; i <= n; i++) {
+        l = A[i]
+        sub(/^[ \t]*[-*+][ \t]*/, "", l)
+        if (l !~ /^(新增|修改|删除)文件[ \t]*[:：]/) continue
+        v = l
+        sub(/^[^:：]*[:：][ \t]*/, "", v)
+        gsub(/[ \t`]/, "", v)
+        if (v != "" && !is_placeholder(v)) return 1
+    }
+    return 0
+}
 
 function plan_check(   tier, type, n, filled, hy, t) {
     if (!has_section("任务概要")) { V("缺「## 任务概要」一节"); return }
@@ -464,11 +512,22 @@ function plan_check(   tier, type, n, filled, hy, t) {
     else if (type != "加功能" && type != "重构" && type != "bug-可复现" && type != "bug-不可复现")
         V("类型 '" type "' 不在 {加功能, 重构, bug-可复现, bug-不可复现}")
 
+    t = field_value("目标")
+    gsub(/[[:space:]`]/, "", t)
     if (!field_filled("目标")) V("「目标」为空")
+    else if (t == "无" || t == "无。" || t == "没有" || tolower(t) == "none")
+        V("「目标」写的是「" t "」——没有目标就没有这次任务，缺目标说明还没想清楚要做什么")
     if (!field_filled("相关文件")) V("「相关文件」为空")
     if (!field_filled("验证命令")) V("「验证命令」为空")
 
     if (table_rows(section_text("步骤"), 1) == 0) V("「## 步骤」表里没有任何步骤")
+
+    # 规模写进计划才有意义：看不到预估，实施时就无从判断「已经跑偏了」。
+    # 这三行在模板里是**不带粗体**的 `- 新增文件: 无`，所以不能用 field_filled
+    # （它只认 `- **标签**: 值`）——按节扫描。
+    if (!has_section("预估 diff 范围")) V("缺「## 预估 diff 范围」一节")
+    else if (!diff_range_filled())
+        V("「## 预估 diff 范围」三行都空着——没有数字也要写「无」")
 
     # 确认清单：这一节必须存在、里面至少有一条确认项、且不能有未勾的
     if (!has_section("确认")) V("缺「## 确认」一节")
@@ -655,7 +714,10 @@ function slice_check(   type, tier, prio, st, n, t) {
     if (!field_filled("完成后可以看到什么")) V("「完成后可以看到什么」为空")
     if (!field_filled("完成标准"))           V("「完成标准」为空")
     if (!field_filled("文件范围"))           V("「文件范围」为空")
-    if (!field_filled("被谁挡"))             V("「被谁挡」为空（没有前置就写「无」）")
+    # 这一栏允许「无」（没有前置就写无），所以不能走把「无」当占位的 field_filled
+    t = field_value("被谁挡")
+    gsub(/[[:space:]`]/, "", t)
+    if (t == "") V("「被谁挡」为空（没有前置就写「无」）")
 
     st = md_token("状态")
     if (st == "") V("状态未声明（找不到 `- **状态**:` 行）")
@@ -682,8 +744,22 @@ function review_check(   i, undecided) {
     for (i = 1; i <= 5; i++)
         if (!has_section(REVIEW_SECS[i])) V("缺「## " REVIEW_SECS[i] "」一节")
 
+    # 这几项原先没查：整份裁决单只填「固定点」+ 一行处理表就能过，
+    # 而文档写的是「是否存在且**填全**」。独立审查是 T2/T3 最贵的机制，
+    # 闸门在它上面留白，等于把「审过了」变成一句自我声明。
     if (!field_filled("固定点")) V("「固定点」为空")
+    if (!field_filled("审查者")) V("「审查者」为空——写明是谁审的（独立子 agent / 人）")
+    if (!field_filled("给了它什么")) V("「给了它什么」为空——独立审查的前提是输入自包含；不记下来，没人能判断它看得全不全")
+    if (!field_filled("轮次")) V("「轮次」为空（第一轮写 `1`）")
+    t = section_text("结论")
+    gsub(/[[:space:]]/, "", t)
+    if (t == "") V("「## 结论」留空了——一轮审完要给出可以合 / 不能合的判断")
     if (table_rows(section_text("逐条处理"), 1) == 0) V("「## 逐条处理」表里没有任何条目")
+
+    t = section_text("审查者原文")
+    gsub(/[[:space:]]/, "", t)
+    if (t == "")
+        V("「## 审查者原文」留空了——审查者的报告要逐字贴进来，那是「它真的审过」的唯一证据")
 
     undecided = section_text("审查者明确未判断的")
     gsub(/[[:space:]]/, "", undecided)
@@ -731,8 +807,12 @@ function trim(s) {
     return s
 }
 
-function emit_link(file, s,   last, t, ext) {
+function emit_link(file, s,   last, t, ext, had_pct) {
     if (s == "") return
+    # `%20` 是 URL 编码的空格（CommonMark 里合法）。先解码，否则含空格的真路径
+    # 会被下面「含空格 = 不是路径」那条误判成断链。
+    had_pct = 0
+    if (index(s, "%20") > 0) { gsub(/%20/, " ", s); had_pct = 1 }
     # 不是相对路径：外部 URL、锚点、绝对路径、带占位符/通配符的
     if (s ~ /^[a-zA-Z]+:\/\//) return
     if (s ~ /^#/) return
@@ -740,13 +820,28 @@ function emit_link(file, s,   last, t, ext) {
     if (s ~ /[<>{}*$|]/) return
     if (s ~ /\.\.\./) return
     if (s ~ /NNNN/) return
+    # 反斜杠写法（Windows `docs\\x.md`）先归一再判。
+    gsub(/\\/, "/", s)
+    # 锚点 / 查询串 / 链接标题：`docs/x.md#a`、`docs/x.md?raw=1`、`docs/x.md "标题"`。
+    # 三种都属于「目标文件就是前面那一段」，剥掉再 stat —— 不剥就等于给断链开后门。
+    sub(/#.*$/, "", s)
+    sub(/\?.*$/, "", s)
+    sub(/[ \t]+"[^"]*"[ \t]*$/, "", s)
+    sub(/[ \t]+'[^']*'[ \t]*$/, "", s)
+    # 链接提取按 `](` 到最后一个 `)` 截断，行尾那个右引号会被截掉，剩下半个标题：
+    # `docs/x.md "标题`。这种半截也剥掉，否则带标题的链接一律漏检。
+    sub(/[ \t]+"[^"]*$/, "", s)
+    sub(/[ \t]+'[^']*$/, "", s)
+    # `..` 逃出仓库根的不是「项目内引用」，不归闸门管（也可能指到别处去）。
+    if (s ~ /^\.\.\// || index(s, "/../") > 0) return
+    if (s == "") return
     # 日期占位符：`reports/YYYY-MM-DD.md`、`history_YYYY-MM.json`。
     # 命名约定不是路径，但它们的扩展名看着像文件，只能靠 YYYY 认出来。
     if (index(s, "YYYY") > 0) return
     # 以点开头的是类名/选择器列表（`.card/.kpi-card/.topbar`）。真正的相对路径
     # 只有 `./x` 一种写法，单独放行。
     if (substr(s, 1, 1) == "." && substr(s, 1, 2) != "./") return
-    if (s ~ /[ \t]/) return
+    if (s ~ /[ \t]/ && !had_pct) return
     # env 赋值 / shell 片段：`KEY=/path`、`--out=docs/x.md`。
     # 用「前缀 + =」而不是「整串含 =」：后者会漏掉 `src/a=b.py` 这种真文件名。
     if (s ~ /^[A-Za-z_][A-Za-z0-9_]*=/ || s ~ /^--[A-Za-z0-9-]+=/) return
@@ -786,26 +881,34 @@ function emit_link(file, s,   last, t, ext) {
 #
 # 为什么必须互链：只说「这被取代了」而不说「被谁取代」，半年后读的人走到断头路；
 # 只在新的那篇里写「我取代了旧的」，旧的那篇就会继续被人当成现行决定引用。
-function adr_check(   i, j, end, l, id, ids, n, k, r, t, have) {
+function adr_check(   i, j, end, l, ll, id, ids, n, k, r, t, have, fence) {
     for (i = 1; i <= FIDX; i++) {
         end = (i < FIDX ? FSTART[i + 1] : NL + 1)
         id = adr_id(FNAME[i])
         if (id == "") continue
         ADR_FILE[id] = FNAME[i]
 
+        fence = 0
         for (j = FSTART[i]; j < end; j++) {
             l = L[j]
+            # 围栏代码块里的是**示例**（「长这样」），不是引用。
+            # 当成引用会把每一篇写着格式示例的 ADR 判成悬空链接。
+            if (l ~ /^[ \t]*(```|~~~)/) { fence = !fence; continue }
+            if (fence) continue
+            # 键名大小写不敏感：`superseded-by:` / `Supersedes:` 都是同一个字段。
+            # 只认一种写法等于给「写歪一格」开后门——互指检查会静默不触发。
+            ll = tolower(l)
 
-            if (match(l, /Superseded-By:[ \t]*ADR-[0-9][0-9][0-9][0-9]/)) {
+            if (match(ll, /superseded-by:[ \t]*adr-[0-9][0-9][0-9][0-9]/)) {
                 t = substr(l, RSTART, RLENGTH); sub(/.*ADR-/, "", t)
                 SUPER_BY[id] = SUPER_BY[id] " " t
             }
-            if (match(l, /Supersedes:[ \t]*ADR-[0-9][0-9][0-9][0-9]/)) {
+            if (match(ll, /supersedes:[ \t]*adr-[0-9][0-9][0-9][0-9]/)) {
                 t = substr(l, RSTART, RLENGTH); sub(/.*ADR-/, "", t)
                 SUPERSEDES[id] = SUPERSEDES[id] " " t
             }
-            if (match(l, /^Status:[ \t]*[A-Za-z-]+/)) {
-                t = substr(l, RSTART, RLENGTH); sub(/^Status:[ \t]*/, "", t)
+            if (match(ll, /^status:[ \t]*[a-z-]+/)) {
+                t = substr(ll, RSTART, RLENGTH); sub(/^status:[ \t]*/, "", t)
                 STATUS[id] = tolower(t)
             }
 
