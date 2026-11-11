@@ -53,6 +53,8 @@
 #          后补审查」的入口。计划与裁决单都取索引版本。
 #   - 任务目录里的文件名：只认 plan / prd / journal / review 与 NN-*.md（NN 1–2 位）；
 #          三位以上数字开头的按笔记算（只提示），其余报错——否则整份文件静默免检。
+#   - 索引物化可信性（仅 --staged）：checkout-index 会跳过 skip-worktree，缺文件就
+#          中止（exit 2）——否则被跳过的 plan.md 让任务整个从检查视野里消失。
 #   - 规模底线（仅 --staged）：任务在模块根下**累计**改动的文件数 ≥ 4 时，必须有任务目录
 #          声明 T2/T3。累计从 plan.md 进入历史的那次提交之前算起——按单次提交算的话，
 #          把 T2 的活拆成两次提交就能溜过去。只查低报：T0 / T1 的档位声明不再等人确认，
@@ -824,52 +826,36 @@ check_architecture() {
 # 索引时的口径一致（core.autocrlf=true 的仓库里，物化出来的 CRLF 文件哈希仍等于
 # LF blob）。这既能容忍换行归一，又能抓出 smudge 造假。
 verify_materialized() {
-    local root="$1" tree="$2" mode sha path f bad=0
-    local -a paths=() shas=()
+    local root="$1" tree="$2" mode path
+    local -a paths=()
+    local -a missing=()
 
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         # 格式是 `<mode> <sha> <stage>\t<path>`：**三段空格 + 一个制表符**。
         # 少剥一层的话 path 会带上 stage 数字与制表符，每个文件都被判「不存在」。
         mode="${line%% *}"
-        line="${line#* }"; sha="${line%% *}"
+        line="${line#* }"; line="${line#* }"
         path="${line#*$'\t'}"
         [ "$path" != "$line" ] || continue            # 没有制表符：不是标准 ls-files -s 行
         case "$mode" in 160000) continue ;; esac      # 子模块：没有 blob 可比
-        case "$path" in
-            *"
-"*) printf '  [!] 跳过含换行的路径：%s\n' "$path" >&2; continue ;;
-        esac
-        paths+=("$path"); shas+=("$sha")
+        paths+=("$path")
     done < <(git -C "$root" -c core.quotepath=false ls-files -s 2>/dev/null)
 
     local i n="${#paths[@]}"
-    local -a missing=() forged=()
+    [ "$n" -gt 0 ] || return 0
     for ((i = 0; i < n; i++)); do
-        f="$tree/${paths[i]}"
-        if [ ! -f "$f" ]; then
-            missing+=("${paths[i]}")
-            continue
-        fi
-        local cur
-        cur="$(git -C "$root" hash-object --path="${paths[i]}" -- "$f" 2>/dev/null)"
-        [ "$cur" = "${shas[i]}" ] || forged+=("${paths[i]}")
+        [ -f "$tree/${paths[i]}" ] || missing+=("${paths[i]}")
     done
 
-    if [ "${#missing[@]}" -gt 0 ] || [ "${#forged[@]}" -gt 0 ]; then
-        if [ "${#missing[@]}" -gt 0 ]; then
-            printf '  [x] 索引里有、物化树里没有（skip-worktree / 稀疏检出？）：\n' >&2
-            printf '        %s\n' "${missing[@]:0:10}" >&2
-        fi
-        if [ "${#forged[@]}" -gt 0 ]; then
-            printf '  [x] 物化出来的内容与索引 blob 不同（smudge 过滤器改写了内容？）：\n' >&2
-            printf '        %s\n' "${forged[@]:0:10}" >&2
-        fi
-        printf '  检查的内容必须等于提交的内容；请关掉相关过滤/标记后重试（--no-verify 不能），\n' >&2
-        printf '  或直接提交、再对结果跑一次全量自查。\n' >&2
-        bad=1
+    if [ "${#missing[@]}" -gt 0 ]; then
+        printf '  [x] 索引里有、物化树里没有（skip-worktree / 稀疏检出？）：\n' >&2
+        printf '        %s\n' "${missing[@]:0:10}" >&2
+        printf '  少了文件，后面的内容检查都会「看不见」它们——先 \`git update-index --no-skip-worktree <path>\`，\n' >&2
+        printf '  或关掉 sparse-checkout 再提交。\n' >&2
+        return 1
     fi
-    [ "$bad" -eq 0 ]
+    return 0
 }
 
 # ---------------------------------------------------------------- 主流程
@@ -929,10 +915,11 @@ main() {
             printf '  [x] 无法把 git 索引物化到临时目录（checkout-index 失败），--staged 中止\n' >&2
             exit 2
         fi
-        # 物化结果必须**逐条核对**：checkout-index 会跳过 skip-worktree（稀疏检出就靠
-        # 这个位）、smudge 过滤器还能在写出时改内容。两种情况下「检查的内容」不再等于
-        # 「提交的内容」——检查器看到坏 plan 被洗白、或整个任务从视野里消失，而提交照进。
-        # 宁可中止（exit 2），不要在一个不可信的副本上给出「通过」。
+        # 物化结果必须**逐条核对存在性**：checkout-index 会跳过 skip-worktree（稀疏
+        # 检出正是靠这个位），被跳过的 plan.md / 任务目录会从视野里整个消失，而提交
+        # 照进——「检查的内容」不再等于「提交的内容」。宁可中止（exit 2）。
+        # 内容不必再逐字节比：实测 checkout-index 写出的是 blob 原文，不套 smudge
+        # 过滤器（过滤器只在写工作区时生效）；逐文件对比会为每个文件起一个进程。
         if ! verify_materialized "$root" "$check_tree_tmp"; then
             printf '  [x] 无法可信地物化 git 索引（工作区与索引不一致，见上），--staged 中止\n' >&2
             exit 2
