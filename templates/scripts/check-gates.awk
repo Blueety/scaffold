@@ -969,11 +969,25 @@ function adr_check(   i, j, end, l, ll, id, ids, n, k, r, t, have, fence) {
 
             # 正文/小节里出现的所有引用
             r = l
-            while (match(r, /ADR-[0-9][0-9][0-9][0-9]/)) {
-                t = substr(r, RSTART + 4, 4)
-                ALSO[id] = ALSO[id] " " t
+            # 编号必须是 4 位。只匹配 4 位等于把 `ADR-00012` 静默忽略（既不查存在、
+            # 也不报格式），实测能过；所以这里认「任意位数」，非 4 位的单独报出来。
+            while (match(r, /ADR-[0-9]+/)) {
+                t = substr(r, RSTART + 4, RLENGTH - 4)
+                if (length(t) == 4) ALSO[id] = ALSO[id] " " t
+                else BADADR[id] = BADADR[id] " " t
                 r = substr(r, RSTART + RLENGTH)
             }
+        }
+    }
+
+    # 0. 编号格式（4 位）——格式错了就没有「对应文件」可查，必须单独报
+    for (i = 1; i <= FIDX; i++) {
+        id = adr_id(FNAME[i])
+        if (id == "") continue
+        n = split(BADADR[id], BAD, " ")
+        for (k = 1; k <= n; k++) {
+            if (BAD[k] == "") continue
+            print "  [x] " FNAME[i] ": 引用了 ADR-" BAD[k] "，编号必须是 4 位（ADR-NNNN）"
         }
     }
 

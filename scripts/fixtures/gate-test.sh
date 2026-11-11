@@ -718,6 +718,52 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
 not "无法可信地物化" "$out" "恢复标记后闸门正常工作"
 if [ "$rc" -eq 0 ]; then ok "恢复标记后退出码回到 0"; else no "恢复标记后退出码回到 0（实际 $rc）"; fi
 
+echo "== G-norm: 归一化（控制字符 / 未列出的格式字符 / locale）=="
+P="$TMP/nm1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/src"
+printf 'const a = "[DE\001BUG-1]";\n' > "$P/src/soh-in.js"
+printf 'const b = "[DEBUG\001-2]";\n' > "$P/src/soh-after.js"
+printf 'const c = "[DEBU\335\234G-3]";\n' > "$P/src/u061c.js"
+printf 'const d = "[DEBUG\343\200\200-4]";\n' > "$P/src/ideosp.js"
+out="$(staged_run "$P")"
+has "soh-in.js" "$out" "ASCII 控制字符插在 DEBUG 内部要拦"
+has "soh-after.js" "$out" "控制字符插在连字符前要拦"
+has "u061c.js" "$out" "未列出的 Unicode 格式字符（U+061C）要拦"
+has "ideosp.js" "$out" "全角空格当连字符前的空白也要拦"
+# LC_ALL=C 下行为一致（CI 常用 C locale）
+( cd "$P" && LC_ALL=C "$B" scripts/check-gates.sh --staged ) | grep -q "u061c.js" \
+    && ok "LC_ALL=C 下同样拦（判据不依赖 locale）" || no "LC_ALL=C 下同样拦"
+
+P="$TMP/nm2"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/src"
+printf 'const x = "[DEBUG-1]";\n' > "$P/x.apk"
+printf 'const y = "[DEBUG-2]";\n' > "$P/y.o"
+printf 'const z = "[DEBUG-3]";\n' > "$P/z.tar"
+out="$(staged_run "$P")"
+not "x.apk" "$out" "归档/目标文件后缀（.apk）不参与闸门 B"
+not "y.o" "$out" "目标文件后缀（.o）不参与闸门 B"
+not "z.tar" "$out" "归档后缀（.tar）不参与闸门 B"
+
+echo "== G-adr-fmt: ADR 编号必须是 4 位 =="
+P="$TMP/ad1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/docs/adr"
+printf '# 甲\n\nStatus: accepted\n' > "$P/docs/adr/0001-a.md"
+printf '# 乙\n\nStatus: accepted\nSupersedes: ADR-00012\n' > "$P/docs/adr/0002-b.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "编号必须是 4 位" "$out" "5 位编号不能被静默截成 4 位"
+n="$(printf '%s' "$out" | grep -c '编号必须是 4 位')"
+if [ "$n" -le 1 ]; then ok "同一处编号只报一次"; else no "同一处编号只报一次（实际 $n 次）"; fi
+
+echo "== G-revdel: 删掉裁决单也要拦 =="
+P="$TMP/rd1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-24-t2" "$P/src"
+plan_text T2 > "$P/tasks/2026-01-24-t2/plan.md"
+review_text > "$P/tasks/2026-01-24-t2/review.md"
+wip_commit "$P"
+( cd "$P" && git rm -q tasks/2026-01-24-t2/review.md )
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
+has "不能删" "$out" "T2 任务把 review.md 删掉的提交要拦"
+
 echo "== G-resid: 闸门 B 的残余变体 =="
 P="$TMP/rs1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
@@ -779,7 +825,7 @@ not "core.hooksPath 不是" "$out" "`.githooks/`（尾斜杠）是等价写法�
 if [ "$rc" -eq 0 ]; then ok "尾斜杠写法下全量自查通过"; else no "尾斜杠写法下全量自查通过（实际 $rc）"; fi
 ( cd "$P" && git config core.hooksPath .githooks && git rm -q --cached .githooks/pre-commit )
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"; rc=$?
-has "不在索引里" "$out" "钩子不在索引里要判失败（不只是提示）"
+has "不在工作区或索引里" "$out" "钩子不在索引里要判失败（不只是提示）"
 if [ "$rc" -eq 1 ]; then ok "钩子缺失时退出码 1"; else no "钩子缺失时退出码 1（实际 $rc）"; fi
 
 echo "== G-planonly: 只提交计划不该被 review 拦 =="
@@ -814,7 +860,8 @@ mkdir -p "$P/tasks/2026-01-20-t2" "$P/scripts"
 plan_text T2 > "$P/tasks/2026-01-20-t2/plan.md"
 subst "$P/tasks/2026-01-20-t2/plan.md" 's|src/|scripts/|g'
 wip_commit "$P"
-( cd "$P" && printf '#!/bin/sh\n' > scripts/deploy.sh && git add scripts/deploy.sh )
+# 计划的「相关文件」经上面的 sed 已变成 scripts/a.sh，提交的必须是同一个文件
+( cd "$P" && printf '#!/bin/sh\n' > scripts/a.sh && git add scripts/a.sh )
 out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
 has "review.md" "$out" "归属不限 MODULE_ROOT（scripts/ 下的文件同样要审查）"
 

@@ -44,7 +44,8 @@
 #                指向不存在的 ADR 或没写目标时打一条 [!]。
 #   - 架构：docs/architecture.md 的模块表 vs 实际模块目录（双向，模块根默认 src）。
 #          表里全是宽声明（模块根本身或它的祖先）时，全量自查会提示一句：新增子目录不会被检查。
-#          模块目录 = 模块根下**非空**的直接子目录（含还没 git add 的），点目录和被
+#          模块目录 = 模块根下**非空**的直接子目录（全量模式含还没 git add 的；--staged
+#          取索引物化树，未跟踪目录不可见），点目录和被
 #          .gitignore 命中的除外；空目录不算——git 不跟踪空目录，声明它反而会卡住提交。
 #          模块根本身不查存在性（空目录进不了 git，clone 之后它会消失）
 #
@@ -117,54 +118,41 @@ usage() {
 # 不可见 / 零宽 / 格式字符（字节序列）。**预筛和 strip 共用这一份**：
 # 只在预筛里写「BUG / DEB」，插两个不可见字符就能把两个片段同时打断（实测能过）；
 # 只在 strip 里列，预筛那一步已经把行漏掉了。两边同源才不会互相漏。
-ZW_BYTES=(
-    $'\xe2\x80\x8b' $'\xe2\x80\x8c' $'\xe2\x80\x8d' $'\xe2\x80\x8e' $'\xe2\x80\x8f'
-    $'\xe2\x81\xa0' $'\xe2\x81\xa1' $'\xe2\x81\xa2' $'\xe2\x81\xa3' $'\xe2\x81\xa4'
-    $'\xe2\x81\xa6' $'\xe2\x81\xa7' $'\xe2\x81\xa8' $'\xe2\x81\xa9'
-    $'\xc2\xad' $'\xef\xbb\xbf' $'\xe1\xa0\x8e'
-    $'\xef\xb8\x80' $'\xef\xb8\x81' $'\xef\xb8\x82' $'\xef\xb8\x83' $'\xef\xb8\x84'
-    $'\xef\xb8\x85' $'\xef\xb8\x86' $'\xef\xb8\x87' $'\xef\xb8\x88' $'\xef\xb8\x89'
-    $'\xef\xb8\x8a' $'\xef\xb8\x8b' $'\xef\xb8\x8c' $'\xef\xb8\x8d' $'\xef\xb8\x8e'
-    $'\xef\xb8\x8f'
-)
-
-strip_zw() {
-    local -a a=() c
-    for c in "${ZW_BYTES[@]}"; do a+=(-e "s|$c||g"); done
-    sed "${a[@]}"
+# 闸门 B 的**归一化**：把「看起来像但不是」的写法压成 ASCII 再判。
+#
+# 为什么不再枚举不可见字符：那张表永远差一个码点——实测 U+061C / U+070F / U+2065 /
+# U+FFF9 / U+E0100 都能插进 `DEBUG-` 里，ASCII 控制字符（SOH 等）也能。改成三步：
+#   1. 全角括号与各种连字符映射成 ASCII；
+#   2. 删掉控制字符；
+#   3. 删掉**所有剩下的非 ASCII 字节**（未知格式字符、全角空格一并带走）。
+# 归一化之后判据只剩一种写法：`[DEBUG-`。
+# 代价：`[DEBUG中文-]` 会被判成残留——安全方向的误报。
+normalize_mark() {
+    sed -e 's/［/[/g' -e 's/］/]/g' -e 's/[－–—]/-/g' -e 's/[[:cntrl:]]//g' |
+        tr -d '\200-\377'
 }
 
 check_gate_b() {
     local staged="$1" root="$2" hits
-    # 预筛必须放宽到 `[DE`：零宽字符可能插在 `DEBU` 中间（`[DE\u200bBUG-`），
-    # 原始字节里连 `[DEB` 都不连续。用窄模式预筛等于第一步就漏掉，后面判什么都看不到。
-    # 误报由后面的窄判据兜住（去零宽后必须真的是 `[DEBUG-`）。
-    # 预筛 = `BUG` / `DEB` / **任意不可见字符本身**。前两个覆盖「插一个字符」，
-    # 第三个覆盖「插两个字符把 BUG 和 DEB 同时打断」（实测能过）。宽预筛没有代价：
-    # 真正的判据在删掉不可见字符之后，要求 `[DEBUG` + 连字符。
-    local -a pat=(-i -E -e 'BUG' -e 'DEB')
-    local c
-    for c in "${ZW_BYTES[@]}"; do pat+=(-e "$c"); done
-    local -a narrow=(-E -e '\[DEBUG[[:space:]]*[-－–—]' -e '［DEBUG[[:space:]]*[-－–—]')
+    # 预筛用**带间隙**的模式：`[`/`D`/`E`/`B`/`U`/`G` 之间允许最多 10 个任意字节。
+    # 插几个、插什么码点都进候选；判据在归一化之后，所以预筛宽一点没有代价。
+    local -a pat=(-i -E
+        -e '\[.{0,10}D.{0,10}E.{0,10}B.{0,10}U.{0,10}G'
+        -e '［.{0,10}D.{0,10}E.{0,10}B.{0,10}U.{0,10}G')
+    # 归一化之后只认 ASCII：`[DEBUG-` / `[DEBUG -`（空白允许）。
+    local -a narrow=(-E -e '\[DEBUG[[:space:]]*-')
+    # 后缀只写一份：git 的 pathspec 和 find 回退都从它生成，两处各写一份必然会漂
+    # （实测 find 分支漏掉了新加的后缀，归档里的标记照样报）。
+    local -a bins=(md png jpg jpeg gif ico webp pdf zip gz tar tgz bz2 xz zst 7z rar
+                   whl iso jar war class pyc so dll exe bin o a lib obj wasm pdb
+                   apk ipa nupkg deb rpm msi dmg xlsx docx pptx mp3 mp4 mov wav db sqlite)
     local -a skip=(
         ':(exclude,icase)*.md'
         ':(exclude)scripts/check-gates.sh' ':(exclude)scripts/check-gates.awk'
         ':(exclude)node_modules/*' ':(exclude)*/node_modules/*'
-        ':(exclude,icase)*.png' ':(exclude,icase)*.jpg' ':(exclude,icase)*.jpeg'
-        ':(exclude,icase)*.gif' ':(exclude,icase)*.ico' ':(exclude,icase)*.webp'
-        ':(exclude,icase)*.pdf' ':(exclude,icase)*.zip' ':(exclude,icase)*.gz'
-        ':(exclude,icase)*.tar' ':(exclude,icase)*.tgz' ':(exclude,icase)*.bz2'
-        ':(exclude,icase)*.xz' ':(exclude,icase)*.zst' ':(exclude,icase)*.7z'
-        ':(exclude,icase)*.rar' ':(exclude,icase)*.whl' ':(exclude,icase)*.iso'
-        ':(exclude,icase)*.svgz' ':(exclude,icase)*.woff' ':(exclude,icase)*.woff2'
-        ':(exclude,icase)*.ttf' ':(exclude,icase)*.otf' ':(exclude,icase)*.eot'
-        ':(exclude,icase)*.jar' ':(exclude,icase)*.war' ':(exclude,icase)*.class'
-        ':(exclude,icase)*.pyc' ':(exclude,icase)*.so' ':(exclude,icase)*.dll'
-        ':(exclude,icase)*.exe' ':(exclude,icase)*.bin' ':(exclude,icase)*.pdf'
-        ':(exclude,icase)*.xlsx' ':(exclude,icase)*.docx' ':(exclude,icase)*.pptx'
-        ':(exclude,icase)*.mp3' ':(exclude,icase)*.mp4' ':(exclude,icase)*.mov'
-        ':(exclude,icase)*.wav' ':(exclude,icase)*.db' ':(exclude,icase)*.sqlite'
     )
+    local e
+    for e in "${bins[@]}"; do skip+=(":(exclude,icase)*.$e"); done
     if [ "$staged" -eq 1 ]; then
         hits="$(git -C "$root" grep -a -i -n --cached "${pat[@]}" -- "${skip[@]}" 2>/dev/null || true)"
     else
@@ -175,18 +163,19 @@ check_gate_b() {
         if git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
             hits="$(git -C "$root" grep --untracked --exclude-standard -a -i -n "${pat[@]}" -- "${skip[@]}" 2>/dev/null || true)"
         else
+            # find 分支的排除项**从同一份 bins 生成**：手抄的第二份清单一定会漂
+            # （实测加过 .tar 之后这条路仍然报归档里的标记）。
+            local -a fex=()
+            for e in "${bins[@]}"; do fex+=(! -iname "*.$e"); done
             hits="$(find . -type f \
                 ! -path './.git/*' ! -path '*/node_modules/*' \
-                ! -iname '*.md' ! -path './scripts/check-gates.sh' ! -path './scripts/check-gates.awk' \
-                ! -iname '*.png' ! -iname '*.jpg' ! -iname '*.jpeg' ! -iname '*.gif' \
-                ! -iname '*.ico' ! -iname '*.webp' ! -iname '*.pdf' ! -iname '*.zip' \
-                ! -iname '*.gz' ! -iname '*.svgz' ! -iname '*.woff' ! -iname '*.woff2' \
-                ! -iname '*.ttf' ! -iname '*.otf' ! -iname '*.eot' \
+                ! -path './scripts/check-gates.sh' ! -path './scripts/check-gates.awk' \
+                "${fex[@]}" \
                 -exec grep -H -a -i -n "${pat[@]}" {} + 2>/dev/null | sed 's|^\./||' || true)"
         fi
     fi
     if [ -n "$hits" ]; then
-        hits="$(printf '%s\n' "$hits" | strip_zw | grep -i "${narrow[@]}" 2>/dev/null || true)"
+        hits="$(printf '%s\n' "$hits" | normalize_mark | grep -i "${narrow[@]}" 2>/dev/null || true)"
     fi
     # 一行本身在「找这个标记」（清理脚本、文档里的说明命令）不算残留。
     # 判据窄：整行以 grep / rg / ag / ack 开头，或含 `grep ... DEBUG-`——真调试埋点
@@ -194,10 +183,21 @@ check_gate_b() {
     # 豁免必须锚定在**行首的命令位置**：`console.log("tag", "[DEBUG-x]")` 里
     # 有个 `ag`，用子串匹配就把整行豁免了（实测能过）。判据是「第一个词就是
     # 搜索命令」，允许前面有 `xargs` / `if` / `git` 这类前缀。
-    # 前缀只允许真正的命令包装器：`tag` / `stack` / `feedback` 不能因为末尾像 `ag` 就豁免。
-    hits="$(printf '%s\n' "$hits" | grep -v -E \
-        '^[^:]*:[0-9]+:[[:space:]]*((xargs|sudo|time|env|git|if|then|elif|while|until|\!)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+)*)*([^[:space:]]*/)?(grep|rg|ag|ack)([[:space:]]|$)' \
-        2>/dev/null || true)"
+    # 豁免只对「marker 就在搜索命令的参数里」成立：
+    # `grep -q x f && echo "[DEBUG-]"` 里 marker 在 `&&` 之后，那是真的调试输出，
+    # 不能整行豁免（实测能过）。判定方式：只取第一个 shell 段（到 `&&` / `||` / `;` /
+    # `|` 为止），段首是搜索工具、且 marker 落在这一段内，才豁免。
+    hits="$(printf '%s\n' "$hits" | awk '
+        {
+            s = $0
+            sub(/^[^:]*:[0-9]+:/, "", s)
+            seg = s
+            sub(/(&&|\|\||[;|]).*/, "", seg)
+            low = tolower(seg)
+            if (index(low, "debug") == 0) { print; next }
+            if (low ~ /^[ \t]*((xargs|sudo|time|env|git|if|then|elif|while|until|!)[ \t]+([A-Za-z_][A-Za-z0-9_]*=[^ \t]+[ \t]+)*)*([^ \t]*\/)?(grep|rg|ag|ack)([ \t]|$)/) next
+            print
+        }' 2>/dev/null || true)"
     if [ -n "$hits" ]; then
         printf '%s\n' "$hits" | while IFS= read -r line; do
             printf '  [x] 闸门 B: %s —— 调试标记残留\n' "$line"
@@ -476,6 +476,14 @@ check_review() {
     local d="$1" f="$d/review.md"
     # 还没开工的任务（3.2 落 prd、3.3 定档位与计划、3.8 出裁决单）不要求裁决单，
     # 否则 T2/T3 任务连「先把 prd 提交一次」都做不到。
+    # 裁决单**被删掉**同样要拦：task_has_started 看的是「目录里还有什么」，
+    # 一个只剩 plan.md 的 T2 目录会被判成「还没开工」，于是整份 review 检查被跳过。
+    # 实测 `git rm review.md` 后提交代码能过。
+    if git -C "$root" cat-file -e "HEAD:$f" 2>/dev/null &&
+       ! git -C "$root" cat-file -e ":$f" 2>/dev/null; then
+        fail "$f: 这份裁决单在 HEAD 里有、这次提交里没了 —— T2/T3 的审查记录不能删（要作废请写进 journal.md 并说明原因）"
+        return
+    fi
     task_has_started "$d" || return 0
     if [ ! -f "$f" ]; then
         fail "$f: 这个任务的档位是 T2/T3，但缺 review.md（这两档的审查必须由独立子 agent 做，见 docs/agents/任务分级.md）"
@@ -533,22 +541,36 @@ check_review_by_scope() {
         [ -f "$root/$d/plan.md" ] && versions+=("$(cat "$root/$d/plan.md" 2>/dev/null)")
         [ "${#versions[@]}" -gt 0 ] || continue
 
-        # 任一个版本声明 T2/T3 就算高档
+        # 档位来源要与 task_is_high_tier 一致：plan、prd、切片里**任何一处**声明了
+        # T2/T3 就算高档。只看 plan 的话，「prd 写 T2、plan 写 T1」能绕过归属检查。
         high=0
         for v in "${versions[@]}"; do
             if [ "$(printf '%s\n' "$v" | awk -v kind=tier -f "$AWK_PROG" - 2>/dev/null)" = "yes" ]; then
                 high=1; break
             fi
         done
+        if [ "$high" -eq 0 ]; then
+            local tf
+            while IFS= read -r tf; do
+                [ -n "$tf" ] || continue
+                case "$tf" in "$d/plan.md") continue ;; esac
+                if [ "$(awk -v kind=tier -f "$AWK_PROG" "$root/$tf" 2>/dev/null)" = "yes" ]; then
+                    high=1; break
+                fi
+            done < <(git -C "$root" -c core.quotepath=false ls-files -- "$d" 2>/dev/null;
+                     git -C "$root" -c core.quotepath=false ls-tree -r --name-only HEAD -- "$d" 2>/dev/null;
+                     find "$root/$d" -maxdepth 1 -name '*.md' 2>/dev/null | sed "s|^${root%/}/||")
+        fi
         [ "$high" -eq 1 ] || continue
 
         # 非空裁决单：三个版本任一处有内容就算有（0 字节不算）
         review_ok=0
         for f in "$d/review.md"; do
             # 「非空」= 有非空白内容。只有空格/换行的裁决单顶不了一次审查。
+            # 只认**索引或 HEAD**：一份未跟踪的本地 review.md 不算——那样代码进主干，
+            # 审查记录却留在某人的工作区里，主干上永远没有这次审查。
             if git -C "$root" cat-file blob ":$f" 2>/dev/null | grep -q '[^[:space:]]'; then review_ok=1; fi
             if git -C "$root" cat-file blob "HEAD:$f" 2>/dev/null | grep -q '[^[:space:]]'; then review_ok=1; fi
-            [ -f "$root/$f" ] && grep -q '[^[:space:]]' "$root/$f" 2>/dev/null && review_ok=1
         done
         [ "$review_ok" -eq 1 ] && continue
 
@@ -880,17 +902,21 @@ verify_materialized() {
     local -a missing=() present=() present_sha=()
     local line
 
-    while IFS= read -r line; do
+    # 用 `-z` 读：没有它，含空格/引号/换行的路径会被 C-quote 成 `"a b"` 这类字符串，
+    # 在物化树里当然找不到，于是每次 --staged 都 exit 2（POSIX 上合法文件名）。
+    while IFS= read -r -d '' line; do
         [ -n "$line" ] || continue
         # 格式是 `<mode> <sha> <stage>\t<path>`：**三段空格 + 一个制表符**。
-        # 少剥一层的话 path 会带上 stage 数字与制表符，每个文件都被判「不存在」。
         mode="${line%% *}"
         line="${line#* }"; sha="${line%% *}"
         path="${line#*$'\t'}"
         [ "$path" != "$line" ] || continue            # 没有制表符：不是标准 ls-files -s 行
-        case "$mode" in 160000) continue ;; esac      # 子模块：没有 blob 可比
+        case "$mode" in
+            160000) continue ;;                        # 子模块：没有 blob 可比
+            120000) continue ;;                        # 符号链接：内容不在文件里，-f 判不了
+        esac
         paths+=("$path"); shas+=("$sha")
-    done < <(git -C "$root" -c core.quotepath=false ls-files -s 2>/dev/null)
+    done < <(git -C "$root" ls-files -s -z 2>/dev/null)
 
     local i n="${#paths[@]}"
     [ "$n" -gt 0 ] || return 0
@@ -912,6 +938,16 @@ verify_materialized() {
     local -a forged=()
     if [ "${#present[@]}" -gt 0 ]; then
         gitdir="$(git -C "$root" rev-parse --absolute-git-dir 2>/dev/null)"
+        if [ -z "$gitdir" ]; then
+            # Git < 2.13 没有 --absolute-git-dir（Ubuntu 16.04 的 2.7 就是）
+            local gd
+            gd="$(git -C "$root" rev-parse --git-dir 2>/dev/null)"
+            case "$gd" in
+                "") ;;
+                /*|[A-Za-z]:/*) gitdir="$gd" ;;
+                *) gitdir="$(cd "$root/$gd" 2>/dev/null && pwd)" ;;
+            esac
+        fi
         if [ -z "$gitdir" ]; then
             printf '  [x] 取不到 .git 目录，无法核对索引内容\n' >&2
             return 1
@@ -1044,10 +1080,11 @@ main() {
         fi
         if [ "$hp_norm" != ".githooks" ]; then
             note "core.hooksPath 不是 .githooks（当前：${hp:-未设置}）：提交前闸门不会自动执行。跑一次 \`git config core.hooksPath .githooks\`。"
-        elif ! git -C "$root" cat-file -e :.githooks/pre-commit 2>/dev/null; then
+        elif [ ! -f "$root/.githooks/pre-commit" ] ||
+             ! git -C "$root" cat-file -e :.githooks/pre-commit 2>/dev/null; then
             # 钩子被删了但配置还指着它 —— 这时候「配置正确」是假象，闸门一次都不会跑。
             # 只提示不够：这是**唯一**能发现「闸门整个没装」的地方。
-            fail "core.hooksPath 指向 .githooks，但 .githooks/pre-commit 不在索引里 —— 提交前闸门根本没有执行。恢复它（\`git checkout -- .githooks/\`）再继续"
+            fail "core.hooksPath 指向 .githooks，但 .githooks/pre-commit 不在工作区或索引里 —— 提交前闸门根本没有执行（git 找不到钩子就静默跳过）。恢复它（\`git checkout -- .githooks/\`）再继续"
         fi
     fi
 
