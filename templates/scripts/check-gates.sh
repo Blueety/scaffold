@@ -134,10 +134,11 @@ check_gate_b() {
     # 预筛必须放宽到 `[DE`：零宽字符可能插在 `DEBU` 中间（`[DE\u200bBUG-`），
     # 原始字节里连 `[DEB` 都不连续。用窄模式预筛等于第一步就漏掉，后面判什么都看不到。
     # 误报由后面的窄判据兜住（去零宽后必须真的是 `[DEBUG-`）。
-    # 预筛只要出现 `BUG`（不分大小写）。零宽字符可能插在 `[` 与 `D`、`D` 与 `E`
-    # 之间，原始字节里连 `DEBUG` 都不连续——任何更窄的预筛都会在第一步漏掉。
-    # 宽预筛没有代价：真正的判据在删掉不可见字符之后，要求 `[DEBUG-`。
-    local -a pat=(-i -E -e 'BUG')
+    # 预筛只要是 `BUG` 或 `DEB`（不分大小写）。零宽字符可能插在 `[`/`D`、`D`/`E`、
+    # `E`/`B`、`B`/`U`、`U`/`G` 之间，任何「要求整词连续」的预筛都会在第一步漏掉；
+    # 三个字母的片段至少有一段是连续的。宽预筛没有代价——真正的判据在删掉不可见
+    # 字符之后，要求 `[DEBUG` + 连字符。
+    local -a pat=(-i -E -e 'BUG' -e 'DEB')
     local -a narrow=(-E -e '\[DEBUG[[:space:]]*[-－]' -e '［DEBUG[[:space:]]*[-－]')
     local -a skip=(
         ':(exclude,icase)*.md'
@@ -172,11 +173,11 @@ check_gate_b() {
                 ! -iname '*.ico' ! -iname '*.webp' ! -iname '*.pdf' ! -iname '*.zip' \
                 ! -iname '*.gz' ! -iname '*.svgz' ! -iname '*.woff' ! -iname '*.woff2' \
                 ! -iname '*.ttf' ! -iname '*.otf' ! -iname '*.eot' \
-                -exec grep -H -a -i -n -E 'BUG' {} + 2>/dev/null | sed 's|^\./||' || true)"
+                -exec grep -H -a -i -n -E 'BUG|DEB' {} + 2>/dev/null | sed 's|^\./||' || true)"
         fi
     fi
     if [ -n "$hits" ]; then
-        hits="$(printf '%s\n' "$hits" | strip_zw | grep "${narrow[@]}" 2>/dev/null || true)"
+        hits="$(printf '%s\n' "$hits" | strip_zw | grep -i "${narrow[@]}" 2>/dev/null || true)"
     fi
     # 一行本身在「找这个标记」（清理脚本、文档里的说明命令）不算残留。
     # 判据窄：整行以 grep / rg / ag / ack 开头，或含 `grep ... DEBUG-`——真调试埋点
@@ -477,7 +478,7 @@ check_review() {
 # 本次提交的代码文件，是否属于某个「声明了 T2/T3 但还没裁决单」的在飞任务。
 # 只认 plan.md 的「相关文件」——那是唯一把文件和任务连起来的机器可读字段。
 check_review_by_scope() {
-    local root="$1" d f rel hit t plan_txt review_ok
+    local root="$1" d f rel hit t high review_ok
     local -a changed=() dirs=()
 
     # 不限于 MODULE_ROOT：计划里写 `scripts/deploy.sh`、`app/main.py` 的任务同样要有
@@ -510,25 +511,44 @@ check_review_by_scope() {
 
     for d in ${dirs[@]+"${dirs[@]}"}; do
         case "$d" in tasks/_template|tasks/_archive/*|tasks/_template/*) continue ;; esac
-        # 计划取「索引版优先，其次 HEAD，最后工作区」——三处都看，改哪一处都逃不掉。
-        plan_txt="$(task_plan_text "$root" "$d")"
-        [ -n "$plan_txt" ] || continue
-        printf '%s\n' "$plan_txt" | awk -v kind=tier -f "$AWK_PROG" - 2>/dev/null | grep -qx yes || continue
-        # 非空裁决单：同样三处取并集（写成 0 字节不算）
+
+        # tier 与「相关文件」对**三个版本各判一次，再取并集**。
+        # 「先选一个版本」是不行的：HEAD 里是 T2、索引里改成 T1（或把文件列表删空），
+        # 单版本判定就只看索引那份，等于把高档声明洗掉。实测两条都能过。
+        local -a versions=()
+        local v
+        for v in ":""$d/plan.md" "HEAD:""$d/plan.md" ; do
+            t="$(git -C "$root" cat-file blob "$v" 2>/dev/null)"
+            [ -n "$t" ] && versions+=("$t")
+        done
+        [ -f "$root/$d/plan.md" ] && versions+=("$(cat "$root/$d/plan.md" 2>/dev/null)")
+        [ "${#versions[@]}" -gt 0 ] || continue
+
+        # 任一个版本声明 T2/T3 就算高档
+        high=0
+        for v in "${versions[@]}"; do
+            if [ "$(printf '%s\n' "$v" | awk -v kind=tier -f "$AWK_PROG" - 2>/dev/null)" = "yes" ]; then
+                high=1; break
+            fi
+        done
+        [ "$high" -eq 1 ] || continue
+
+        # 非空裁决单：三个版本任一处有内容就算有（0 字节不算）
         review_ok=0
         for f in "$d/review.md"; do
-            if git -C "$root" cat-file -e ":$f" 2>/dev/null &&
-               [ -n "$(git -C "$root" cat-file blob ":$f" 2>/dev/null)" ]; then review_ok=1; fi
-            if git -C "$root" cat-file -e "HEAD:$f" 2>/dev/null &&
-               [ -n "$(git -C "$root" cat-file blob "HEAD:$f" 2>/dev/null)" ]; then review_ok=1; fi
+            if [ -n "$(git -C "$root" cat-file blob ":$f" 2>/dev/null)" ]; then review_ok=1; fi
+            if [ -n "$(git -C "$root" cat-file blob "HEAD:$f" 2>/dev/null)" ]; then review_ok=1; fi
             [ -f "$root/$f" ] && [ -s "$root/$f" ] && review_ok=1
         done
         [ "$review_ok" -eq 1 ] && continue
 
+        # 相关文件同样取三版并集
         local -a rels=()
-        while IFS= read -r rel; do
-            [ -n "$rel" ] && rels+=("$rel")
-        done < <(printf '%s\n' "$plan_txt" | awk -v kind=related -f "$AWK_PROG" - 2>/dev/null)
+        for v in "${versions[@]}"; do
+            while IFS= read -r rel; do
+                [ -n "$rel" ] && rels+=("$rel")
+            done < <(printf '%s\n' "$v" | awk -v kind=related -f "$AWK_PROG" - 2>/dev/null)
+        done
         [ "${#rels[@]}" -gt 0 ] || continue
         hit=""
         for f in "${changed[@]}"; do
@@ -536,7 +556,7 @@ check_review_by_scope() {
                 rel="${rel%/}"
                 case "$rel" in
                     # glob 当通配符展开等于让人用 `src/*` 声明一切——但它也没法用作
-                    # 归属判据（`case` 里会被当模式）。直接跳过并留一条提示。
+                    # 归属判据（`case` 里会被当模式）。直接跳过。
                     *'*'*|*'?'*|*'['*) continue ;;
                 esac
                 case "$f" in
@@ -551,7 +571,9 @@ check_review_by_scope() {
 }
 
 # 一个任务计划文本的「最佳可得版本」：索引 → HEAD → 工作区。
-# 三处取并集的原因见 check_review_by_scope 里的注释。
+# 只在需要「看某一份」时用；审查归属那种必须并集的地方不要用这个函数。
+# 一个任务计划文本的「最佳可得版本」：索引 → HEAD → 工作区。
+# 只在需要「看某一份」时用；审查归属那种必须并集的地方不要用这个函数。
 task_plan_text() {
     local root="$1" d="$2" t
     t="$(git -C "$root" cat-file blob ":$d/plan.md" 2>/dev/null)"
@@ -996,7 +1018,21 @@ main() {
     if [ "$staged" -eq 0 ]; then
         local hp
         hp="$(git -C "$root" config core.hooksPath 2>/dev/null)"
-        if [ "$hp" != ".githooks" ]; then
+        # 归一化后再比：`.githooks/` / `./.githooks` / 绝对路径都指向同一个目录，
+        # 字符串全等会把它们判成「没装钩子」，然后一条提示就放过去了。
+        hp_norm="${hp%/}"
+        case "$hp_norm" in
+            ./.githooks) hp_norm=".githooks" ;;
+        esac
+        if [ -n "$hp_norm" ] && [ "$hp_norm" != ".githooks" ]; then
+            # 绝对路径指向本仓库的 .githooks 也算装好了
+            case "$hp_norm" in /*|[A-Za-z]:/*)
+                if [ "$(cd "$hp_norm" 2>/dev/null && pwd)" = "$(cd "$root/.githooks" && pwd)" ]; then
+                    hp_norm=".githooks"
+                fi ;;
+            esac
+        fi
+        if [ "$hp_norm" != ".githooks" ]; then
             note "core.hooksPath 不是 .githooks（当前：${hp:-未设置}）：提交前闸门不会自动执行。跑一次 \`git config core.hooksPath .githooks\`。"
         elif ! git -C "$root" cat-file -e :.githooks/pre-commit 2>/dev/null; then
             # 钩子被删了但配置还指着它 —— 这时候「配置正确」是假象，闸门一次都不会跑。

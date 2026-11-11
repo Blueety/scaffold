@@ -718,6 +718,49 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
 not "无法可信地物化" "$out" "恢复标记后闸门正常工作"
 if [ "$rc" -eq 0 ]; then ok "恢复标记后退出码回到 0"; else no "恢复标记后退出码回到 0（实际 $rc）"; fi
 
+echo "== G-union: tier 与相关文件对三个版本取并集 =="
+P="$TMP/un1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-22-t2" "$P/src"
+plan_text T2 > "$P/tasks/2026-01-22-t2/plan.md"
+wip_commit "$P"
+# HEAD 是 T2；把索引里的计划降成 T1（相关文件留着），再提交范围内的代码
+plan_text T1 > "$P/tasks/2026-01-22-t2/plan.md"
+( cd "$P" && printf 'echo a\n' > src/a.sh && git add src/a.sh tasks/2026-01-22-t2/plan.md )
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
+has "review.md" "$out" "HEAD 里的 T2 声明不能被索引里的 T1 洗掉"
+
+P="$TMP/un2"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-23-t2" "$P/src"
+plan_text T2 > "$P/tasks/2026-01-23-t2/plan.md"
+wip_commit "$P"
+# 索引里仍是 src/a.sh；工作区把「相关文件」改成 src/b.sh（不 stage），只提交 src/b.sh
+subst "$P/tasks/2026-01-23-t2/plan.md" 's|src/a.sh|src/b.sh|g'
+( cd "$P" && printf 'echo b\n' > src/b.sh && git add src/b.sh )
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
+has "review.md" "$out" "工作区版本的相关文件同样算归属"
+
+echo "== G-case: 闸门 B 大小写与 BUG 内部的零宽 =="
+P="$TMP/ca1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/src"
+printf 'const a = "[debug-x]";\n' > "$P/src/lower.js"
+printf 'const b = "[DEB\342\200\213UG-x]";\n' > "$P/src/zw-bug.js"
+printf 'const c = "[DEBU\342\200\213G-x]";\n' > "$P/src/zw-ug.js"
+out="$(staged_run "$P")"
+has "lower.js" "$out" "小写 [debug-x] 也要拦（说法是大小写不敏感）"
+has "zw-bug.js" "$out" "零宽插在 BUG 内部也要拦"
+has "zw-ug.js" "$out" "零宽插在 U/G 之间也要拦"
+
+echo "== G-hp: core.hooksPath 的等价写法与钩子缺失 =="
+P="$TMP/hp1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+( cd "$P" && git config core.hooksPath .githooks/ )
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"; rc=$?
+not "core.hooksPath 不是" "$out" "`.githooks/`（尾斜杠）是等价写法，不该提示没装钩子"
+if [ "$rc" -eq 0 ]; then ok "尾斜杠写法下全量自查通过"; else no "尾斜杠写法下全量自查通过（实际 $rc）"; fi
+( cd "$P" && git config core.hooksPath .githooks && git rm -q --cached .githooks/pre-commit )
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"; rc=$?
+has "不在索引里" "$out" "钩子不在索引里要判失败（不只是提示）"
+if [ "$rc" -eq 1 ]; then ok "钩子缺失时退出码 1"; else no "钩子缺失时退出码 1（实际 $rc）"; fi
+
 echo "== G-planonly: 只提交计划不该被 review 拦 =="
 P="$TMP/po1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-17-t2" "$P/src"
