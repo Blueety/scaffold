@@ -2,6 +2,23 @@
 
 一键生成 Vibe Coding 开发系统所需的目录结构和规范文件。
 
+![闸门演示：提交被拦下，补上内容后通过](assets/demo.svg)
+
+> **English (short)**
+> One command scaffolds a project skeleton that encodes an **AI workflow with executable checks**:
+> task state lives in git (`tasks/<date>-<slug>/{prd,plan,journal}.md`), a gate checker runs on
+> `pre-commit`, and planning / implementation / review happen in *separate* agent contexts so a plan
+> can't silently become its own justification. Every rule either has a check a machine can run, or is
+> explicitly labelled as human judgment.
+>
+> ```bash
+> bash init.sh my-project-name      # Windows: .\init.ps1 my-project-name
+> ```
+>
+> Runs on Windows (PowerShell 5.1+ / Git Bash), Linux and macOS (stock bash 3.2 — the generated
+> project has no runtime dependencies; the gate is bash + awk). Docs are written in Chinese;
+> [`INTRO.md`](INTRO.md) is the conceptual overview and [`WORKFLOW.md`](WORKFLOW.md) the full flow.
+
 **第一次接触先读 [`INTRO.md`](INTRO.md)**：它讲的是「为什么长这样」——解决什么问题、一个任务怎么走一遍、四道闸门、关键取舍、不适用场景。本文件只讲怎么用。
 
 > 改这个仓库之前先读 [`AGENTS.md`](AGENTS.md)：`templates/` 的 LF 约束、两个 init 脚本必须等价、README 树是唯一真源。生成出来的项目另有一份自己的 `AGENTS.md`，规则不同。

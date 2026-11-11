@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="366" viewBox="0 0 560 366" role="img" aria-label="闸门演示：提交被拦下，补上内容后通过">
+<rect width="100%" height="100%" rx="9" fill="#0d1117"/>
+<rect width="100%" height="34" rx="9" fill="#161b22"/>
+<rect y="25" width="100%" height="9" fill="#161b22"/>
+<circle cx="18" cy="17" r="5.5" fill="#ff5f57"/>
+<circle cx="38" cy="17" r="5.5" fill="#febc2e"/>
+<circle cx="58" cy="17" r="5.5" fill="#28c840"/>
+<text x="280" y="21" fill="#8b949e" font-size="12" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">todo-app — bash</text>
+<g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13">
+<text x="18" y="67" fill="#7ee787" xml:space="preserve">$ bash init.sh todo-app</text>
+<text x="18" y="87" fill="#c9d1d9" xml:space="preserve">正在创建项目: todo-app</text>
+<text x="18" y="127" fill="#7ee787" xml:space="preserve">项目 &#x27;todo-app&#x27; 创建成功!</text>
+<text x="18" y="167" fill="#7ee787" xml:space="preserve">$ cd todo-app</text>
+<text x="18" y="187" fill="#7ee787" xml:space="preserve">$ git commit -m &quot;feat: 按标题过滤&quot;</text>
+<text x="18" y="207" fill="#c9d1d9" xml:space="preserve">检查 tasks/2026-11-11-add-filter/plan.md</text>
+<text x="18" y="227" fill="#ff7b72" xml:space="preserve">  [x] tasks/2026-11-11-add-filter/plan.md: 「目标」为空</text>
+<text x="18" y="247" fill="#ff7b72" xml:space="preserve">闸门检查失败：1 项。</text>
+<text x="18" y="287" fill="#7ee787" xml:space="preserve">$ # 补上「目标」，再提交</text>
+<text x="18" y="307" fill="#7ee787" xml:space="preserve">$ git commit -m &quot;feat: 按标题过滤&quot;</text>
+<text x="18" y="327" fill="#7ee787" xml:space="preserve">闸门检查通过。</text>
+<text x="18" y="347" fill="#8b949e" xml:space="preserve">[master 77f81a9] feat: 按标题过滤</text>
+</g>
+</svg>
