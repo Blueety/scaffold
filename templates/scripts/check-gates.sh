@@ -118,24 +118,13 @@ usage() {
 # 不可见 / 零宽 / 格式字符（字节序列）。**预筛和 strip 共用这一份**：
 # 只在预筛里写「BUG / DEB」，插两个不可见字符就能把两个片段同时打断（实测能过）；
 # 只在 strip 里列，预筛那一步已经把行漏掉了。两边同源才不会互相漏。
-# 闸门 B 的**归一化**：把「看起来像但不是」的写法压成 ASCII 再判。
-#
-# 为什么不再枚举不可见字符：那张表永远差一个码点——实测 U+061C / U+070F / U+2065 /
-# U+FFF9 / U+E0100 都能插进 `DEBUG-` 里，ASCII 控制字符（SOH 等）也能。改成三步：
-#   1. 全角括号与各种连字符映射成 ASCII；
-#   2. 删掉控制字符；
-#   3. 删掉**所有剩下的非 ASCII 字节**（未知格式字符、全角空格一并带走）。
-# 归一化之后判据只剩一种写法：`[DEBUG-`。
+# 闸门 B 的归一化在 awk 里做（见 check_gate_b）。要点：
+#   1. 所有「看起来是连字符」的码点映射成 `-`（**字面替换**，不用字符类——
+#      `LC_ALL=C` 下 `[－–—]` 是字节集合，会把别的字符的尾字节改坏）；
+#   2. 全角括号映射成 ASCII；
+#   3. 删控制字符，再删**所有非 ASCII 字节**（未知格式字符、全角空格一并带走）。
+# 归一化之后判据只有一种写法：`[DEBUG-`。
 # 代价：`[DEBUG中文-]` 会被判成残留——安全方向的误报。
-normalize_mark() {
-    # 连字符必须**一条一条替换**，不能写成 `[－–—]`：`LC_ALL=C` 下那是字节集合
-    # `{EF,BC,8D,E2,80,93,94}`，会把 U+200B 的 `E2 80 8B` 改写成 `--8B`，
-    # 归一化后的 `[DEBUG` 直接断开（实测整类零宽变体在 C locale 下失效）。
-    sed -e 's/［/[/g' -e 's/］/]/g' \
-        -e 's/－/-/g' -e 's/–/-/g' -e 's/—/-/g' \
-        -e 's/[[:cntrl:]]//g' |
-        tr -d '\200-\377'
-}
 
 check_gate_b() {
     local staged="$1" root="$2" hits
@@ -180,64 +169,83 @@ check_gate_b() {
                 -exec grep -H -a -i -n "${pat[@]}" {} + 2>/dev/null | sed 's|^\./||' || true)"
         fi
     fi
-    # 归一化只作用于 `file:line:` **之后的内容**；输出保留原始行。
-    # 早先整行过 normalize，结果 `src/中文.js` 被删成 `src/.js`——闸门拦对了，
-    # 但报告里的路径没法用。
+    # 归一化 + 判据 + 豁免全在一个 awk 里（每个 hit 行起三次进程的写法实测
+    # 让 50 个 marker 的项目从 2.9s 涨到 10.6s）。输出始终是**原始行**——
+    # 早先整行过 normalize 时 `src/中文.js` 被删成 `src/.js`，报告里的路径没法用。
+    #
+    # 判定顺序：
+    #   1. 拆出 `file:line:` 前缀（`(.+)` 贪婪，兼容路径里有冒号）；
+    #   2. 归一化**内容**，要求 `[DEBUG` + 连字符；
+    #   3. 拆 shell 段（**认引号、认反斜杠转义**，未加引号的 `&&` / `||` / `;` /
+    #      `|` / `&` 才算分隔），凡含 marker 的段，段首必须是搜索命令；
+    #   4. 全部满足才算「工具行」，否则输出原始行。
     if [ -n "$hits" ]; then
-        local kept="" line rest norm
-        while IFS= read -r line; do
-            [ -n "$line" ] || continue
-            if [[ "$line" =~ ^([^:]*:[0-9]+:)(.*)$ ]]; then
-                rest="${BASH_REMATCH[2]}"
-                norm="$(printf '%s' "$rest" | normalize_mark)"
-                printf '%s' "$norm" | grep -qi -E '\[DEBUG[[:space:]]*-' || continue
-                kept+="$line"$'\n'
-            fi
-        done <<< "$hits"
-        hits="${kept%$'\n'}"
-    fi
-    # 豁免：拆成 shell 段（**认引号**，只在未加引号的 `&&` / `||` / `;` / `|` / `&` 处切），
-    # 凡是含 marker 的段，段首必须是搜索命令；任何一段不满足就报。
-    # 早先按「首段 + 行内有没有 debug 字样」判，两个方向都错：引号里的 `|` 被当分隔符
-    # （`grep -q "a|\[DEBUG-" f` 被误报），而 `grep -q foo debug.txt && echo "[DEBUG-]"`
-    # 又因为文件名里有 debug 被整行豁免。
-    hits="$(printf '%s\n' "$hits" | LC_ALL=C awk '
-        function is_search(t,   low) {
-            low = tolower(t)
-            return low ~ /^[ \t(]*(\([ \t]*)?(exec[ \t]+|command[ \t]+|xargs[ \t]+|sudo[ \t]+|time[ \t]+|env[ \t]+|git[ \t]+|if[ \t]+|then[ \t]+|elif[ \t]+|while[ \t]+|until[ \t]+|![ \t]+|-[A-Za-z0-9_-]+[ \t]+|[a-z_][a-z0-9_]*=[^ \t]+[ \t]+)*([^ \t]*\/)?(grep|rg|ag|ack)([ \t]|$)/
-        }
-        {
-            if (!match($0, /^[^:]*:[0-9]+:/)) { print; next }
-            s = substr($0, RLENGTH + 1)
-            n = 0; seg[0] = ""; q = ""
-            for (i = 1; i <= length(s); i++) {
-                c = substr(s, i, 1)
-                if (q != "") {
+        hits="$(printf '%s\n' "$hits" | LC_ALL=C awk '
+            function norm(t) {
+                # 用**八进制字节**写，不写字面字符：`LC_ALL=C` 下 gawk 对源码里的
+                # 多字节字面量匹配不上（实测：全角括号被直接删掉而不是映射成 `[`）。
+                gsub(/\357\274\273/, "[", t); gsub(/\357\274\275/, "]", t)
+                gsub(/\357\274\215/, "-", t)   # － FF0D
+                gsub(/\342\200\223/, "-", t)   # – 2013
+                gsub(/\342\200\224/, "-", t)   # — 2014
+                gsub(/\342\200\220/, "-", t)   # ‐ 2010
+                gsub(/\342\200\221/, "-", t)   # ‑ 2011
+                gsub(/\342\200\222/, "-", t)   # ‒ 2012
+                gsub(/\342\200\225/, "-", t)   # ― 2015
+                gsub(/\342\210\222/, "-", t)   # − 2212
+                gsub(/\357\271\230/, "-", t)   # ﹘ FE58
+                gsub(/\357\271\243/, "-", t)   # ﹣ FE63
+                gsub(/\342\201\203/, "-", t)   # ⁃ 2043
+                gsub(/\313\227/, "-", t)        # ˗ 02D7
+                gsub(/\302\255/, "-", t)        # 软连字符 00AD
+                gsub(/[\001-\037\177]/, "", t)
+                gsub(/[\200-\377]/, "", t)
+                return t
+            }
+            function is_search(t,   low) {
+                low = tolower(t)
+                # wrapper 的 option 可能带参数（`sudo -u root`、`git -C dir`、
+                # `xargs -I {}`），所以 `-opt` 后面再允许一个非选项词。
+                return low ~ /^[ \t]*(\([ \t]*)?((exec|command|xargs|sudo|time|env|git|nice|timeout|if|then|elif|while|until|!)[ \t]+(-[^ \t]+([ \t]+[^ \t]+)?[ \t]+|[A-Za-z_][A-Za-z0-9_]*=[^ \t]+[ \t]+)*)*([^ \t]*\/)?(grep|rg|ag|ack)([ \t]|$)/
+            }
+            {
+                if (!match($0, /^(.+):[0-9]+:/)) { print; next }
+                s = substr($0, RLENGTH + 1)
+                ns = norm(s)
+                if (ns !~ /\[DEBUG[ \t]*-/) next
+                n = 0; seg[0] = ""; q = ""
+                for (i = 1; i <= length(ns); i++) {
+                    c = substr(ns, i, 1)
+                    if (q == "" && c == "\\") {
+                        # 反斜杠转义：`\\|`、`\\"`、`\\;`、`\\&` 都不是分隔符。
+                        # 单引号里反斜杠是字面量，仍然照常处理下一字符。
+                        seg[n] = seg[n] c substr(ns, i + 1, 1)
+                        i++
+                        continue
+                    }
+                    if (q != "") {
+                        seg[n] = seg[n] c
+                        if (c == q) q = ""
+                        continue
+                    }
+                    if (c == "\"" || c == "\\047") { q = c; seg[n] = seg[n] c; continue }
+                    if (c == "&" || c == "|" || c == ";") {
+                        n++; seg[n] = ""
+                        d = substr(ns, i + 1, 1)
+                        if (d == c) i++
+                        continue
+                    }
                     seg[n] = seg[n] c
-                    if (c == q) q = ""
-                    continue
                 }
-                # 单引号用八进制写法（\047）：这段 awk 程序本身包在 shell 单引号里，
-                # 注释或字符串里出现裸的单引号会把 shell 的引号配平弄乱。
-                if (c == "\"" || c == "\047") { q = c; seg[n] = seg[n] c; continue }
-                if (c == "&" || c == "|" || c == ";") {
-                    n++; seg[n] = ""
-                    # 吞掉 && / || 的第二个字符
-                    d = substr(s, i + 1, 1)
-                    if (d == c) i++
-                    continue
+                bad = 0
+                for (k = 0; k <= n; k++) {
+                    if (tolower(seg[k]) !~ /\[debug[ \t]*-/) continue
+                    if (!is_search(seg[k])) { bad = 1; break }
                 }
-                seg[n] = seg[n] c
-            }
-            bad = 0
-            for (k = 0; k <= n; k++) {
-                low = tolower(seg[k])
-                if (low !~ /\[debug[ \t]*-/) continue
-                if (!is_search(seg[k])) { bad = 1; break }
-            }
-            if (!bad) next
-            print
-        }' 2>/dev/null || true)"
+                if (!bad) next
+                print
+            }' 2>/dev/null || true)"
+    fi
     if [ -n "$hits" ]; then
         printf '%s\n' "$hits" | while IFS= read -r line; do
             printf '  [x] 闸门 B: %s —— 调试标记残留\n' "$line"

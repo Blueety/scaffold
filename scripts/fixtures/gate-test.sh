@@ -718,6 +718,23 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
 not "无法可信地物化" "$out" "恢复标记后闸门正常工作"
 if [ "$rc" -eq 0 ]; then ok "恢复标记后退出码回到 0"; else no "恢复标记后退出码回到 0（实际 $rc）"; fi
 
+echo "== G-dash: 各类连字符与包装器参数 =="
+P="$TMP/ds1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/src" "$P/scripts"
+printf 'x = "[DEBUG\357\271\2434]";\n' > "$P/src/fe63.js"
+printf 'x = "[DEBUG\302\255-5]";\n' > "$P/src/soft.js"
+printf 'x = "[DEBUG\342\210\2226]";\n' > "$P/src/minus.js"
+printf 'grep -q foo\\|\\[DEBUG- f\n' > "$P/scripts/esc.sh"
+printf 'sudo -u root grep -q "[DEBUG-x]" f\n' > "$P/scripts/sudo.sh"
+printf 'git -C dir grep -q "[DEBUG-x]" f\n' > "$P/scripts/gitc.sh"
+out="$(staged_run "$P")"
+has "fe63.js" "$out" "U+FE63 全角连字符要拦"
+has "soft.js" "$out" "软连字符当连字符要拦"
+has "minus.js" "$out" "U+2212 减号当连字符要拦"
+not "esc.sh" "$out" "反斜杠转义的 \\| 不是 shell 分隔符"
+not "sudo.sh" "$out" "sudo -u root 的参数不打断豁免"
+not "gitc.sh" "$out" "git -C dir 的参数不打断豁免"
+
 echo "== G-exempt3: 引号内分隔符 / 包装器 / 报告路径 =="
 P="$TMP/ex10"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
