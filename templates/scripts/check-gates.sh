@@ -180,35 +180,63 @@ check_gate_b() {
                 -exec grep -H -a -i -n "${pat[@]}" {} + 2>/dev/null | sed 's|^\./||' || true)"
         fi
     fi
+    # 归一化只作用于 `file:line:` **之后的内容**；输出保留原始行。
+    # 早先整行过 normalize，结果 `src/中文.js` 被删成 `src/.js`——闸门拦对了，
+    # 但报告里的路径没法用。
     if [ -n "$hits" ]; then
-        hits="$(printf '%s\n' "$hits" | normalize_mark | grep -i "${narrow[@]}" 2>/dev/null || true)"
+        local kept="" line rest norm
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            if [[ "$line" =~ ^([^:]*:[0-9]+:)(.*)$ ]]; then
+                rest="${BASH_REMATCH[2]}"
+                norm="$(printf '%s' "$rest" | normalize_mark)"
+                printf '%s' "$norm" | grep -qi -E '\[DEBUG[[:space:]]*-' || continue
+                kept+="$line"$'\n'
+            fi
+        done <<< "$hits"
+        hits="${kept%$'\n'}"
     fi
-    # 一行本身在「找这个标记」（清理脚本、文档里的说明命令）不算残留。
-    # 判据窄：整行以 grep / rg / ag / ack 开头，或含 `grep ... DEBUG-`——真调试埋点
-    # 不会长这样。
-    # 豁免必须锚定在**行首的命令位置**：`console.log("tag", "[DEBUG-x]")` 里
-    # 有个 `ag`，用子串匹配就把整行豁免了（实测能过）。判据是「第一个词就是
-    # 搜索命令」，允许前面有 `xargs` / `if` / `git` 这类前缀。
-    # 豁免只对「marker 就在搜索命令的参数里」成立，判据分两步：
-    #   1. 第一个 shell 段（到 `&&` / `||` / `;` / `|` 为止）的首命令是搜索工具；
-    #   2. **整行里 marker 只出现在这一段内**。
-    # 只看首段有没有 `debug` 字样是不够的：`grep -q foo debug.txt && echo "[DEBUG-]"` 里
-    # `debug.txt` 就让整行被豁免了（实测）。也不接受 `command`/`VAR=value` 之外的前缀。
-    hits="$(printf '%s\n' "$hits" | awk '
+    # 豁免：拆成 shell 段（**认引号**，只在未加引号的 `&&` / `||` / `;` / `|` / `&` 处切），
+    # 凡是含 marker 的段，段首必须是搜索命令；任何一段不满足就报。
+    # 早先按「首段 + 行内有没有 debug 字样」判，两个方向都错：引号里的 `|` 被当分隔符
+    # （`grep -q "a|\[DEBUG-" f` 被误报），而 `grep -q foo debug.txt && echo "[DEBUG-]"`
+    # 又因为文件名里有 debug 被整行豁免。
+    hits="$(printf '%s\n' "$hits" | LC_ALL=C awk '
+        function is_search(t,   low) {
+            low = tolower(t)
+            return low ~ /^[ \t(]*(\([ \t]*)?(exec[ \t]+|command[ \t]+|xargs[ \t]+|sudo[ \t]+|time[ \t]+|env[ \t]+|git[ \t]+|if[ \t]+|then[ \t]+|elif[ \t]+|while[ \t]+|until[ \t]+|![ \t]+|-[A-Za-z0-9_-]+[ \t]+|[a-z_][a-z0-9_]*=[^ \t]+[ \t]+)*([^ \t]*\/)?(grep|rg|ag|ack)([ \t]|$)/
+        }
         {
-            s = $0
-            sub(/^[^:]*:[0-9]+:/, "", s)
-            low = tolower(s)
-            seg = s
-            sub(/(&&|\|\||[;|]).*/, "", seg)
-            lowseg = tolower(seg)
-            # 搜索命令必须在段首（允许 xargs/sudo/env/command/赋值前缀等包装）
-            if (lowseg !~ /^[ \t]*((command|xargs|sudo|time|env|git|if|then|elif|while|until|!|lc_all=[^ \t]*|lang=[^ \t]*)[ \t]+([A-Za-z_][A-Za-z0-9_]*=[^ \t]+[ \t]+)*)*([^ \t]*\/)?(grep|rg|ag|ack)([ \t]|$)/) { print; next }
-            # marker 只能出现在这一段里：段外还有，就是真的调试输出
-            rest = substr(s, length(seg) + 1)
-            lowrest = tolower(rest)
-            if (index(lowrest, "debug") > 0) { print; next }
-            next
+            if (!match($0, /^[^:]*:[0-9]+:/)) { print; next }
+            s = substr($0, RLENGTH + 1)
+            n = 0; seg[0] = ""; q = ""
+            for (i = 1; i <= length(s); i++) {
+                c = substr(s, i, 1)
+                if (q != "") {
+                    seg[n] = seg[n] c
+                    if (c == q) q = ""
+                    continue
+                }
+                # 单引号用八进制写法（\047）：这段 awk 程序本身包在 shell 单引号里，
+                # 注释或字符串里出现裸的单引号会把 shell 的引号配平弄乱。
+                if (c == "\"" || c == "\047") { q = c; seg[n] = seg[n] c; continue }
+                if (c == "&" || c == "|" || c == ";") {
+                    n++; seg[n] = ""
+                    # 吞掉 && / || 的第二个字符
+                    d = substr(s, i + 1, 1)
+                    if (d == c) i++
+                    continue
+                }
+                seg[n] = seg[n] c
+            }
+            bad = 0
+            for (k = 0; k <= n; k++) {
+                low = tolower(seg[k])
+                if (low !~ /\[debug[ \t]*-/) continue
+                if (!is_search(seg[k])) { bad = 1; break }
+            }
+            if (!bad) next
+            print
         }' 2>/dev/null || true)"
     if [ -n "$hits" ]; then
         printf '%s\n' "$hits" | while IFS= read -r line; do
@@ -963,6 +991,12 @@ verify_materialized() {
     # (1) 存在性：checkout-index 会跳过 skip-worktree（稀疏检出正是靠这个位），
     # 被跳过的 plan.md / 任务目录会从视野里整个消失，而提交照进。
     for ((i = 0; i < n; i++)); do
+        case "${paths[i]}" in
+            # `hash-object --stdin-paths` 按**行**读输入：含换行的合法 POSIX 文件名
+            # 会被拆成两行，数量对不上就整次中止。这种文件极罕见，跳过并留提示。
+            *'
+'*) note "路径含换行，跳过内容核对：${paths[i]}"; continue ;;
+        esac
         if [ -f "$tree/${paths[i]}" ]; then
             present+=("${paths[i]}"); present_sha+=("${shas[i]}")
         else
@@ -1122,26 +1156,24 @@ main() {
             note "core.hooksPath 不是 .githooks（当前：${hp:-未设置}）：提交前闸门不会自动执行。跑一次 \`git config core.hooksPath .githooks\`。"
         fi
         # 可执行位：clone 到 Linux / macOS 后，没有 +x 的钩子 git 会静默跳过。
-        # Windows 上没有这个概念，跳过这段。
-        case "$(uname -s 2>/dev/null)" in
-            MINGW*|MSYS*|CYGWIN*) ;;
-            *)
-                for f in .githooks/pre-commit .githooks/pre-merge-commit; do
-                    [ -f "$root/$f" ] || continue
-                    if [ -n "$(git -C "$root" ls-files -s -- "$f" | awk '$1 != "100755"')" ]; then
-                        fail "$f 在索引里不是可执行文件（100755）—— clone 到 Linux / macOS 后 git 会静默跳过这个钩子。跑 \`git update-index --chmod=+x $f\`"
-                    fi
-                done
-                ;;
-        esac
+        # 检查的是**索引里的 mode**，这个跨平台有意义——Windows 上 worktree 的 +x
+        # 没有意义，但把 `100644` 提交出去，别人 clone 后钩子就不执行。所以这段
+        # 不按 uname 跳过。
+        for f in .githooks/pre-commit .githooks/pre-merge-commit; do
+            [ -f "$root/$f" ] || continue
+            if [ -n "$(git -C "$root" ls-files -s -- "$f" 2>/dev/null | awk '$1 != "100755"')" ]; then
+                fail "$f 在索引里不是可执行文件（100755）—— clone 到 Linux / macOS 后 git 会静默跳过这个钩子。跑 \`git update-index --chmod=+x $f\`"
+            fi
+        done
         if [ "$hp_norm" = ".githooks" ] &&
            { [ ! -f "$root/.githooks/pre-commit" ] ||
              ! git -C "$root" cat-file -e :.githooks/pre-commit 2>/dev/null ||
              [ ! -f "$root/.githooks/pre-merge-commit" ] ||
              ! git -C "$root" cat-file -e :.githooks/pre-merge-commit 2>/dev/null; }; then
             # 钩子被删了但配置还指着它 —— 这时候「配置正确」是假象，闸门一次都不会跑。
-            # 只提示不够：这是**唯一**能发现「闸门整个没装」的地方。
-            fail "core.hooksPath 指向 .githooks，但 .githooks/{pre-commit,pre-merge-commit} 有缺失（工作区或索引） —— 提交前闸门根本没有执行（git 找不到钩子就静默跳过）。恢复它（\`git checkout -- .githooks/\`）再继续"
+            # 只提示不够：这是**最后一个**能发现「钩子缺失」的地方（提交时的核对只看
+            # 得到下一次 commit；merge 闸门与可执行位各有独立入口）。
+            fail "core.hooksPath 指向 .githooks，但 .githooks/{pre-commit,pre-merge-commit} 有缺失（工作区或索引）—— 对应入口（commit / merge）的闸门不会执行（git 找不到钩子就静默跳过）。恢复它们（\`git checkout -- .githooks/\`）再继续"
         fi
     fi
 

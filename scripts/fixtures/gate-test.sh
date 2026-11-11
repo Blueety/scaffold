@@ -718,6 +718,23 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
 not "无法可信地物化" "$out" "恢复标记后闸门正常工作"
 if [ "$rc" -eq 0 ]; then ok "恢复标记后退出码回到 0"; else no "恢复标记后退出码回到 0（实际 $rc）"; fi
 
+echo "== G-exempt3: 引号内分隔符 / 包装器 / 报告路径 =="
+P="$TMP/ex10"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/src" "$P/scripts"
+printf 'grep -q "foo|\\[DEBUG-" f\n' > "$P/scripts/q1.sh"
+printf 'grep -q "a|\\[DEBUG-" f && echo ok\n' > "$P/scripts/q2.sh"
+printf 'FOO=1 grep -q "[DEBUG-x]" f\n' > "$P/scripts/q3.sh"
+printf 'grep -q foo f & echo "[DEBUG-1] x"\n' > "$P/src/amp.js"
+printf 'grep -q "[DEBUG-" f && echo "[DEBUG-2] x"\n' > "$P/src/chain.js"
+printf 'const s = "[DEBUG-x]";\n' > "$P/src/中文.js"
+out="$(staged_run "$P")"
+not "q1.sh" "$out" "引号里的 | 不是分隔符（grep 参数里有 marker 应豁免）"
+not "q2.sh" "$out" "引号里有 | 且后面 echo 无 marker，仍豁免"
+not "q3.sh" "$out" "FOO=1 grep 是工具行"
+has "amp.js" "$out" "单个 & 之后还有 marker 要报"
+has "chain.js" "$out" "&& 之后的 echo 里还有 marker 要报"
+has "src/中文.js" "$out" "报告里的路径要保留原文（归一化只作用于内容）"
+
 echo "== G-loc: LC_ALL=C 下同样有效 + 预筛间隙 =="
 P="$TMP/lc1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src"
@@ -880,7 +897,7 @@ not "core.hooksPath 不是" "$out" "`.githooks/`（尾斜杠）是等价写法�
 if [ "$rc" -eq 0 ]; then ok "尾斜杠写法下全量自查通过"; else no "尾斜杠写法下全量自查通过（实际 $rc）"; fi
 ( cd "$P" && git config core.hooksPath .githooks && git rm -q --cached .githooks/pre-commit )
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"; rc=$?
-has "不在工作区或索引里" "$out" "钩子不在索引里要判失败（不只是提示）"
+has "有缺失" "$out" "钩子不在索引里要判失败（不只是提示）"
 if [ "$rc" -eq 1 ]; then ok "钩子缺失时退出码 1"; else no "钩子缺失时退出码 1（实际 $rc）"; fi
 
 echo "== G-planonly: 只提交计划不该被 review 拦 =="
