@@ -20,6 +20,8 @@ bash scripts/fixtures/update-test.sh   # 55 项
 bash scripts/fixtures/name-test.sh     # 19 项（项目名接受集；没有 PowerShell 的机器会跳过）
 ```
 
+只改了 `templates/` 里任何东西（哪怕一行文档）时，第一个会红的是 `gate-test.sh` 的 **`G-pristine`**：它在全新生成的项目上跑全量与 `--staged`，要求**零违规**。这条是为了兜「模板里新增了一个会被判断链的示例名 / 一句会被判成占位符的话」——那种错只有真的生成一个项目才看得见。
+
 提交时 `.githooks/pre-commit` 会自动跑第一项（全量，约 20 秒）。被拦下就修，**不要**用 `git commit --no-verify` 绕过。
 
 非 Windows 机器跑不了 `check-tree.ps1`（脚本自身拒绝非 Windows，`exit 3`，与有没有 `pwsh` 无关）——`templates/` 与 `init.sh` 产物的逐字节比对与三个 fixture 在 CI 里跑，见 `.github/workflows/check.yml`。PR 上看到 CI 红就是这条不变量破了。
