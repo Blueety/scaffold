@@ -115,7 +115,15 @@ usage() {
 # `.{1,6}G.{0,4}-` 只覆盖了 DEBU 与 G 之间、G 与 - 之间；`[DEBUG\u200b-`
 # 这种插在 G 后面的照样溜过去（实测过）。先把不可见字符本身删掉，判据就只剩一种。
 strip_zw() {
-    local -a z=($'\xe2\x80\x8b' $'\xe2\x80\x8c' $'\xe2\x80\x8d' $'\xe2\x80\x8e' $'\xe2\x81\xa0' $'\xef\xbb\xbf')
+    # 不可见 / 零宽 / 格式字符全删：方向标记（U+200E/200F）、软连字符（U+00AD）、
+    # 词连接符（U+2060–2064）、BOM。删掉它们之后判据只剩一种写法，不必再为
+    # 「插在第几个字母之间」逐个列模式——那种补法永远差一个位置。
+    local -a z=(
+        $'\xe2\x80\x8b' $'\xe2\x80\x8c' $'\xe2\x80\x8d' $'\xe2\x80\x8e' $'\xe2\x80\x8f'
+        $'\xe2\x81\xa0' $'\xe2\x81\xa1' $'\xe2\x81\xa2' $'\xe2\x81\xa3' $'\xe2\x81\xa4'
+        $'\xe2\x81\xa6' $'\xe2\x81\xa7' $'\xe2\x81\xa8' $'\xe2\x81\xa9'
+        $'\xc2\xad' $'\xef\xbb\xbf'
+    )
     local -a a=() c
     for c in "${z[@]}"; do a+=(-e "s|$c||g"); done
     sed "${a[@]}"
@@ -126,8 +134,11 @@ check_gate_b() {
     # 预筛必须放宽到 `[DE`：零宽字符可能插在 `DEBU` 中间（`[DE\u200bBUG-`），
     # 原始字节里连 `[DEB` 都不连续。用窄模式预筛等于第一步就漏掉，后面判什么都看不到。
     # 误报由后面的窄判据兜住（去零宽后必须真的是 `[DEBUG-`）。
-    local -a pat=(-E -e '\[DE' -e '［DE')
-    local -a narrow=(-E -e '\[DEBUG-' -e '［DEBUG[-－]' -e '\[DEBU.{1,6}G.{0,4}-')
+    # 预筛只要出现 `BUG`（不分大小写）。零宽字符可能插在 `[` 与 `D`、`D` 与 `E`
+    # 之间，原始字节里连 `DEBUG` 都不连续——任何更窄的预筛都会在第一步漏掉。
+    # 宽预筛没有代价：真正的判据在删掉不可见字符之后，要求 `[DEBUG-`。
+    local -a pat=(-i -E -e 'BUG')
+    local -a narrow=(-E -e '\[DEBUG[[:space:]]*[-－]' -e '［DEBUG[[:space:]]*[-－]')
     local -a skip=(
         ':(exclude,icase)*.md'
         ':(exclude)scripts/check-gates.sh' ':(exclude)scripts/check-gates.awk'
@@ -161,7 +172,7 @@ check_gate_b() {
                 ! -iname '*.ico' ! -iname '*.webp' ! -iname '*.pdf' ! -iname '*.zip' \
                 ! -iname '*.gz' ! -iname '*.svgz' ! -iname '*.woff' ! -iname '*.woff2' \
                 ! -iname '*.ttf' ! -iname '*.otf' ! -iname '*.eot' \
-                -exec grep -H -a -i -n -E '\[DE|［DE' {} + 2>/dev/null | sed 's|^\./||' || true)"
+                -exec grep -H -a -i -n -E 'BUG' {} + 2>/dev/null | sed 's|^\./||' || true)"
         fi
     fi
     if [ -n "$hits" ]; then
@@ -173,8 +184,10 @@ check_gate_b() {
     # 豁免必须锚定在**行首的命令位置**：`console.log("tag", "[DEBUG-x]")` 里
     # 有个 `ag`，用子串匹配就把整行豁免了（实测能过）。判据是「第一个词就是
     # 搜索命令」，允许前面有 `xargs` / `if` / `git` 这类前缀。
-    hits="$(printf '%s\n' "$hits" |
-        grep -v -E '^[^:]*:[0-9]+:[[:space:]]*((xargs|sudo|time|git)[[:space:]]+)*[-[:alnum:]_./ ]*(grep|rg|ag|ack)([[:space:]]|$)'         2>/dev/null || true)"
+    # 前缀只允许真正的命令包装器：`tag` / `stack` / `feedback` 不能因为末尾像 `ag` 就豁免。
+    hits="$(printf '%s\n' "$hits" | grep -v -E \
+        '^[^:]*:[0-9]+:[[:space:]]*((xargs|sudo|time|env|git|if|then|elif|while|until|\!)[[:space:]]+)*([^[:space:]]*/)?(grep|rg|ag|ack)([[:space:]]|$)' \
+        2>/dev/null || true)"
     if [ -n "$hits" ]; then
         printf '%s\n' "$hits" | while IFS= read -r line; do
             printf '  [x] 闸门 B: %s —— 调试标记残留\n' "$line"
@@ -467,20 +480,33 @@ check_review_by_scope() {
     local root="$1" d f rel hit t plan_txt review_ok
     local -a changed=() dirs=()
 
+    # 不限于 MODULE_ROOT：计划里写 `scripts/deploy.sh`、`app/main.py` 的任务同样要有
+    # 裁决单。任务目录自己的改动排除在外（那是计划/日志，不是被审的代码）。
     while IFS= read -r f; do
-        [ -n "$f" ] && changed+=("$f")
-    done < <(git -C "$root" -c core.quotepath=false diff --cached --name-only --diff-filter=ACMRD -- "${MODULE_ROOT%/}" 2>/dev/null)
+        [ -n "$f" ] || continue
+        case "$f" in tasks/*) continue ;; esac
+        changed+=("$f")
+    done < <(git -C "$root" -c core.quotepath=false diff --cached --name-only --diff-filter=ACMRD 2>/dev/null)
     [ "${#changed[@]}" -gt 0 ] || return 0
 
     # 候选任务取 **HEAD ∪ 索引 ∪ 工作区** 的并集。
     # 只看索引物化树的话：计划不暂存、被 `git rm --cached`、被 skip-worktree、
     # 或者本次提交里顺手归档，任务就从视野里消失，它范围内的代码可以免审进主干
     # （四条都实跑过）。任务一旦声明过 T2/T3，就别想靠「这次没带上它」躲开审查。
+    # 注意 `find "$root/tasks"`：这时 cwd 已经是索引物化树，写 `find tasks` 扫的是
+    # 临时树而不是工作区——「计划写在磁盘上但忘了 git add」正是这条检查要抓的情形。
+    # 三处来源会有重复，下面按已见过的目录名去重（否则同一条违规打印两三次）。
+    local seen=" "
     while IFS= read -r f; do
-        case "$f" in tasks/*/plan.md) dirs+=("${f%/plan.md}") ;; esac
+        f="${f#./}"
+        case "$f" in tasks/*/plan.md) ;; *) continue ;; esac
+        d="${f%/plan.md}"
+        case "$seen" in *" $d "*) continue ;; esac
+        seen="$seen$d "
+        dirs+=("$d")
     done < <(git -C "$root" -c core.quotepath=false ls-tree -r --name-only HEAD 2>/dev/null;
              git -C "$root" -c core.quotepath=false ls-files 2>/dev/null;
-             find tasks -mindepth 2 -maxdepth 2 -name plan.md 2>/dev/null)
+             find "$root/tasks" -mindepth 2 -maxdepth 2 -name plan.md 2>/dev/null | sed "s|^${root%/}/||")
 
     for d in ${dirs[@]+"${dirs[@]}"}; do
         case "$d" in tasks/_template|tasks/_archive/*|tasks/_template/*) continue ;; esac
@@ -707,25 +733,15 @@ arch_path_exists() { [ -e "$1/$2" ]; }
 # 「整个 src 当一个模块」，子目录不再逐个要求；写具体子目录，则新加的子目录必须进表。
 check_architecture() {
     local staged="$1" root="$2"
-    local doc="docs/architecture.md" check_doc="docs/architecture.md"
+    local doc="docs/architecture.md"
 
     if [ "$staged" -eq 1 ]; then
-        # 暂存模式下 cwd 是索引物化出的整棵树，表进了索引就是索引版本
-        # （所以「暂存了坏表」会被拦住）。没进索引（还没 commit 过、又没 add 过它）
-        # 才退回工作区版本——否则会把「文件明明在仓库里」报成不存在。
+        # 暂存模式下 cwd 是索引物化出的整棵树。
+        # 只看**这次提交里**的架构表。以前在「索引和 HEAD 都没有」时会拷一份工作区版本
+        # 进物化树，那会造成双向失真：提交里其实没有这个文件，闸门却按工作区那份放行
+        # （`git rm --cached` 后提交能过、断链进主干）；而同一个文件又会让 check_links
+        # 把「提交里不存在」的路径当成存在。索引里没有就是没有，直接报「不存在」。
         doc="$check_tree_tmp/docs/architecture.md"
-        if [ ! -f "$doc" ]; then
-            # 只在「这个文件根本没进过版本库」时才看工作区（新项目第一次提交前的常见状态）。
-            # 索引里有删除记录（`git rm --cached` / `git rm`）时**必须**判「不存在」——
-            # 否则从索引里删掉架构表再提交，提交后的树里没有这个文件，闸门却报了「通过」。
-            if git -C "$root" cat-file -e "HEAD:$check_doc" 2>/dev/null ||
-               git -C "$root" cat-file -e ":$check_doc" 2>/dev/null; then
-                :
-            else
-                mkdir -p "$check_tree_tmp/docs"
-                cp "$root/docs/architecture.md" "$doc" 2>/dev/null || rm -f "$doc"
-            fi
-        fi
     fi
 
     if [ ! -f "$doc" ]; then

@@ -480,7 +480,7 @@ function modules_dump(   n, i, cells, nf, p, line, npaths, k, seg, prev_dir) {
 # 用途只有一处：判断**这次提交的代码**是不是某个 T2/T3 任务计划里的文件。
 # 归属本来靠人自觉（一个任务一个提交），但「先改代码、再补审查」时闸门原先
 # 完全看不见——代码已经进了主干，审查还没做。
-function related_dump(   i, n, l, v) {
+function related_dump(   i, n, l, first) {
     n = field_block("相关文件")
     if (n <= 0) return
     # 第 1 行是字段行本身，从第 2 行起是路径
@@ -493,12 +493,16 @@ function related_dump(   i, n, l, v) {
         sub(/[[:space:]]*[（(].*$/, "", l)
         l = trim(l)
         if (l == "") continue
-        # 一行写多个路径时取第一个（`src/a.py, src/b.py`）：逗号在空格之后，
-        # 所以要先切空格再剥标点，否则会带出一个 `src/a.py,` 这种拼不上文件的串。
-        sub(/[[:space:]].*$/, "", l)
-        sub(/[，。；、,;]+$/, "", l)
-        if (l == "") continue
-        print l
+        # 一行写多个路径时，第一个 token 只是其中一个候选（`src/a.py, src/b.py`）。
+        # 先剥标点再切空格，否则会留下 `src/a.py,` 这种拼不上文件的串。
+        first = l
+        sub(/[[:space:]].*$/, "", first)
+        sub(/[，。；、,;]+$/, "", first)
+        if (first != "") print first
+        # 整行也输出一次：文件名里**带空格**时（`src/我的 文件.js`）只有整行才对得上。
+        # 调用方按「任何一个候选匹配上就算命中」，多输出一个候选没有副作用。
+        gsub(/[，。；、,;]+$/, "", l)
+        if (l != "" && l != first) print l
     }
 }
 

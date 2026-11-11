@@ -736,6 +736,37 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
 has "review.md" "$out" "计划被移出索引后，范围内的代码仍要求裁决单（HEAD 里还有那份计划）"
 ( cd "$P" && git reset -q && git checkout -- tasks/2026-01-18-t2/plan.md 2>/dev/null )
 
+# 计划只写在工作区、根本没 git add —— 归属照样要生效（这一条以前漏掉：find 扫的是物化树）
+P="$TMP/su2"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-19-t2" "$P/src"
+plan_text T2 > "$P/tasks/2026-01-19-t2/plan.md"
+( cd "$P" && printf 'echo a\n' > src/a.sh && git add src/a.sh )
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
+has "review.md" "$out" "计划没 git add 也要算归属（工作区也是候选来源）"
+
+# 「相关文件」不在 src 下（scripts/）同样要归属
+P="$TMP/su3"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-20-t2" "$P/scripts"
+plan_text T2 > "$P/tasks/2026-01-20-t2/plan.md"
+subst "$P/tasks/2026-01-20-t2/plan.md" 's|src/|scripts/|g'
+wip_commit "$P"
+( cd "$P" && printf '#!/bin/sh\n' > scripts/deploy.sh && git add scripts/deploy.sh )
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
+has "review.md" "$out" "归属不限 MODULE_ROOT（scripts/ 下的文件同样要审查）"
+
+# 文件名带空格：整行候选也要能匹配上
+P="$TMP/su4"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-21-t2" "$P/src"
+plan_text T2 > "$P/tasks/2026-01-21-t2/plan.md"
+subst "$P/tasks/2026-01-21-t2/plan.md" 's|src/a.sh|src/我的 文件.js|g'
+wip_commit "$P"
+( cd "$P" && printf 'x\n' > "src/我的 文件.js" && git add "src/我的 文件.js" )
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
+has "review.md" "$out" "带空格的文件名不能因为按空格切词而逃过归属检查"
+# 同一条违规不该打印两次
+n="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 | grep -c '本次提交的' )"
+if [ "$n" -le 1 ]; then ok "同一任务的归属违规只报一次"; else no "同一任务的归属违规只报一次（实际 $n 次）"; fi
+
 echo "== G-env: 模块根缺失与钩子丢失要说出来（只提示，不拦）=="
 P="$TMP/genv"; new_project "$P" || { echo "建项目失败"; exit 2; }
 
