@@ -114,18 +114,23 @@ usage() {
 # 删掉零宽字符再匹配。用「模式里给插入点留空位」的办法是堵不完的：
 # `.{1,6}G.{0,4}-` 只覆盖了 DEBU 与 G 之间、G 与 - 之间；`[DEBUG\u200b-`
 # 这种插在 G 后面的照样溜过去（实测过）。先把不可见字符本身删掉，判据就只剩一种。
+# 不可见 / 零宽 / 格式字符（字节序列）。**预筛和 strip 共用这一份**：
+# 只在预筛里写「BUG / DEB」，插两个不可见字符就能把两个片段同时打断（实测能过）；
+# 只在 strip 里列，预筛那一步已经把行漏掉了。两边同源才不会互相漏。
+ZW_BYTES=(
+    $'\xe2\x80\x8b' $'\xe2\x80\x8c' $'\xe2\x80\x8d' $'\xe2\x80\x8e' $'\xe2\x80\x8f'
+    $'\xe2\x81\xa0' $'\xe2\x81\xa1' $'\xe2\x81\xa2' $'\xe2\x81\xa3' $'\xe2\x81\xa4'
+    $'\xe2\x81\xa6' $'\xe2\x81\xa7' $'\xe2\x81\xa8' $'\xe2\x81\xa9'
+    $'\xc2\xad' $'\xef\xbb\xbf' $'\xe1\xa0\x8e'
+    $'\xef\xb8\x80' $'\xef\xb8\x81' $'\xef\xb8\x82' $'\xef\xb8\x83' $'\xef\xb8\x84'
+    $'\xef\xb8\x85' $'\xef\xb8\x86' $'\xef\xb8\x87' $'\xef\xb8\x88' $'\xef\xb8\x89'
+    $'\xef\xb8\x8a' $'\xef\xb8\x8b' $'\xef\xb8\x8c' $'\xef\xb8\x8d' $'\xef\xb8\x8e'
+    $'\xef\xb8\x8f'
+)
+
 strip_zw() {
-    # 不可见 / 零宽 / 格式字符全删：方向标记（U+200E/200F）、软连字符（U+00AD）、
-    # 词连接符（U+2060–2064）、BOM。删掉它们之后判据只剩一种写法，不必再为
-    # 「插在第几个字母之间」逐个列模式——那种补法永远差一个位置。
-    local -a z=(
-        $'\xe2\x80\x8b' $'\xe2\x80\x8c' $'\xe2\x80\x8d' $'\xe2\x80\x8e' $'\xe2\x80\x8f'
-        $'\xe2\x81\xa0' $'\xe2\x81\xa1' $'\xe2\x81\xa2' $'\xe2\x81\xa3' $'\xe2\x81\xa4'
-        $'\xe2\x81\xa6' $'\xe2\x81\xa7' $'\xe2\x81\xa8' $'\xe2\x81\xa9'
-        $'\xc2\xad' $'\xef\xbb\xbf'
-    )
     local -a a=() c
-    for c in "${z[@]}"; do a+=(-e "s|$c||g"); done
+    for c in "${ZW_BYTES[@]}"; do a+=(-e "s|$c||g"); done
     sed "${a[@]}"
 }
 
@@ -134,12 +139,13 @@ check_gate_b() {
     # 预筛必须放宽到 `[DE`：零宽字符可能插在 `DEBU` 中间（`[DE\u200bBUG-`），
     # 原始字节里连 `[DEB` 都不连续。用窄模式预筛等于第一步就漏掉，后面判什么都看不到。
     # 误报由后面的窄判据兜住（去零宽后必须真的是 `[DEBUG-`）。
-    # 预筛只要是 `BUG` 或 `DEB`（不分大小写）。零宽字符可能插在 `[`/`D`、`D`/`E`、
-    # `E`/`B`、`B`/`U`、`U`/`G` 之间，任何「要求整词连续」的预筛都会在第一步漏掉；
-    # 三个字母的片段至少有一段是连续的。宽预筛没有代价——真正的判据在删掉不可见
-    # 字符之后，要求 `[DEBUG` + 连字符。
+    # 预筛 = `BUG` / `DEB` / **任意不可见字符本身**。前两个覆盖「插一个字符」，
+    # 第三个覆盖「插两个字符把 BUG 和 DEB 同时打断」（实测能过）。宽预筛没有代价：
+    # 真正的判据在删掉不可见字符之后，要求 `[DEBUG` + 连字符。
     local -a pat=(-i -E -e 'BUG' -e 'DEB')
-    local -a narrow=(-E -e '\[DEBUG[[:space:]]*[-－]' -e '［DEBUG[[:space:]]*[-－]')
+    local c
+    for c in "${ZW_BYTES[@]}"; do pat+=(-e "$c"); done
+    local -a narrow=(-E -e '\[DEBUG[[:space:]]*[-－–—]' -e '［DEBUG[[:space:]]*[-－–—]')
     local -a skip=(
         ':(exclude,icase)*.md'
         ':(exclude)scripts/check-gates.sh' ':(exclude)scripts/check-gates.awk'
@@ -147,6 +153,9 @@ check_gate_b() {
         ':(exclude,icase)*.png' ':(exclude,icase)*.jpg' ':(exclude,icase)*.jpeg'
         ':(exclude,icase)*.gif' ':(exclude,icase)*.ico' ':(exclude,icase)*.webp'
         ':(exclude,icase)*.pdf' ':(exclude,icase)*.zip' ':(exclude,icase)*.gz'
+        ':(exclude,icase)*.tar' ':(exclude,icase)*.tgz' ':(exclude,icase)*.bz2'
+        ':(exclude,icase)*.xz' ':(exclude,icase)*.zst' ':(exclude,icase)*.7z'
+        ':(exclude,icase)*.rar' ':(exclude,icase)*.whl' ':(exclude,icase)*.iso'
         ':(exclude,icase)*.svgz' ':(exclude,icase)*.woff' ':(exclude,icase)*.woff2'
         ':(exclude,icase)*.ttf' ':(exclude,icase)*.otf' ':(exclude,icase)*.eot'
         ':(exclude,icase)*.jar' ':(exclude,icase)*.war' ':(exclude,icase)*.class'
@@ -173,7 +182,7 @@ check_gate_b() {
                 ! -iname '*.ico' ! -iname '*.webp' ! -iname '*.pdf' ! -iname '*.zip' \
                 ! -iname '*.gz' ! -iname '*.svgz' ! -iname '*.woff' ! -iname '*.woff2' \
                 ! -iname '*.ttf' ! -iname '*.otf' ! -iname '*.eot' \
-                -exec grep -H -a -i -n -E 'BUG|DEB' {} + 2>/dev/null | sed 's|^\./||' || true)"
+                -exec grep -H -a -i -n "${pat[@]}" {} + 2>/dev/null | sed 's|^\./||' || true)"
         fi
     fi
     if [ -n "$hits" ]; then
@@ -187,7 +196,7 @@ check_gate_b() {
     # 搜索命令」，允许前面有 `xargs` / `if` / `git` 这类前缀。
     # 前缀只允许真正的命令包装器：`tag` / `stack` / `feedback` 不能因为末尾像 `ag` 就豁免。
     hits="$(printf '%s\n' "$hits" | grep -v -E \
-        '^[^:]*:[0-9]+:[[:space:]]*((xargs|sudo|time|env|git|if|then|elif|while|until|\!)[[:space:]]+)*([^[:space:]]*/)?(grep|rg|ag|ack)([[:space:]]|$)' \
+        '^[^:]*:[0-9]+:[[:space:]]*((xargs|sudo|time|env|git|if|then|elif|while|until|\!)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+)*)*([^[:space:]]*/)?(grep|rg|ag|ack)([[:space:]]|$)' \
         2>/dev/null || true)"
     if [ -n "$hits" ]; then
         printf '%s\n' "$hits" | while IFS= read -r line; do
@@ -536,9 +545,10 @@ check_review_by_scope() {
         # 非空裁决单：三个版本任一处有内容就算有（0 字节不算）
         review_ok=0
         for f in "$d/review.md"; do
-            if [ -n "$(git -C "$root" cat-file blob ":$f" 2>/dev/null)" ]; then review_ok=1; fi
-            if [ -n "$(git -C "$root" cat-file blob "HEAD:$f" 2>/dev/null)" ]; then review_ok=1; fi
-            [ -f "$root/$f" ] && [ -s "$root/$f" ] && review_ok=1
+            # 「非空」= 有非空白内容。只有空格/换行的裁决单顶不了一次审查。
+            if git -C "$root" cat-file blob ":$f" 2>/dev/null | grep -q '[^[:space:]]'; then review_ok=1; fi
+            if git -C "$root" cat-file blob "HEAD:$f" 2>/dev/null | grep -q '[^[:space:]]'; then review_ok=1; fi
+            [ -f "$root/$f" ] && grep -q '[^[:space:]]' "$root/$f" 2>/dev/null && review_ok=1
         done
         [ "$review_ok" -eq 1 ] && continue
 

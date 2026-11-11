@@ -718,6 +718,27 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
 not "无法可信地物化" "$out" "恢复标记后闸门正常工作"
 if [ "$rc" -eq 0 ]; then ok "恢复标记后退出码回到 0"; else no "恢复标记后退出码回到 0（实际 $rc）"; fi
 
+echo "== G-resid: 闸门 B 的残余变体 =="
+P="$TMP/rs1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/src" "$P/scripts"
+# 两个不可见字符同时打断 BUG 与 DEB
+printf 'const a = "[DE\342\200\213B\342\200\213UG-1]";\n' > "$P/src/two-zw.js"
+# U+180E（蒙古文元音分隔符）
+printf 'const b = "[DEBU\341\240\216G-2]";\n' > "$P/src/u180e.js"
+# en dash / em dash 当连字符用
+printf 'const c = "[DEBUG\342\200\2233]";\n' > "$P/src/endash.js"
+# 归档里的标记不该被当成残留（.tar 不在后缀排除表里会把提交永久卡死）
+printf 'const x = "[DEBUG-1]";\n' > "$P/a.js"
+( cd "$P" && tar cf src/mini.tar a.js && rm -f a.js )
+# env VAR=1 grep 是找标记的工具行
+printf 'env FOO=1 grep -n .\\[DEBUG- src/two-zw.js\n' > "$P/scripts/clean2.sh"
+out="$(staged_run "$P")"
+has "two-zw.js" "$out" "两个不可见字符同时打断 BUG/DEB 也要拦"
+has "u180e.js" "$out" "U+180E 插在 BUG 里也要拦"
+has "endash.js" "$out" "en dash 当连字符也要拦"
+not "mini.tar" "$out" "压缩包里的标记不参与闸门 B（否则提交永远红）"
+not "clean2.sh" "$out" "env VAR=1 grep 属于找标记的工具行，不该报"
+
 echo "== G-union: tier 与相关文件对三个版本取并集 =="
 P="$TMP/un1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-22-t2" "$P/src"
