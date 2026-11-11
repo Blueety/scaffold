@@ -236,7 +236,8 @@ check_links() {
     # 跑全量自查——用关联数组会让生成出来的项目在 macOS 上直接报错退出。
     # awk 的数组在 3.2 与 5.x 上都一样，而且一次进程就够（按 ref 逐个起 grep 会慢一个量级）。
     local idx_tmp refs_tmp
-    idx_tmp="$(mktemp)"; refs_tmp="$(mktemp)"
+    idx_tmp="$(mktemp "${TMPDIR:-/tmp}/gates-idx.XXXXXX")"
+    refs_tmp="$(mktemp "${TMPDIR:-/tmp}/gates-refs.XXXXXX")"
     printf '%s\n' ${all[@]+"${all[@]}"} > "$idx_tmp" 2>/dev/null || true
 
     # 第一遍：只挑出「精确路径和产物回退都不成立」的引用，交给 awk 判后缀。
@@ -667,7 +668,7 @@ main() {
         #
         # 临时目录用全局变量：EXIT trap 在 main 返回之后才执行，那时 local 已经出作用域，
         # set -u 会把 "$check_tree_tmp" 当成未绑定变量，trap 失败 → 脚本整体非 0。
-        check_tree_tmp="$(mktemp -d)"
+        check_tree_tmp="$(mktemp -d "${TMPDIR:-/tmp}/gates-tree.XXXXXX")"
         trap 'rm -rf "$check_tree_tmp"' EXIT
         # 物化失败必须硬停：否则会在一个空临时树里继续跑，每个任务目录都报
         # 「缺 plan.md / journal.md」——一堆假违规比一句报错难查得多。

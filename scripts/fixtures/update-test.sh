@@ -21,7 +21,7 @@ UPDATE="$REPO_ROOT/scripts/scaffold-update.sh"
 INIT="$REPO_ROOT/init.sh"
 B="${BASH:-bash}"
 
-TMP="$(mktemp -d)"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/update-test.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 pass=0; fail=0

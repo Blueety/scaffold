@@ -15,7 +15,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 INIT="$REPO_ROOT/init.sh"
 B="${BASH:-bash}"
 
-TMP="$(mktemp -d)"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/gate-test.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 pass=0; fail=0

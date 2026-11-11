@@ -1,0 +1,9 @@
+# 本地调试产物（手动跑 init / 检查脚本时会出现）
+/probe-app/
+/tpl_norm/
+/.scaffold-work/
+*.tmp
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db

@@ -132,7 +132,7 @@ PROJECT="$(cd "${POSITIONAL[0]}" 2>/dev/null && pwd)" || die "找不到项目目
 [ "$PROJECT" != "$SCAFFOLD_ROOT" ] || die "这是脚手架仓库自己，不是生成出来的项目"
 [ -f "$PROJECT/AGENTS.md" ] || die "$PROJECT 里没有 AGENTS.md —— 看起来不是这个脚手架生成的项目"
 
-WORK="$(mktemp -d)"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/scaffold-work.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
 # `find` 必须是 POSIX 的。Windows 的 find.exe 常常抢在 MSYS 前面，它把
@@ -140,7 +140,7 @@ trap 'rm -rf "$WORK"' EXIT
 # 会被误读成「找不到能对上的版本」这类别的结论。这里先探一次，探不通就直说。
 find_probe() {
     local d out
-    d="$(mktemp -d)" || return 1
+    d="$(mktemp -d "${TMPDIR:-/tmp}/scaffold-d.XXXXXX")" || return 1
     : > "$d/probe"
     out="$(find "$d" -type f 2>/dev/null)" || { rm -rf "$d"; return 1; }
     rm -rf "$d"
@@ -221,7 +221,7 @@ fi
 render_placeholders() {
     local dir="$1" f tmp
     while IFS= read -r f; do
-        tmp="$(mktemp)"
+        tmp="$(mktemp "${TMPDIR:-/tmp}/scaffold-t.XXXXXX")"
         sed "s/{{PROJECT_NAME}}/$PROJECT_NAME/g" "$f" > "$tmp" && cat "$tmp" > "$f"
         rm -f "$tmp"
     done < <(grep -rl '{{PROJECT_NAME}}' "$dir" 2>/dev/null | sort)

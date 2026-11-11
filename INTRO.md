@@ -33,12 +33,12 @@
 bash init.sh my-project-name
 ```
 
-生成 29 个文件、16 个目录。然后：
+生成 29 个文件、16 个目录。`git init`、`core.quotepath=false`、`.githooks` 钩子都已经设好，不用重来。
+
+唯一要记住的是：`core.hooksPath` 存在 `.git/config` 里，**不随 clone 走**——把项目 clone 到别的机器后要重跑一次：
 
 ```bash
-cd my-project-name
-git init
-git config core.hooksPath .githooks   # 必须做：.git/config 不随 clone 走，不做钩子不会跑
+git config core.hooksPath .githooks
 ```
 
 项目名允许字母、数字、`.`、`_`、`-` 和中文；不接受空格、引号、shell 元字符、Windows 保留设备名，以及 `.` / `..` / `.git`。两个脚本的接受集完全一致。
@@ -46,6 +46,8 @@ git config core.hooksPath .githooks   # 必须做：.git/config 不随 clone 走
 ### 生成出来的东西
 
 **完整的目录树只有一份**：脚手架仓库 `README.md` 的「生成的目录结构」一节。这里只说它给了你什么（树不复制，复制出来的会漂）：
+
+> 下表和本文其它地方出现的 `docs/…`、`skills/…`、`tasks/…` 都是**生成出来的那个项目里**的路径，不是本脚手架仓库的路径（本仓库里它们在 `templates/` 下）。
 
 | 位置 | 作用 |
 |---|---|

@@ -104,7 +104,7 @@ fi
 # 替换项目名占位符（遍历全部模板文件，不硬编码文件名）。
 # 用 sed 写到临时文件再写回，避开 GNU/BSD 的 sed -i 差异，失败时能看到原因。
 while IFS= read -r f; do
-    tmp="$(mktemp)"
+    tmp="$(mktemp "${TMPDIR:-/tmp}/scaffold.XXXXXX")"
     if ! sed "s/{{PROJECT_NAME}}/$PROJECT_NAME/g" "$f" > "$tmp"; then
         echo "错误: 替换占位符失败: $f"
         rm -f "$tmp"
