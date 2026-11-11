@@ -1,0 +1,82 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # 权威检查：README 树 == templates/ == 两个 init 脚本的真实产物，逐字节相同。
+  # 这个不变量只有 Windows 上能全量验（工具是 check-tree.ps1）。
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 树与两脚本产物逐字节比对
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1 -BashPath "C:\Program Files\Git\bin\bash.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 闸门检查器验收
+        shell: bash
+        run: bash scripts/fixtures/gate-test.sh
+
+      - name: 更新器验收
+        shell: bash
+        run: bash scripts/fixtures/update-test.sh
+
+  # Linux：templates/ 与 init.sh 产物必须逐字节一致（README 树的交叉核对在 windows 那组），
+  # 外加两个 fixture 都跑一遍。
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 比对前先把模板里的占位符按生成的名称展开——这是 init 做的事，不是差异。
+      # 没写死是哪两个文件：grep 找现存占位符，模板以后加/删都跟得上。
+      # -x 而不是 --exclude：BSD 的 diff 没有 --exclude，两端用同一句才不用分叉。
+      # src/ 是空目录（进不了 git，生成时才有），.git 是 init.sh 建出来的仓库。
+      - name: 生成物与 templates/ 逐字节比对
+        run: |
+          bash init.sh probe-app
+          cp -r templates tpl_norm
+          for f in $(grep -rl '{{PROJECT_NAME}}' tpl_norm); do
+            sed 's/{{PROJECT_NAME}}/probe-app/g' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+          done
+          diff -r -x src -x .git tpl_norm probe-app
+          echo "templates/ 与 init.sh 产物一致"
+
+      - name: 闸门检查器验收
+        run: bash scripts/fixtures/gate-test.sh
+
+      - name: 更新器验收
+        run: bash scripts/fixtures/update-test.sh
+
+  # macOS：系统自带的是 bash 3.2 与 BSD 工具链。生成出来的项目必须在这里能跑起来——
+  # 这正是「不用 bash 4 语法」那条约束要保的东西，所以直接跑一遍，不靠推断。
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 用系统 bash 3.2 生成项目
+        run: |
+          /bin/bash --version | head -1
+          /bin/bash init.sh probe-app
+
+      - name: 生成物与 templates/ 一致
+        run: |
+          cp -r templates tpl_norm
+          for f in $(grep -rl '{{PROJECT_NAME}}' tpl_norm); do
+            sed 's/{{PROJECT_NAME}}/probe-app/g' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+          done
+          diff -r -x src -x .git tpl_norm probe-app
+
+      # 失败即这一步失败（不吞退出码）：闸门在 macOS 上跑不起来就是这次改动的回归。
+      - name: 闸门在新项目里能跑（用系统 sh，即 bash 3.2）
+        run: |
+          cd probe-app
+          /bin/sh scripts/check-gates.sh

@@ -185,9 +185,9 @@ powershell -ExecutionPolicy Bypass -File scripts\scaffold-update.ps1 ..\my-proje
 
 脚手架 `templates/` 有未提交改动时照样能跑（「新版」取工作区），但**不记录基线提交**——下次更新会重新比对，等你把脚手架提交了就自愈。
 
-需要 bash 4 以上（macOS 自带的是 3.2，用 `brew install bash` 装的那个）。
+这个**更新器**需要 bash 4 以上（macOS 自带的是 3.2，用 `brew install bash` 装的那个）。**生成出来的项目不需要**——`scripts/check-gates.sh` 只用 bash 3.2 就有的语法，macOS 上 `/bin/sh` 直接能跑（CI 的 macos 任务就是在验这条）。
 
-改了这个脚本要跑它自己的验收：`bash scripts/fixtures/update-test.sh`（约 200 秒，54 项断言：冲突现场、脏树、裁决、并集、基线阈值、adopt、闸门计数、机制文件、MANIFEST / JSON、`--quiet`）。闸门本身另有 `bash scripts/fixtures/gate-test.sh`（约 270 秒，71 项：规模底线含跨提交累计、空索引豁免与模板目录排除、文档断链、gitignore、产物与后缀解析、ADR 互链、决策锚点、模块表一格多路径、seam 措辞一致性、目标必填、纯重命名豁免、拍平归档、journal 去向）。
+改了这个脚本要跑它自己的验收：`bash scripts/fixtures/update-test.sh`（约 230 秒，55 项断言：冲突现场、脏树、裁决、并集、基线阈值、adopt、闸门计数、机制文件、MANIFEST / JSON、`--quiet`）。闸门本身另有 `bash scripts/fixtures/gate-test.sh`（约 270 秒，71 项：规模底线含跨提交累计、空索引豁免与模板目录排除、文档断链、gitignore、产物与后缀解析、ADR 互链、决策锚点、模块表一格多路径、seam 措辞一致性、目标必填、纯重命名豁免、拍平归档、journal 去向）。
 
 ## 自检
 
@@ -216,6 +216,19 @@ git config core.hooksPath .githooks
 - `-SkipEndToEnd`：只跑前半段（纯文件系统对比，毫秒级）——给手动排查用，提交闸门不用它
 - `-BashPath <path>`：Git Bash 不在常见位置时手动指定
 
+### CI（`.github/workflows/check.yml`）
+
+本地钩子只在你自己的机器、你自己的提交上生效。外部 PR 跑不了 `check-tree.ps1`（POSIX 上没有 `pwsh` 的镜像、也没有 Git Bash），所以同一组不变量在 CI 上再跑一遍：
+
+| 任务 | 跑什么 | 为什么是这个平台 |
+|---|---|---|
+| `windows` | `check-tree.ps1` 全量 + 两个 fixture | 唯一能做「README 树 vs 两脚本产物」全量比对的平台 |
+| `linux` | `templates/` vs `init.sh` 产物逐字节比对 + 两个 fixture | 覆盖 GNU 工具链；比对前按项目名展开占位符 |
+| `macos` | 用系统 `/bin/bash`（3.2）生成项目，再用系统 `/bin/sh` 跑闸门 | 证明生成的项目不依赖 bash 4 —— 这条约束只有真在 3.2 上跑才算数 |
+
+三组都是红的就说明不变量破了；红了别合，和本地钩子一个标准。
+
+
 ## 设计原则
 
 - 模板只写 AI 推不出来的东西。其余写成指针，指向 `docs/`
@@ -225,3 +238,8 @@ git config core.hooksPath .githooks
 - 经验沉淀到 `docs/pitfalls.md`，决策沉淀到 `docs/adr/`，术语沉淀到 `CONTEXT.md`——都不留在聊天记录里
 - 角色提示词进仓库（`docs/agents/`），不靠每次手动粘贴
 - 验证是默认步骤，不是可选项
+
+## 许可
+
+MIT，见 [`LICENSE`](LICENSE)。生成出来的项目是你的，不带任何署名要求。
+

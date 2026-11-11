@@ -163,9 +163,8 @@ check_slice()   { run_check slice   "$1"; }
 # 空目录进不了 git，模板里也用它们做示意。
 check_links() {
     local staged_mode="${1:-0}"
-    local f ref line n=0 out="" total=0 resolved cand b
+    local f ref line n=0 out="" total=0 cand b
     local -a files=() all=()
-    local -A bybase=()
 
     # 只查**活文档**：仓库根的 md、`docs/`、`skills/`、`tasks/README.md`。
     #
@@ -229,13 +228,19 @@ check_links() {
     fi
 
     # 后缀索引：文档里常写简称（`static/app.js` 而真实路径是 `web/static/app.js`）。
-    # 按 basename 建表，未命中的引用再看有没有哪个已跟踪文件以 `/<ref>` 结尾。
+    # 未命中的引用再看有没有哪个已跟踪文件以 `/<ref>` 结尾。
     # 只用于**放行**，不用于报错——报错仍然要求精确匹配。
-    for cand in ${all[@]+"${all[@]}"}; do
-        b="${cand##*/}"
-        bybase["$b"]="${bybase[$b]:-}|$cand"
-    done
+    #
+    # 这段放在 awk 里而不是 bash：bash 的关联数组（`local -A`）是 4.0 才有的，
+    # 而 macOS 自带的 `/bin/sh` 是 bash 3.2，README 又让用户用 `sh scripts/check-gates.sh`
+    # 跑全量自查——用关联数组会让生成出来的项目在 macOS 上直接报错退出。
+    # awk 的数组在 3.2 与 5.x 上都一样，而且一次进程就够（按 ref 逐个起 grep 会慢一个量级）。
+    local idx_tmp refs_tmp
+    idx_tmp="$(mktemp)"; refs_tmp="$(mktemp)"
+    printf '%s\n' ${all[@]+"${all[@]}"} > "$idx_tmp" 2>/dev/null || true
 
+    # 第一遍：只挑出「精确路径和产物回退都不成立」的引用，交给 awk 判后缀。
+    # 大多数引用在 `[ -e ]` 这一步就放行了，所以这一步通常写出零行。
     while IFS=$'\t' read -r f ref; do
         [ -n "$ref" ] || continue
         [ -e "$ref" ] && continue
@@ -243,20 +248,34 @@ check_links() {
         # 截图、生成的 json），它们落在 .gitignore 里、索引物化树里永远没有。
         # 只看物化树的话，同一个文档全量自查通过、钩子报 4 条——每次提交都被拦。
         [ -n "${root_pwd:-}" ] && [ -e "$root_pwd/$ref" ] && continue
-        resolved=0
-        b="${ref##*/}"
-        for cand in ${bybase[$b]:-}; do
-            [ -n "$cand" ] || continue
-            case "$cand" in
-                "$ref"|*"/$ref") resolved=1; break ;;
-            esac
-        done
-        [ "$resolved" -eq 1 ] && continue
-        line="  [x] $f: 引用的 $ref 不存在"
-        out="$out$line
-"
-        n=$((n + 1))
-    done < <(awk -v kind=links -f "$AWK_PROG" "${files[@]}" 2>/dev/null | sort -u)
+        printf '%s\t%s\n' "$f" "$ref"
+    done < <(awk -v kind=links -f "$AWK_PROG" "${files[@]}" 2>/dev/null | sort -u) > "$refs_tmp"
+
+    out="$(awk -F'\t' -v idx="$idx_tmp" '
+        BEGIN {
+            while ((getline l < idx) > 0) {
+                if (l == "") continue
+                b = l; sub(/.*\//, "", b)
+                map[b] = (b in map) ? map[b] "\n" l : l
+            }
+        }
+        {
+            f = $1; ref = $2
+            b = ref; sub(/.*\//, "", b)
+            if (b in map) {
+                nn = split(map[b], cand, "\n")
+                for (i = 1; i <= nn; i++) {
+                    c = cand[i]
+                    if (c == ref) next
+                    if (length(c) > length(ref) && substr(c, length(c) - length(ref)) == "/" ref) next
+                }
+            }
+            printf "  [x] %s: 引用的 %s 不存在\n", f, ref
+        }' "$refs_tmp")"
+    if [ -n "$out" ]; then
+        while IFS= read -r line; do [ -n "$line" ] && n=$((n + 1)); done <<< "$out"
+    fi
+    rm -f "$idx_tmp" "$refs_tmp"
 
     [ "$n" -gt 0 ] && printf '检查文档内的相对引用（%d 个文件）\n' "$total"
     emit_violations "$out"
