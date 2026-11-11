@@ -4,37 +4,32 @@
 
 ![闸门演示：提交被拦下，补上内容后通过](assets/demo.svg)
 
-> **English (short)**
-> One command scaffolds a project skeleton that encodes an **AI workflow with executable checks**:
-> task state lives in git (`tasks/<date>-<slug>/{prd,plan,journal}.md`), a gate checker runs on
-> `pre-commit`, and planning / implementation / review happen in *separate* agent contexts so a plan
-> can't silently become its own justification. Every rule either has a check a machine can run, or is
-> explicitly labelled as human judgment.
+**生成出来的是什么**：30 余份 markdown（规范、两个角色提示词、七个流程 skill、任务模板、四份活文档）+ 两个 bash 脚本（闸门检查器 + 提交钩子）。**不含语言、框架、依赖**——技术栈由你自己 `npm init` / `uv init`，骨架只管「AI 按什么流程干活」。它配合任意能读 `AGENTS.md` 的编码 agent 使用（Cursor / Claude Code / Codex 等），不在运行时挂钩子。
+
+> **English (short)** — One command scaffolds a project skeleton that encodes an **AI workflow with
+> executable checks**: task state in git, a gate checker on `pre-commit`, and planning / implementation /
+> review in *separate* agent contexts. Every core rule has either a machine check or an explicit
+> "human judgment" label. Windows (PowerShell 5.1+) / Linux / macOS, stock bash 3.2, no runtime deps.
+> Docs are Chinese; start with [`INTRO.md`](INTRO.md).
 >
 > ```bash
 > bash init.sh my-project-name      # Windows: .\init.ps1 my-project-name
 > ```
->
-> Runs on Windows (PowerShell 5.1+ / Git Bash), Linux and macOS (stock bash 3.2 — the generated
-> project has no runtime dependencies; the gate is bash + awk). Docs are written in Chinese;
-> [`INTRO.md`](INTRO.md) is the conceptual overview and [`WORKFLOW.md`](WORKFLOW.md) the full flow.
 
 ## 它解决什么问题
 
 和 AI 一起写代码，崩掉的通常不是模型不够强，而是四件事：
 
 1. **需求在聊天记录里蒸发。** 昨天聊透的结论，今天开个新会话就没了。这里的任务目录把 `prd.md` / `plan.md` / `journal.md` 存在 git 里——读这三份就能接上，不用重讲一遍。
-2. **说「已完成」，其实没跑过。** 所以每个流程有**退出门槛**而不是步骤清单：修 bug 得先有一条能对**这个** bug 变红的命令；提交前要贴真实输出，不接受「应该可以」。
+2. **说「已完成」，其实没跑过。** 所以每个流程有**退出门槛**（下面叫「闸门」）而不是步骤清单：修 bug 得先有一条能对**这个** bug 变红的命令；提交前要贴真实输出，不接受「应该可以」。
 3. **计划写一套、实现另一套。** 计划批准后，实施者是一个只拿到 `prd.md` + `plan.md` 的新上下文，没参与过讨论；大改动的审查再换第三个。同一个上下文里，实施者分不清「计划写的」和「我记得当时为什么这么定」。
 4. **同一个坑踩第二遍。** 坑进 `docs/pitfalls.md`，决策进 `docs/adr/`，任务里的每条提醒必须写明去向——因为归档之后没人会再翻那份 journal。
 
-**一句话：规则写成能跑的命令，不写成提醒。** 这个仓库里每一条规矩，要么有机器能验的检查，要么被明确标成「只能靠人看」——没有第三种。
+**一句话：规则写成能跑的命令，不写成提醒。** 核心流程里每条规矩，要么有机器能验的检查，要么被明确标成「只能靠人看」；两者之间不留空白。判断哪些值得做成检查，就是这份脚手架的主要工作。
 
 > 它不适合一次性的脚本或几十行的实验：流程比活本身大。视觉类项目可以进——截图像素基线也是客观信号。
 
 **想先看全貌再动手的，读 [`INTRO.md`](INTRO.md)**：一个任务走一遍的流程图、四道闸门、六条关键取舍。本文件讲怎么用和为什么这么设计。
-
-> 改这个仓库之前先读 [`AGENTS.md`](AGENTS.md)：`templates/` 的 LF 约束、两个 init 脚本必须等价、README 树是唯一真源。生成出来的项目另有一份自己的 `AGENTS.md`，规则不同。
 
 ## 需要什么
 
@@ -54,6 +49,12 @@
 
 ```powershell
 .\init.ps1 my-project-name
+```
+
+默认执行策略（`Restricted`）下这条会报「在此系统上禁止运行脚本」。不改策略的话，用这一行代替：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\init.ps1 my-project-name
 ```
 
 ### Linux / macOS / WSL (Bash)
@@ -151,6 +152,8 @@ bash scripts/scaffold-update.sh ../my-project-name --write   # 写盘（脚本�
 ## 自检
 
 > 这一节和下面的「CI」是给**改这个脚手架的人**的。只想用的话，读到上一节就够了。
+>
+> 动手之前先读 [`AGENTS.md`](AGENTS.md)：`templates/` 的 LF 约束、两个 init 脚本必须等价、README 树是唯一真源。生成出来的项目另有一份自己的 `AGENTS.md`，规则不同。
 
 
 改了 `templates/` 或那两个脚本之后，跑一遍：
@@ -182,14 +185,14 @@ powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
 git config core.hooksPath .githooks
 ```
 
-非 Windows 机器上没装 `pwsh` 时，钩子会跳过并提示一句（本仓库暂无 POSIX 版检查器）。
+非 Windows 平台（Linux / macOS）上钩子**一律跳过**——`uname` 判断在找 PowerShell 之前，所以装了 pwsh 也不跑（本仓库暂无 POSIX 版检查器，那半边由 CI 覆盖）。Windows 上找不到 PowerShell 时同样跳过并提示。
 
 - `-SkipEndToEnd`：只跑前半段（纯文件系统对比，毫秒级）——给手动排查用，提交闸门不用它
 - `-BashPath <path>`：Git Bash 不在常见位置时手动指定
 
 ### CI（`.github/workflows/check.yml`）
 
-本地钩子只在你自己的机器、你自己的提交上生效。外部 PR 跑不了 `check-tree.ps1`（POSIX 上没有 `pwsh` 的镜像、也没有 Git Bash），所以同一组不变量在 CI 上再跑一遍：
+本地钩子只在你自己的机器、你自己的提交上生效。外部 PR 跑不了 `check-tree.ps1`——**脚本第一道门就是平台判断，非 Windows 直接 `exit 3`**（它依赖 `init.ps1` 与 Git for Windows 的路径语义），所以同一组不变量在 CI 上再跑一遍：
 
 | 任务 | 跑什么 | 为什么是这个平台 |
 |---|---|---|
@@ -219,6 +222,7 @@ git config core.hooksPath .githooks
 | 更新已生成的项目：基线、冲突、裁决、全部开关 | [`UPDATE.md`](UPDATE.md) |
 | 改这个仓库本身的约束与禁区 | [`AGENTS.md`](AGENTS.md) |
 | 生成后的项目里怎么定档位、闸门查什么、任务目录怎么用 | 生成项目自己的 `AGENTS.md` / `docs/agents/任务分级.md` / `tasks/README.md` |
+| 在网页 AI（GPT / Claude / Gemini）里怎么把讨论整理成任务，再交接给本地 agent | [`web-chat-templates/`](web-chat-templates/README.md)：六份提示词模板，起点是 `project-kickoff.md`，收尾是 `task-handoff.md` |
 
 
 ## 许可
