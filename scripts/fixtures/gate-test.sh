@@ -718,6 +718,17 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
 not "无法可信地物化" "$out" "恢复标记后闸门正常工作"
 if [ "$rc" -eq 0 ]; then ok "恢复标记后退出码回到 0"; else no "恢复标记后退出码回到 0（实际 $rc）"; fi
 
+echo "== G-comment: 注释里的 marker 不算命令参数 =="
+P="$TMP/cm1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/src" "$P/scripts"
+printf 'grep -q foo f  # [DEBUG-z]\n' > "$P/src/comment.js"
+printf 'grep -q foo f  # 纯注释\n' > "$P/scripts/ok1.sh"
+printf 'grep -q "[DEBUG-" f # 注释\n' > "$P/scripts/ok2.sh"
+out="$(staged_run "$P")"
+has "comment.js" "$out" "行尾注释里的 marker 要报（它不是 grep 的参数）"
+not "ok1.sh" "$out" "grep 行尾纯注释仍豁免"
+not "ok2.sh" "$out" "marker 在 grep 参数里、注释无 marker，仍豁免"
+
 echo "== G-prefix: 内容里有时间戳 / 双引号内转义 =="
 P="$TMP/px1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"

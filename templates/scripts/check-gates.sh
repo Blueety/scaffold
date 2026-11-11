@@ -134,8 +134,6 @@ check_gate_b() {
     local -a pat=(-i -E
         -e '\[.{0,}D.{0,}E.{0,}B.{0,}U.{0,}G'
         -e '［.{0,}D.{0,}E.{0,}B.{0,}U.{0,}G')
-    # 归一化之后只认 ASCII：`[DEBUG-` / `[DEBUG -`（空白允许）。
-    local -a narrow=(-E -e '\[DEBUG[[:space:]]*-')
     # 后缀只写一份：git 的 pathspec 和 find 回退都从它生成，两处各写一份必然会漂
     # （实测 find 分支漏掉了新加的后缀，归档里的标记照样报）。
     local -a bins=(md png jpg jpeg gif ico webp pdf zip gz tar tgz bz2 xz zst 7z rar
@@ -221,7 +219,8 @@ check_gate_b() {
                 if (!match($0, /:[0-9]+:/)) { print; next }
                 s = substr($0, RSTART + RLENGTH)
                 ns = norm(s)
-                if (ns !~ /\[DEBUG[ \t]*-/) next
+                # 大小写不敏感：预筛是 `git grep -i`，这里必须同样。
+                if (tolower(ns) !~ /\[debug[ \t]*-/) next
                 n = 0; seg[0] = ""; q = ""
                 for (i = 1; i <= length(ns); i++) {
                     c = substr(ns, i, 1)
@@ -245,6 +244,13 @@ check_gate_b() {
                         continue
                     }
                     if (c == "\"" || c == "\\047") { q = c; seg[n] = seg[n] c; continue }
+                    # `#` 前面是行首或空白时是注释起点：注释里的 marker 不是命令参数，
+                    # 不能跟着 `grep ...` 一起豁免（实测 `grep -q foo f  # [DEBUG-]` 漏报）。
+                    if (c == "#" && (i == 1 || prev == " " || prev == "\t")) {
+                        n++; seg[n] = substr(ns, i)
+                        break
+                    }
+                    prev = c
                     if (c == "&" || c == "|" || c == ";") {
                         n++; seg[n] = ""
                         d = substr(ns, i + 1, 1)
