@@ -702,6 +702,18 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
 has "无法可信地物化" "$out" "skip-worktree 让文件缺失时必须中止，不能静默跳过"
 if [ "$rc" -eq 2 ]; then ok "物化不可信时退出码是 2（环境问题，不是内容违规）"; else no "物化不可信时退出码是 2（实际 $rc）"; fi
 ( cd "$P" && git update-index --no-skip-worktree README.md )
+
+# smudge 过滤器：索引里是原文，物化出来是另一份 —— 检查器看到的是假的那份
+printf 'AAA\n' > "$P/data.txt"
+( cd "$P" && git add data.txt && git -c user.email=t@t -c user.name=t -c core.hooksPath=/dev/null commit -qm data >/dev/null
+  echo 'data.txt filter=smudge' > .git/info/attributes
+  git config filter.smudge.clean 'cat'
+  git config filter.smudge.smudge 'sed s/AAA/BBB/'
+  git rm -q --cached data.txt && git add data.txt )
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
+has "物化出来的内容与索引 blob 不同" "$out" "smudge 过滤器改写内容时必须中止（索引里是原文，检查器看到的是洗白版）"
+if [ "$rc" -eq 2 ]; then ok "smudge 场景退出码是 2"; else no "smudge 场景退出码是 2（实际 $rc）"; fi
+( cd "$P" && git config --unset filter.smudge.smudge && rm -f .git/info/attributes && git reset -q )
 out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
 not "无法可信地物化" "$out" "恢复标记后闸门正常工作"
 if [ "$rc" -eq 0 ]; then ok "恢复标记后退出码回到 0"; else no "恢复标记后退出码回到 0（实际 $rc）"; fi

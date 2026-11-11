@@ -53,8 +53,9 @@
 #          后补审查」的入口。计划与裁决单都取索引版本。
 #   - 任务目录里的文件名：只认 plan / prd / journal / review 与 NN-*.md（NN 1–2 位）；
 #          三位以上数字开头的按笔记算（只提示），其余报错——否则整份文件静默免检。
-#   - 索引物化可信性（仅 --staged）：checkout-index 会跳过 skip-worktree，缺文件就
-#          中止（exit 2）——否则被跳过的 plan.md 让任务整个从检查视野里消失。
+#   - 索引物化可信性（仅 --staged）：物化后核对「每个索引文件都在、内容哈希等于 blob」。
+#          checkout-index 会跳过 skip-worktree、也会套 smudge 过滤器——两种情况下检查器
+#          看到的都不是要提交的东西（任务整个消失 / 被洗白的 plan），一律中止（exit 2）。
 #   - 规模底线（仅 --staged）：任务在模块根下**累计**改动的文件数 ≥ 4 时，必须有任务目录
 #          声明 T2/T3。累计从 plan.md 进入历史的那次提交之前算起——按单次提交算的话，
 #          把 T2 的活拆成两次提交就能溜过去。只查低报：T0 / T1 的档位声明不再等人确认，
@@ -826,33 +827,73 @@ check_architecture() {
 # 索引时的口径一致（core.autocrlf=true 的仓库里，物化出来的 CRLF 文件哈希仍等于
 # LF blob）。这既能容忍换行归一，又能抓出 smudge 造假。
 verify_materialized() {
-    local root="$1" tree="$2" mode path
-    local -a paths=()
-    local -a missing=()
+    local root="$1" tree="$2" mode sha path gitdir
+    local -a paths=() shas=()
+    local -a missing=() present=() present_sha=()
+    local line
 
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         # 格式是 `<mode> <sha> <stage>\t<path>`：**三段空格 + 一个制表符**。
         # 少剥一层的话 path 会带上 stage 数字与制表符，每个文件都被判「不存在」。
         mode="${line%% *}"
-        line="${line#* }"; line="${line#* }"
+        line="${line#* }"; sha="${line%% *}"
         path="${line#*$'\t'}"
         [ "$path" != "$line" ] || continue            # 没有制表符：不是标准 ls-files -s 行
         case "$mode" in 160000) continue ;; esac      # 子模块：没有 blob 可比
-        paths+=("$path")
+        paths+=("$path"); shas+=("$sha")
     done < <(git -C "$root" -c core.quotepath=false ls-files -s 2>/dev/null)
 
     local i n="${#paths[@]}"
     [ "$n" -gt 0 ] || return 0
+
+    # (1) 存在性：checkout-index 会跳过 skip-worktree（稀疏检出正是靠这个位），
+    # 被跳过的 plan.md / 任务目录会从视野里整个消失，而提交照进。
     for ((i = 0; i < n; i++)); do
-        [ -f "$tree/${paths[i]}" ] || missing+=("${paths[i]}")
+        if [ -f "$tree/${paths[i]}" ]; then
+            present+=("${paths[i]}"); present_sha+=("${shas[i]}")
+        else
+            missing+=("${paths[i]}")
+        fi
     done
 
-    if [ "${#missing[@]}" -gt 0 ]; then
-        printf '  [x] 索引里有、物化树里没有（skip-worktree / 稀疏检出？）：\n' >&2
-        printf '        %s\n' "${missing[@]:0:10}" >&2
-        printf '  少了文件，后面的内容检查都会「看不见」它们——先 \`git update-index --no-skip-worktree <path>\`，\n' >&2
-        printf '  或关掉 sparse-checkout 再提交。\n' >&2
+    # (2) 内容：**必须**核对。checkout-index 会套 smudge 过滤器（实测：索引 blob 是
+    # `AAA`，物化出来可以是 `BBB`），于是检查器看到的是被洗白的 plan / review /
+    # architecture，而提交进去的是另一份。一次批量 `hash-object` 就够——逐个文件起
+    # 进程的做法在 Windows 上是 3 秒/文件，批量是 0.1 秒/30 文件。
+    local -a forged=()
+    if [ "${#present[@]}" -gt 0 ]; then
+        gitdir="$(git -C "$root" rev-parse --absolute-git-dir 2>/dev/null)"
+        if [ -z "$gitdir" ]; then
+            printf '  [x] 取不到 .git 目录，无法核对索引内容\n' >&2
+            return 1
+        fi
+        local -a got=()
+        while IFS= read -r line; do got+=("$line"); done < <(
+            cd "$tree" || exit 1
+            printf '%s\n' "${present[@]}" |
+                GIT_DIR="$gitdir" GIT_WORK_TREE="$tree" git hash-object --stdin-paths 2>/dev/null
+        )
+        if [ "${#got[@]}" -ne "${#present[@]}" ]; then
+            printf '  [x] 无法对索引内容求哈希（%s 个文件只拿到 %s 个）\n' "${#present[@]}" "${#got[@]}" >&2
+            return 1
+        fi
+        for ((i = 0; i < ${#present[@]}; i++)); do
+            [ "${got[i]}" = "${present_sha[i]}" ] || forged+=("${present[i]}")
+        done
+    fi
+
+    if [ "${#missing[@]}" -gt 0 ] || [ "${#forged[@]}" -gt 0 ]; then
+        if [ "${#missing[@]}" -gt 0 ]; then
+            printf '  [x] 索引里有、物化树里没有（skip-worktree / 稀疏检出？）：\n' >&2
+            printf '        %s\n' "${missing[@]:0:10}" >&2
+        fi
+        if [ "${#forged[@]}" -gt 0 ]; then
+            printf '  [x] 物化出来的内容与索引 blob 不同（smudge 过滤器改写了内容？）：\n' >&2
+            printf '        %s\n' "${forged[@]:0:10}" >&2
+        fi
+        printf '  检查的内容必须等于提交的内容。先关掉相关过滤/标记（\`git config --unset filter.<name>.smudge\`、\n' >&2
+        printf '  \`git update-index --no-skip-worktree <path>\`）再提交；这几种状态下的「通过」没有意义。\n' >&2
         return 1
     fi
     return 0
