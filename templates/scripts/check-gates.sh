@@ -34,12 +34,15 @@
 #                          审查者原文非空、逐条处理表非空、「审查者明确未判断的」不许留空
 #   - 文档内相对引用：根目录 md、docs/、skills/、tasks/README.md 里用反引号或
 #                      markdown 链接写下的相对路径必须存在（围栏代码块、带占位符的
-#                      示例不算）。其他位置的 md 不查——第三方目录里的 README 是别人
-#                      的文档，扫进来只会误报。tasks/ 其余部分是快照，断链属于历史。
+#                      示例不算）。**不带 `/` 的引用不查**（`NOTHERE.md`、`0001-slug.md`）
+#                      ——文档里这种名字绝大多数是示例或简称，模板自己的示例名会被
+#                      误判，新项目一生成就红。其他位置的 md 不查——第三方目录里的
+#                      README 是别人的文档，扫进来只会误报；tasks/ 其余部分是快照。
 #                      --staged 时文档内容取索引，但引用目标的存在性回工作区判
 #                      （产物在 .gitignore 里，索引物化树里没有）。
-#   - docs/adr/：任何 `ADR-NNNN` 引用都要有文件；`Superseded-By` 与 `Supersedes`
-#                必须互指；写了 Superseded-By 就不能还是 `Status: accepted`
+#   - docs/adr/*.md：文件里出现的任何 `ADR-NNNN` 引用都要有对应文件（其它文档里的
+#                引用不查）；`Superseded-By` 与 `Supersedes` 必须互指；写了
+#                Superseded-By 就不能还是 `Status: accepted`
 #   - 决策锚点（只提示，不影响退出码）：代码里的 `# 决策: ADR-NNNN` 注释，
 #                指向不存在的 ADR 或没写目标时打一条 [!]。
 #   - 架构：docs/architecture.md 的模块表 vs 实际模块目录（双向，模块根默认 src）。

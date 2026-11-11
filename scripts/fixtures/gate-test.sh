@@ -718,6 +718,20 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
 not "无法可信地物化" "$out" "恢复标记后闸门正常工作"
 if [ "$rc" -eq 0 ]; then ok "恢复标记后退出码回到 0"; else no "恢复标记后退出码回到 0（实际 $rc）"; fi
 
+echo "== G-pristine: 全新项目零改动必须全绿 =="
+P="$TMP/pst"; new_project "$P" || { echo "建项目失败"; exit 2; }
+( cd "$P" && git add -A )
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
+if [ "$rc" -eq 0 ]; then ok "全新项目 --staged 零违规"; else no "全新项目 --staged 零违规（实际 $rc）"; printf '%s\n' "$out" | head -5; fi
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"; rc=$?
+if [ "$rc" -eq 0 ]; then ok "全新项目全量自查零违规"; else no "全新项目全量自查零违规（实际 $rc）"; printf '%s\n' "$out" | head -5; fi
+
+echo "== G-rootref: 不带 / 的引用是**已知边界**（断言它不被报）=="
+P="$TMP/rr1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+printf '\n参见 \140NOTHERE.md\140。\n' >> "$P/AGENTS.md"
+out="$( cd "$P" && git add -A && "$B" scripts/check-gates.sh --staged 2>&1 )"
+not "NOTHERE.md" "$out" "根级引用不查（模板自己的示例名会红，这是有意的边界）"
+
 echo "== G-fw: 全角字母与 tab 注释 =="
 P="$TMP/fw1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
