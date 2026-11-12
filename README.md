@@ -202,11 +202,11 @@ git config core.hooksPath .githooks
 |---|---|---|
 | `windows` | `check-tree.ps1` 全量 + 三个 fixture | 唯一能做「README 树 vs 两脚本产物」全量比对的平台 |
 | `linux` | `templates/` vs `init.sh` 产物逐字节比对 + 三个 fixture（项目名一致性那项会跳过） | 覆盖 GNU 工具链；比对前按项目名展开占位符 |
-| `macos` | 用系统 `/bin/bash`（3.2）生成项目，再用系统 `/bin/sh` 跑闸门 | 证明生成的项目不依赖 bash 4 —— 这条约束只有真在 3.2 上跑才算数 |
+| `macos` | 用系统 `/bin/bash`（3.2）生成项目，再用系统 `/bin/sh` 跑闸门 | 证明生成的项目不依赖 bash 4 —— 这条约束只有真在 3.2 上跑才算数。macOS 的 `/bin/sh` 是 bash 3.2 的 POSIX 模式；Linux 的 `/bin/sh` 是 dash，跑不了（会死在数组语法），Linux 那边按 README 要求用 `bash` |
 
 三组都是红的就说明不变量破了；红了别合，和本地钩子一个标准。
 
-> **这三组 job 一次都没跑过。** 仓库还没推到 GitHub，没有 remote，所以上面的 macOS / Linux 支持目前只有**代码层面的保证**——生成出来的脚本不用 bash 4 语法（`local -A`、`mapfile`、`${x,,}`、`local -n`、`&>>`）、`mktemp` 一律带模板、不依赖 BSD 不认的长选项、`sed -i` 全部换成 `sed > tmp && mv`。这些都是靠人工逐处避开写成的，**没有实际运行证据**。
+> **这三组 job 一次都没跑过。** 仓库还没推到 GitHub，没有 remote，所以上面的 macOS / Linux 支持目前只有**代码层面的保证**——生成出来的脚本不用 bash 4 语法（`local -A`、`mapfile`、`${x,,}`、`local -n`、`&>>`）、`mktemp` 一律带模板、不依赖 BSD 不认的长选项、不用 `sed -i`（写到临时文件再读回）。这些都是靠人工逐处避开写成的，**没有实际运行证据**。
 >
 > 结论：在 CI 第一次跑通之前，把 macOS / Linux 当成「按约定写成这样」，不要当成「已验证」。Windows 那半边不受影响——那是本地钩子每次提交都在跑的。
 
