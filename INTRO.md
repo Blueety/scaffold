@@ -129,6 +129,8 @@ flowchart TD
 
 被拦下就补内容，不要 `--no-verify` 绕过。
 
+检查跑在三个时机：`git commit` 前查这次要提交的内容、`git merge` 时查合并结果、`git push` 前再跑一次全量自查（`cherry-pick` / `rebase` / `am` 造出来的提交没有钩子入口，只能靠这一步补）。
+
 ## 几个不太直观、但关键的决定
 
 | 决定 | 理由 |

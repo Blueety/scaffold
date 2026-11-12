@@ -1,0 +1,45 @@
+#!/bin/sh
+#
+# 推送前补跑一次全量自查。
+#
+# 为什么需要它：git 的钩子只挂在 `git commit`（pre-commit）与 `git merge`
+# （pre-merge-commit）上。`cherry-pick` / `rebase` / `am` 造出来的提交一次闸门都没
+# 跑过——那三种操作没有钩子入口，拦不住。于是在**推送**这个第二检查点补：还有一条
+# 违规没清掉就不许推。
+#
+# 与 pre-commit 的分工：pre-commit 查的是「这次要提交的索引」（--staged），这里查
+# 全量（工作区 + 索引 + 历史），因为要挡的正是那些没经过 --staged 的提交。
+#
+# 局限（写下来免得有人当它是万能的）：只看**当前检出**。推一个没检出的分支时，
+# 它检查的不是那个分支的内容。那种情况靠 CI。
+#
+# 临时跳过：git push --no-verify
+
+root="$(git -c core.quotepath=false rev-parse --show-toplevel 2>/dev/null)" || exit 0
+cd "$root" || exit 0
+
+# git 把要推的每个 ref 作为一行从 stdin 传进来：
+#   <local ref> <local sha> <remote ref> <remote sha>
+# 删远端分支/标签时 local sha 是全零，没有内容可查。
+saw=0
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+    saw=1
+    case "$local_sha" in
+        ''|0000000000000000000000000000000000000000) continue ;;
+    esac
+    has_content=1
+done
+
+# 手工运行（没有 stdin 喂 ref）时照样查，否则这个文件的行为会依赖调用方式。
+if [ "$saw" -eq 1 ] && [ "${has_content:-0}" -eq 0 ]; then
+    exit 0
+fi
+
+printf '\n推送前自查（scripts/check-gates.sh 全量）…\n' >&2
+if ! "$root/scripts/check-gates.sh"; then
+    printf '\n推送被拦下：闸门有违规。\n' >&2
+    printf '常见原因是这些提交绕过了 pre-commit（cherry-pick / rebase / am 没有钩子入口）。\n' >&2
+    printf '按上面的提示改掉；确需跳过：git push --no-verify\n\n' >&2
+    exit 1
+fi
+exit 0

@@ -46,7 +46,7 @@ docs/agents/          角色提示词和流程细则
 tasks/                任务目录
 skills/               可复用流程
 scripts/              闸门检查器（check-gates.sh + check-gates.awk）
-.githooks/            提交前钩子（pre-commit）
+.githooks/            钩子（commit / merge / push 三个入口）
 ```
 
 ## 开发约定

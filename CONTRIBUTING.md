@@ -15,7 +15,7 @@
 powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
 
 # 改过闸门检查器或更新器时，另跑对应验收
-bash scripts/fixtures/gate-test.sh     # 闸门判据，约 12–16 分钟
+bash scripts/fixtures/gate-test.sh     # 闸门判据，约 20 分钟
 bash scripts/fixtures/update-test.sh   # 更新器，约 2–4 分钟
 bash scripts/fixtures/name-test.sh     # 项目名接受集，约 1 分钟（没有 PowerShell 的机器会跳过）
 # 项数不写在这里：它每加一条断言就漂一次（闸门 check_doc_counts 会拦）。

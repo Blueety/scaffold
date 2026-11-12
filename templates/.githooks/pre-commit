@@ -19,10 +19,10 @@ root="$(git -c core.quotepath=false rev-parse --show-toplevel 2>/dev/null)" || e
 # 位的文件改了也不报（实测可绕过）。这里直接比**字节哈希**：索引 blob 对工作区
 # 内容（走 clean 过滤器，与哈希索引时同一口径）。
 #
-# 四个文件都在范围内——两个钩子自己也是闸门的一部分，改掉它等于关掉闸门。
+# 五个文件都在范围内——两个钩子自己也是闸门的一部分，改掉它等于关掉闸门。
 # ---------------------------------------------------------------------------
 bad=""
-for f in scripts/check-gates.sh scripts/check-gates.awk .githooks/pre-commit .githooks/pre-merge-commit; do
+for f in scripts/check-gates.sh scripts/check-gates.awk .githooks/pre-commit .githooks/pre-merge-commit .githooks/pre-push; do
     if ! git -C "$root" ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
         printf '\n提交被拦下：%s 不在索引里（被 git rm --cached 了？）。\n' "$f" >&2
         printf '闸门文件必须随项目一起提交，否则下一个 clone 的项目没有闸门。\n\n' >&2

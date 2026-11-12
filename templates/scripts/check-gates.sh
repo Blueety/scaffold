@@ -1240,14 +1240,14 @@ main() {
         case "$(uname -s 2>/dev/null)" in
             MINGW*|MSYS*|CYGWIN*) ;;
             *)
-                for f in .githooks/pre-commit .githooks/pre-merge-commit; do
+                for f in .githooks/pre-commit .githooks/pre-merge-commit .githooks/pre-push; do
                     [ -f "$root/$f" ] || continue
                     [ -x "$root/$f" ] ||
                         fail "$f 没有可执行位（工作区）—— git 会静默跳过它。跑 \`chmod +x $f\`"
                 done
                 ;;
         esac
-        for f in .githooks/pre-commit .githooks/pre-merge-commit; do
+        for f in .githooks/pre-commit .githooks/pre-merge-commit .githooks/pre-push; do
             [ -f "$root/$f" ] || continue
             if [ -n "$(git -C "$root" ls-files -s -- "$f" 2>/dev/null | awk '$1 != "100755"')" ]; then
                 fail "$f 在索引里不是可执行文件（100755）—— clone 到 Linux / macOS 后 git 会静默跳过这个钩子。跑 \`git update-index --chmod=+x $f\`"
@@ -1257,11 +1257,13 @@ main() {
            { [ ! -f "$root/.githooks/pre-commit" ] ||
              ! git -C "$root" cat-file -e :.githooks/pre-commit 2>/dev/null ||
              [ ! -f "$root/.githooks/pre-merge-commit" ] ||
-             ! git -C "$root" cat-file -e :.githooks/pre-merge-commit 2>/dev/null; }; then
+             ! git -C "$root" cat-file -e :.githooks/pre-merge-commit 2>/dev/null ||
+             [ ! -f "$root/.githooks/pre-push" ] ||
+             ! git -C "$root" cat-file -e :.githooks/pre-push 2>/dev/null; }; then
             # 钩子被删了但配置还指着它 —— 这时候「配置正确」是假象，闸门一次都不会跑。
             # 只提示不够：这是**最后一个**能发现「钩子缺失」的地方（提交时的核对只看
             # 得到下一次 commit；merge 闸门与可执行位各有独立入口）。
-            fail "core.hooksPath 指向 .githooks，但 .githooks/{pre-commit,pre-merge-commit} 有缺失（工作区或索引）—— 对应入口（commit / merge）的闸门不会执行（git 找不到钩子就静默跳过）。恢复它们（\`git checkout -- .githooks/\`）再继续"
+            fail "core.hooksPath 指向 .githooks，但 .githooks/{pre-commit,pre-merge-commit,pre-push} 有缺失（工作区或索引）—— 对应入口（commit / merge / push）的闸门不会执行（git 找不到钩子就静默跳过）。恢复它们（\`git checkout -- .githooks/\`）再继续"
         fi
     fi
 

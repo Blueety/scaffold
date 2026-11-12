@@ -5,7 +5,7 @@
 # `git merge` 进来的一切都不会被检查——实测把 pre-commit 改成永远失败，
 # merge / cherry-pick / rebase 照样成功。
 #
-# cherry-pick / rebase / am 没有钩子入口，只能靠 CI 或 pre-push 兜。
+# cherry-pick / rebase / am 没有钩子入口，所以另有 .githooks/pre-push 在推之前补一次全量自查。
 #
 root="$(git -c core.quotepath=false rev-parse --show-toplevel 2>/dev/null)" || exit 0
 exec "$root/.githooks/pre-commit"

@@ -19,6 +19,10 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/gate-test.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 pass=0; fail=0
+# 分段计时：闸门 fixture 一轮十几分钟，某一段变慢时没有这个就只能靠猜。
+# 设置 FIXTURE_TIME=1 才打印，平时保持输出干净。
+_t0=$SECONDS
+sec() { [ -n "${FIXTURE_TIME:-}" ] && printf '[%4ds] %s\n' "$((SECONDS - _t0))" "$1"; }
 ok()  { printf '  ok   %s\n' "$1"; pass=$((pass + 1)); }
 no()  { printf '  FAIL %s\n' "$1"; fail=$((fail + 1)); }
 # 原地替换。不能用 `sed -i`：BSD（macOS 自带）的 -i 必须带备份后缀，
@@ -88,6 +92,7 @@ review_text() {
     [ "$hole" = "empty_结论" ] || printf '可以合。\n'
 }
 
+sec "G1: 规模底线不被在飞任务短路"
 echo "== G1: 规模底线不被在飞任务短路 =="
 P="$TMP/g1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-01-big"
@@ -115,6 +120,7 @@ printf 'echo 3\n' > "$P/src/c.sh"; printf 'echo 4\n' > "$P/src/d.sh"
 out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
 has "累计" "$out" "两次提交各 2 个文件，累计 4 个 → 拦下"
 
+sec "G1c: 躺着一个没归档的 T2 任务时，T1 的规模底线仍然有效"
 echo "== G1c: 躺着一个没归档的 T2 任务时，T1 的规模底线仍然有效 =="
 P="$TMP/g1c"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-08-big" "$P/tasks/2026-01-08-small" "$P/src"
@@ -126,6 +132,7 @@ for i in 1 2 3 4 5; do printf 'echo %s\n' "$i" > "$P/src/f$i.sh"; done
 out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
 has "累计" "$out" "T2 任务在飞不会让 T1 的底线失效"
 
+sec "G-arch-1: 模块表一格写两个路径"
 echo "== G-arch-1: 模块表一格写两个路径 =="
 P="$TMP/ga1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src/a" "$P/src/b"
@@ -144,12 +151,14 @@ MD
 out="$(run_staged "$P")"
 not "但它不存在" "$out" "一格两个路径都真实存在时不报错"
 
+sec "G-arch-2: 一格里的第二个路径不存在仍要报"
 echo "== G-arch-2: 一格里的第二个路径不存在仍要报 =="
 subst "$P/docs/architecture.md" 's|`src/a/x.sh` + `src/b/y.sh`|`src/a/x.sh` + `src/b/nope.sh`|'
 ( cd "$P" && git add -A ) >/dev/null 2>&1
 out="$(run_staged "$P")"
 has "但它不存在" "$out" "第二段不存在时照样拦下（修复不能变成静默忽略）"
 
+sec "G-arch-3: 相对段按上一段目录解析"
 echo "== G-arch-3: 相对段按上一段目录解析 =="
 mkdir -p "$P/src/c/d"; printf 'x\n' > "$P/src/c/d/one.sh"; printf 'x\n' > "$P/src/c/d/two.sh"
 # 先把 G-arch-2 的坏行改回来，再加一行「绝对路径 + 相对名」
@@ -159,6 +168,7 @@ printf '| c | `src/c/d/one.sh` + `two.sh` | 相对段 |\n' >> "$P/docs/architect
 out="$(run_staged "$P")"
 not "但它不存在" "$out" "相对段 two.sh 解析到 src/c/d/two.sh"
 
+sec "G-doc-1: 机制文件不许再要求「等人确认 seam」"
 echo "== G-doc-1: 机制文件不许再要求「等人确认 seam」 =="
 for f in docs/agents/执行者.md skills/tdd/SKILL.md AGENTS.md README.md tasks/README.md; do
     if grep -qE "seam 并等确认|并让用户确认|seam 并等待确认|需要 seam 确认|seam 已确认" "$REPO_ROOT/templates/$f"; then
@@ -168,6 +178,7 @@ for f in docs/agents/执行者.md skills/tdd/SKILL.md AGENTS.md README.md tasks/
     fi
 done
 
+sec "G1d: 索引干净时规模底线不误报"
 echo "== G1d: 索引干净时规模底线不误报 =="
 P="$TMP/g1d"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-09-old" "$P/src"
@@ -206,6 +217,7 @@ for i in 1 2 3 4 5; do printf 'echo %s # x\n' "$i" > "$P/src/f$i.sh"; done
 out="$(run_staged "$P")"
 has "本次改动" "$out" "只有 T2 在飞时，本次索引的 5 个文件仍被拦"
 
+sec "G-link: 文档里的相对路径必须存在"
 echo "== G-link: 文档里的相对路径必须存在 =="
 P="$TMP/gl1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 printf '\n见 `docs/nope.md`。\n' >> "$P/AGENTS.md"
@@ -221,6 +233,7 @@ printf '\n写进 `tasks/<日期>-<简述>/plan.md`。\n' >> "$P/AGENTS.md"
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 not "plan.md 不存在" "$out" "带占位符的示例路径不检查"
 
+sec "G-adr: 取代关系必须互指"
 echo "== G-adr: 取代关系必须互指 =="
 P="$TMP/gadr"; new_project "$P" || { echo "建项目失败"; exit 2; }
 printf '# 甲\n\nStatus: accepted\n' > "$P/docs/adr/0001-a.md"
@@ -262,6 +275,7 @@ printf '\n写法：`# 决策: ADR-0099`\n' >> "$P/docs/adr/README.md"
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 not "ADR-0099" "$out" "markdown 文档里的示例不算锚点"
 
+sec "G-link-2: 不是路径的行内代码不当断链"
 echo "== G-link-2: 不是路径的行内代码不当断链 =="
 P="$TMP/gl2"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tests"; printf 'def test_shutdown(): pass\n' > "$P/tests/test_web.py"
@@ -287,6 +301,7 @@ n_declared="$(printf '%s\n' "$out" | sed -n 's/^闸门检查失败：\([0-9]*\) 
 [ "$n_lines" = "$n_declared" ] && ok "失败条数与打出来的行数一致（$n_lines）" \
     || no "失败条数与打出来的行数一致（显示 $n_lines，声明 $n_declared）"
 
+sec "G-link-3: tasks/README.md 属于被查的活文档"
 echo "== G-link-3: tasks/README.md 属于被查的活文档 =="
 P="$TMP/gl3"; new_project "$P" || { echo "建项目失败"; exit 2; }
 printf '\n活文档：见 `docs/not-here.md`。\n' >> "$P/tasks/README.md"
@@ -337,6 +352,7 @@ subst "$P/AGENTS.md" 's|`skin/tokens.css`（真实路径|`nope/tokens.css`（真
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 has "nope/tokens.css" "$out" "后缀解析对不上的仍要报"
 
+sec "G-link-6: --staged 不得把 .gitignore 里的产物当成断链"
 echo "== G-link-6: --staged 不得把 .gitignore 里的产物当成断链 =="
 P="$TMP/gl6"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/reports"; printf 'x\n' > "$P/reports/backtest.md"
@@ -349,6 +365,7 @@ printf 'x\n' > "$P/src/touch.sh"; ( cd "$P" && git add -A ) >/dev/null 2>&1
 out="$(run_staged "$P")"
 not "reports/backtest.md" "$out" "--staged：产物不被当断链（钩子不该每次提交都红）"
 
+sec "G-link-7: 只查活文档，第三方目录里的 README 不扫"
 echo "== G-link-7: 只查活文档，第三方目录里的 README 不扫 =="
 P="$TMP/gl7"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/vendor/pkg"; printf '第三方：见 `../nowhere.md`\n' > "$P/vendor/pkg/README.md"
@@ -357,6 +374,7 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 not "nowhere.md" "$out" "vendor 里的第三方 README 不被扫"
 has "docs/not-here.md" "$out" "活文档里的断链照报"
 
+sec "G2: plan.md 的「目标」为空要报"
 echo "== G2: plan.md 的「目标」为空要报 =="
 P="$TMP/g2"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-02-x"
@@ -370,6 +388,7 @@ subst "$P/tasks/2026-01-02-x/plan.md" 's/^- \*\*目标\*\*:$/- **目标**: 写�
 out="$(run_staged "$P")"
 not "「目标」为空" "$out" "填上目标后不再报"
 
+sec "G3: 纯重命名的归档不该被判红"
 echo "== G3: 纯重命名的归档不该被判红 =="
 P="$TMP/g3"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-03-legacy"
@@ -385,6 +404,7 @@ not "2026-01-03-legacy" "$out" "归档提交不再逐条判旧格式"
     no "归档提交整体通过"
 }
 
+sec "G3b: 拍平归档仍然要报"
 echo "== G3b: 拍平归档仍然要报 =="
 P="$TMP/g3b"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-04-flat"
@@ -395,6 +415,7 @@ wip_commit "$P"
 out="$(run_staged "$P")"
 has "_archive/ 顶层不该有文件" "$out" "拍平归档被报出来"
 
+sec "回归：普通 T1 提交照常通过"
 echo "== 回归：普通 T1 提交照常通过 =="
 P="$TMP/g4"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-05-small" "$P/src"
@@ -407,6 +428,7 @@ out="$(run_staged "$P")"
     no "T1 单文件提交通过"
 }
 
+sec "journal 的「下次注意什么」必须写去向"
 echo "== journal 的「下次注意什么」必须写去向 =="
 P="$TMP/g5"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-06-note"
@@ -556,6 +578,7 @@ review_text > "$P/tasks/2026-01-07-rev/review.md"
 out="$(staged_run "$P")"
 not "review.md" "$out" "填全的裁决单不再被报"
 
+sec "R2: plan.md 的目标与预估规模"
 echo "== R2: plan.md 的目标与预估规模 =="
 P="$TMP/r2"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-08-plan"
@@ -639,6 +662,7 @@ has "docs/nope.md" "$out" "带 #锚点 的断链要报"
 has "docs/nope2.md" "$out" "带链接标题的断链要报"
 has "docs/nope4.md" "$out" "带查询串的断链要报"
 
+sec "G-extra: 复核抓到的假阴性 / 假阳性"
 echo "== G-extra: 复核抓到的假阴性 / 假阳性 =="
 
 # 列表形态的「无」不能算已填
@@ -691,6 +715,7 @@ for i in 1 2 3 4; do printf 'x\n' > "$P/src/z$i.py"; done
 out="$(staged_run "$P")"
 has "没有声明 T2/T3" "$out" "档位注释里提到 T2 不算声明，规模底线仍生效"
 
+sec "G-idx: 检查内容必须等于提交内容"
 echo "== G-idx: 检查内容必须等于提交内容 =="
 P="$TMP/idx1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-16-t2" "$P/src"
@@ -718,6 +743,7 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"; rc=$?
 not "无法可信地物化" "$out" "恢复标记后闸门正常工作"
 if [ "$rc" -eq 0 ]; then ok "恢复标记后退出码回到 0"; else no "恢复标记后退出码回到 0（实际 $rc）"; fi
 
+sec "G-pristine: 全新项目零改动必须全绿"
 echo "== G-pristine: 全新项目零改动必须全绿 =="
 P="$TMP/pst"; new_project "$P" || { echo "建项目失败"; exit 2; }
 ( cd "$P" && git add -A )
@@ -726,6 +752,7 @@ if [ "$rc" -eq 0 ]; then ok "全新项目 --staged 零违规"; else no "全新�
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"; rc=$?
 if [ "$rc" -eq 0 ]; then ok "全新项目全量自查零违规"; else no "全新项目全量自查零违规（实际 $rc）"; printf '%s\n' "$out" | head -5; fi
 
+sec "G-first: 尚无 HEAD 的首次提交也必须零违规"
 echo "== G-first: 尚无 HEAD 的首次提交也必须零违规 =="
 P="$TMP/first"; rm -rf "$P"
 ( cd "$TMP" && "$B" "$INIT" first >/dev/null 2>&1 )
@@ -741,6 +768,7 @@ printf '\n参见 \140NOTHERE.md\140。\n' >> "$P/AGENTS.md"
 out="$( cd "$P" && git add -A && "$B" scripts/check-gates.sh --staged 2>&1 )"
 not "NOTHERE.md" "$out" "根级引用不查（模板自己的示例名会红，这是有意的边界）"
 
+sec "G-fw: tab 注释与单引号"
 echo "== G-fw: tab 注释与单引号 =="
 P="$TMP/fw1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
@@ -750,6 +778,7 @@ out="$(staged_run "$P")"
 has "tabcomment.js" "$out" "tab 后的行尾注释里的 marker 也要报"
 not "squote.sh" "$out" "单引号里的 | 不是分隔符（工具行豁免）"
 
+sec "G-adr-bold: 加粗字段 / 根级断链 / 百分号 / 验证结果占位符"
 echo "== G-adr-bold: 加粗字段 / 根级断链 / 百分号 / 验证结果占位符 =="
 P="$TMP/adb"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/docs/adr" "$P/docs"
@@ -767,6 +796,7 @@ printf '\n[看](docs/%%E6%%88%%91%%20%%E7%%9A%%84.md)\n' >> "$P/docs/commands.md
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 not "我 的" "$out" "百分号编码的中文文件名不该被误报断链"
 
+sec "G-comment: 注释里的 marker 不算命令参数"
 echo "== G-comment: 注释里的 marker 不算命令参数 =="
 P="$TMP/cm1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
@@ -778,6 +808,7 @@ has "comment.js" "$out" "行尾注释里的 marker 要报（它不是 grep 的�
 not "ok1.sh" "$out" "grep 行尾纯注释仍豁免"
 not "ok2.sh" "$out" "marker 在 grep 参数里、注释无 marker，仍豁免"
 
+sec "G-prefix: 内容里有时间戳 / 双引号内转义"
 echo "== G-prefix: 内容里有时间戳 / 双引号内转义 =="
 P="$TMP/px1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
@@ -789,6 +820,7 @@ has "ts.js" "$out" "内容里带时间戳不能把 marker 吞进前缀"
 not "esc2.sh" "$out" "反斜杠转义的引号不结束字符串"
 not "assign2.sh" "$out" "多个赋值前缀同样豁免"
 
+sec "G-dash: 各类连字符与包装器参数"
 echo "== G-dash: 各类连字符与包装器参数 =="
 P="$TMP/ds1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
@@ -800,6 +832,7 @@ not "esc.sh" "$out" "反斜杠转义的 \\| 不是 shell 分隔符"
 not "sudo.sh" "$out" "sudo -u root 的参数不打断豁免"
 not "gitc.sh" "$out" "git -C dir 的参数不打断豁免"
 
+sec "G-exempt3: 引号内分隔符 / 包装器 / 报告路径"
 echo "== G-exempt3: 引号内分隔符 / 包装器 / 报告路径 =="
 P="$TMP/ex10"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
@@ -832,6 +865,7 @@ has "u2065.js" "$out" "LC_ALL=C 下 U+2065 仍要拦"
 has "zw-de.js" "$out" "LC_ALL=C 下零宽插在 D/E 之间仍要拦"
 has "gap.js" "$out" "预筛间隙不限长度（12 字节间隙也要进候选）"
 
+sec "G-exempt2: 豁免的两个方向"
 echo "== G-exempt2: 豁免的两个方向 =="
 P="$TMP/ex9"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
@@ -843,6 +877,7 @@ has "and-echo.js" "$out" "首段里出现 debug.txt 不能豁免整行（marker 
 not "clean-lc.sh" "$out" "LC_ALL=C grep 是工具行，不该报"
 not "clean-cmd.sh" "$out" "command grep 是工具行，不该报"
 
+sec "G-tier-head: prd / 切片的档位也取三版本"
 echo "== G-tier-head: prd / 切片的档位也取三版本 =="
 P="$TMP/th1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-25-t" "$P/src"
@@ -855,6 +890,7 @@ printf '# 需求\n\n- **档位**: `T1`\n\n## 验收标准\n\n- 能跑\n' > "$P/t
 out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
 has "review.md" "$out" "prd.md 的 T2 在 HEAD 里，工作区改小也躲不过"
 
+sec "G-tier-note: journal 不是档位来源"
 echo "== G-tier-note: journal 不是档位来源 =="
 P="$TMP/tn1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-26-t" "$P/src"
@@ -891,6 +927,7 @@ not "x.apk" "$out" "归档/目标文件后缀（.apk）不参与闸门 B"
 not "y.o" "$out" "目标文件后缀（.o）不参与闸门 B"
 not "z.tar" "$out" "归档后缀（.tar）不参与闸门 B"
 
+sec "G-adr-fmt: ADR 编号必须是 4 位"
 echo "== G-adr-fmt: ADR 编号必须是 4 位 =="
 P="$TMP/ad1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/docs/adr"
@@ -901,6 +938,7 @@ has "编号必须是 4 位" "$out" "5 位编号不能被静默截成 4 位"
 n="$(printf '%s' "$out" | grep -c '编号必须是 4 位')"
 if [ "$n" -le 1 ]; then ok "同一处编号只报一次"; else no "同一处编号只报一次（实际 $n 次）"; fi
 
+sec "G-hookmode: 钩子缺失与可执行位"
 echo "== G-hookmode: 钩子缺失与可执行位 =="
 P="$TMP/hm1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 ( cd "$P" && rm -f .githooks/pre-merge-commit )
@@ -908,6 +946,7 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"; rc=$?
 has "有缺失" "$out" "工作区缺 pre-merge-commit 时全量自查要判失败（否则 merge 不经过任何检查）"
 if [ "$rc" -eq 1 ]; then ok "缺 merge 钩子时退出码 1"; else no "缺 merge 钩子时退出码 1（实际 $rc）"; fi
 
+sec "G-revdel: 删掉裁决单也要拦"
 echo "== G-revdel: 删掉裁决单也要拦 =="
 P="$TMP/rd1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-24-t2" "$P/src"
@@ -918,6 +957,7 @@ wip_commit "$P"
 out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
 has "不能删" "$out" "T2 任务把 review.md 删掉的提交要拦"
 
+sec "G-resid: 闸门 B 的残余变体"
 echo "== G-resid: 闸门 B 的残余变体 =="
 P="$TMP/rs1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
@@ -936,6 +976,7 @@ has "u180e.js" "$out" "U+180E 插在 BUG 里也要拦"
 not "mini.tar" "$out" "压缩包里的标记不参与闸门 B（否则提交永远红）"
 not "clean2.sh" "$out" "env VAR=1 grep 属于找标记的工具行，不该报"
 
+sec "G-union: tier 与相关文件对三个版本取并集"
 echo "== G-union: tier 与相关文件对三个版本取并集 =="
 P="$TMP/un1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-22-t2" "$P/src"
@@ -957,6 +998,7 @@ subst "$P/tasks/2026-01-23-t2/plan.md" 's|src/a.sh|src/b.sh|g'
 out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
 has "review.md" "$out" "工作区版本的相关文件同样算归属"
 
+sec "G-case: 闸门 B 大小写与 BUG 内部的零宽"
 echo "== G-case: 闸门 B 大小写与 BUG 内部的零宽 =="
 P="$TMP/ca1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src"
@@ -968,6 +1010,7 @@ has "lower.js" "$out" "小写 [debug-x] 也要拦（说法是大小写不敏感�
 has "zw-bug.js" "$out" "零宽插在 BUG 内部也要拦"
 has "zw-ug.js" "$out" "零宽插在 U/G 之间也要拦"
 
+sec "G-hp: core.hooksPath 的等价写法与钩子缺失"
 echo "== G-hp: core.hooksPath 的等价写法与钩子缺失 =="
 P="$TMP/hp1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 ( cd "$P" && git config core.hooksPath .githooks/ )
@@ -979,6 +1022,7 @@ out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"; rc=$?
 has "有缺失" "$out" "钩子不在索引里要判失败（不只是提示）"
 if [ "$rc" -eq 1 ]; then ok "钩子缺失时退出码 1"; else no "钩子缺失时退出码 1（实际 $rc）"; fi
 
+sec "G-planonly: 只提交计划不该被 review 拦"
 echo "== G-planonly: 只提交计划不该被 review 拦 =="
 P="$TMP/po1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-17-t2" "$P/src"
@@ -986,6 +1030,7 @@ plan_text T2 > "$P/tasks/2026-01-17-t2/plan.md"
 out="$(staged_run "$P")"
 not "review.md" "$out" "T2 只提交 plan.md（还没开工）不要求裁决单 —— 否则「先提交计划」这条路被堵死"
 
+sec "G-scope: 审查归属取 HEAD ∪ 索引 ∪ 工作区"
 echo "== G-scope: 审查归属取 HEAD ∪ 索引 ∪ 工作区 =="
 P="$TMP/su1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-18-t2" "$P/src"
@@ -1047,6 +1092,7 @@ has "core.hooksPath" "$out" "钩子目录不是 .githooks 时提示（钩子丢�
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 not "core.hooksPath" "$out" "设置正确后不再提示"
 
+sec "G-dcount: 活文档里不许写死 fixture 的断言项数"
 echo "== G-dcount: 活文档里不许写死 fixture 的断言项数 =="
 P="$TMP/dcount"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/tasks/2026-01-22-old"
@@ -1062,6 +1108,40 @@ not "写死了 fixture 的断言项数" "$out" "只写时长不报"
 printf '\n本次跑了 \140scripts/fixtures/gate-test.sh\140，187 项全过。\n' >> "$P/tasks/2026-01-22-old/journal.md"
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 not "写死了 fixture 的断言项数" "$out" "任务目录是快照，里面的项数不查"
+
+sec "G-prepush: 推送前补跑全量自查"
+echo "== G-prepush: 推送前补跑全量自查（cherry-pick / rebase / am 没有钩子入口）=="
+P="$TMP/prepush"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/src"
+# 造一条「绕过 pre-commit」的违规：残留调试标记。真实场景里这种提交由
+# cherry-pick / rebase / am 带进来，那三条路径不调用任何钩子。
+printf 'const x = 1; // [DEBUG-x]\n' > "$P/src/app.js"
+wip_commit "$P"
+hook="$P/.githooks/pre-push"
+local_sha="$( cd "$P" && git rev-parse HEAD )"
+# git 通过 stdin 喂 <local ref> <local sha> <remote ref> <remote sha>
+out="$( cd "$P" && printf 'refs/heads/main %s refs/heads/main 0000000000000000000000000000000000000000\n' "$local_sha" | sh "$hook" 2>&1 )"
+has "推送被拦下" "$out" "有违规时拒绝推送"
+( cd "$P" && printf 'refs/heads/main %s refs/heads/main 0000000000000000000000000000000000000000\n' "$local_sha" | sh "$hook" >/dev/null 2>&1 ); rc=$?
+[ "$rc" -ne 0 ] && ok "拒绝推送的退出码非零（实际 $rc）" || no "有违规时退出码是 0，推送会成功"
+# 删远端分支：local sha 全零，没有内容可查
+out="$( cd "$P" && printf 'refs/heads/gone 0000000000000000000000000000000000000000 refs/heads/gone %s\n' "$local_sha" | sh "$hook" 2>&1 )"
+( cd "$P" && printf 'refs/heads/gone 0000000000000000000000000000000000000000 refs/heads/gone %s\n' "$local_sha" | sh "$hook" >/dev/null 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] && ok "删除远端分支时不做检查" || no "删除远端分支被拦下了（退出码 $rc）"
+# 清掉违规后放行
+printf 'const x = 1;\n' > "$P/src/app.js"
+wip_commit "$P"
+out="$( cd "$P" && printf 'refs/heads/main %s refs/heads/main 0000000000000000000000000000000000000000\n' "$local_sha" | sh "$hook" 2>&1 )"
+( cd "$P" && printf 'refs/heads/main %s refs/heads/main 0000000000000000000000000000000000000000\n' "$local_sha" | sh "$hook" >/dev/null 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] && ok "干净时放行推送" || no "干净时仍被拦下（退出码 $rc）"
+# 手工运行（没有 stdin）也要检查，否则行为依赖调用方式
+printf 'const y = 1; // [DEBUG-y]\n' > "$P/src/app.js"
+wip_commit "$P"
+out="$( cd "$P" && sh "$hook" < /dev/null 2>&1 )"
+has "推送被拦下" "$out" "手工运行（无 stdin）也会查"
+# 钩子被 git 调用时才传 ref：这里确认文件本身可执行（Windows 上 git add 记 100644 会让 clone 后静默跳过）
+modes="$( cd "$P" && git ls-files -s .githooks/pre-push | cut -d" " -f1 )"
+[ "$modes" = "100755" ] && ok "pre-push 在索引里是可执行文件（100755）" || no "pre-push 在索引里的模式是 $modes，clone 后会被静默跳过"
 
 printf '\n结果: PASS %d / FAIL %d\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

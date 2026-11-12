@@ -85,7 +85,8 @@ my-project-name/
 │   └── check-gates.awk    # 上面那个的判定逻辑（每个文件一次进程，见文件头）
 ├── .githooks/
 │   ├── pre-commit         # 提交前调 check-gates.sh（并校验闸门文件本身没被偷偷改过）
-│   └── pre-merge-commit   # 合并提交走同一条检查（git 合并时不调用 pre-commit）
+│   ├── pre-merge-commit   # 合并提交走同一条检查（git 合并时不调用 pre-commit）
+│   └── pre-push           # 推送前跑一次全量自查（cherry-pick / rebase / am 没有钩子入口）
 ├── docs/
 │   ├── architecture.md    # 架构说明（活文档：模块/接口/数据模型/数据流）
 │   ├── commands.md        # 命令说明
@@ -128,7 +129,7 @@ my-project-name/
 3. **让 Agent 填写规范**：配置文件就位后，让本地 Agent 读配置文件并填写 AGENTS.md、CONTEXT.md 和 docs/（含把 Task Handoff 里的决策落成 `docs/adr/0001-*.md`）。
 4. **提交**：`git add . && git commit -m "init: 项目脚手架 + 技术栈"`
 
-生成脚本已经做过的事（不用重来）：`git init`、`core.quotepath=false`（否则中文路径会被转义成八进制）、把 `.githooks/` 挂成 pre-commit 钩子。
+生成脚本已经做过的事（不用重来）：`git init`、`core.quotepath=false`（否则中文路径会被转义成八进制）、把 `.githooks/` 挂成钩子目录（`pre-commit` / `pre-merge-commit` / `pre-push`）；生成的钩子在 `git commit` 与 `git merge` 时跑闸门，`git push` 前再补一次全量自查。
 
 `core.hooksPath` 写在 `.git/config` 里，**不会随 clone 走**。clone 到别的机器后要跑一次：
 
@@ -176,7 +177,7 @@ powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
 |---|---|
 | `templates/` 或 `init.*` | `check-tree.ps1`（上面那个，约 10–20 秒） |
 | 项目名校验（`init.sh` / `init.ps1`） | `bash scripts/fixtures/name-test.sh` —— 约 1 分钟：同一张名字表分别喂两个脚本，接受 / 拒绝必须一致；没有 PowerShell 的机器会跳过 |
-| 闸门（`scripts/check-gates.*`） | `bash scripts/fixtures/gate-test.sh` —— 约 12–16 分钟：闸门各项判据的验收（判据清单见 `bash scripts/check-gates.sh --help`，项数看收尾输出）。改了 `check-gates.{sh,awk}` 必须跑 |
+| 闸门（`scripts/check-gates.*`） | `bash scripts/fixtures/gate-test.sh` —— 约 20 分钟：闸门各项判据的验收（判据清单见 `bash scripts/check-gates.sh --help`，项数看收尾输出）。改了 `check-gates.{sh,awk}` 必须跑 |
 | 更新器（`scripts/scaffold-update.sh`） | `bash scripts/fixtures/update-test.sh` —— 约 2–4 分钟：冲突现场、脏树、裁决、并集、基线阈值、adopt、闸门计数、机制文件、MANIFEST / JSON、`--quiet` |
 
 ### 自动跑
