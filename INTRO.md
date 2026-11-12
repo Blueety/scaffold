@@ -35,6 +35,8 @@ bash init.sh my-project-name
 
 生成完整骨架（文件清单见 README 的「生成的目录结构」）。`git init`、`core.quotepath=false`、`.githooks` 钩子都已经设好，不用重来。
 
+> Windows 这条路每次提交都在跑，是验过的。**Linux / macOS 目前只有代码层面的保证**——生成的脚本不用 bash 4 语法、不依赖 GNU 专有写法，但还没有在真机或 CI 上实际跑过（CI 写好了，仓库还没推）。遇到问题就当缺陷报，别当自己的环境问题。
+
 唯一要记住的是：`core.hooksPath` 存在 `.git/config` 里，**不随 clone 走**——把项目 clone 到别的机器后要重跑一次：
 
 ```bash
