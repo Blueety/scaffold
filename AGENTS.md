@@ -43,7 +43,7 @@ CI 上（`.github/workflows/check.yml`）跑同一组不变量，外加三个 fi
 
 ## 别做的事
 
-- 不手写可推导的内容（目录树、文件数、目录数）——留一份源，其余引用它。
+- 不手写可推导的内容（目录树、文件数、目录数、**fixture 的断言项数**）——留一份源，其余引用它。项数的唯一出处是 fixture 自己的收尾输出（`PASS n / FAIL m`）；写进文档就会每加一条断言漂一次，闸门 `check_doc_counts` 会拦。
 - 不「顺手」改 `templates/` 里的规则文件（skill / 流程 / 角色提示词）：那是所有未来项目的流程，属于设计决策，先说清楚再动。
 - 不把 `scripts/check-tree.ps1` 塞进 `templates/`：它是本仓库的工具，不随项目走。生成项目里的闸门是 `templates/scripts/check-gates.sh` + `templates/.githooks/pre-commit` + `templates/.githooks/pre-merge-commit`。
 - 不给 `templates/` 加 BOM、不加 CRLF、不改编码。

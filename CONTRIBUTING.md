@@ -15,9 +15,11 @@
 powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
 
 # 改过闸门检查器或更新器时，另跑对应验收
-bash scripts/fixtures/gate-test.sh     # 187 项
-bash scripts/fixtures/update-test.sh   # 55 项
-bash scripts/fixtures/name-test.sh     # 19 项（项目名接受集；没有 PowerShell 的机器会跳过）
+bash scripts/fixtures/gate-test.sh     # 闸门判据，约 12–16 分钟
+bash scripts/fixtures/update-test.sh   # 更新器，约 2–4 分钟
+bash scripts/fixtures/name-test.sh     # 项目名接受集，约 1 分钟（没有 PowerShell 的机器会跳过）
+# 项数不写在这里：它每加一条断言就漂一次（闸门 check_doc_counts 会拦）。
+# 真实数字看各自的收尾输出（PASS n / FAIL m）。
 ```
 
 只改了 `templates/` 里任何东西（哪怕一行文档）时，第一个会红的是 `gate-test.sh` 的 **`G-pristine`**：它在全新生成的项目上跑全量与 `--staged`，要求**零违规**。这条是为了兜「模板里新增了一个会被判断链的示例名 / 一句会被判成占位符的话」——那种错只有真的生成一个项目才看得见。

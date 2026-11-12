@@ -577,8 +577,9 @@ echo "== G-attack: 对抗性变体（每条都来自实跑里打穿过的写法�
 P="$TMP/atk"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
 
-# 全角括号 / 零宽字符 / -diff 属性 / 同名后缀 / 大写 .MD / 清理脚本
-printf 'x=1 # ［DEBUG-fw］\n' > "$P/src/fw.py"
+# 零宽字符 / -diff 属性 / 同名后缀 / 大写 .MD / 清理脚本
+# （全角字母、全角括号、花式连字符**不在判据内**——见 check-gates.sh 的边界说明，
+#  因此这里不写断言：写了就会逼着以后重新加映射表。）
 printf 'x=1 # [DEBU\342\200\213G-zw]\n' > "$P/src/zw.py"
 printf 'x=1 # [DEBUG\342\200\213-zw2]\n' > "$P/src/zw2.py"      # 插在 G 之后
 printf 'x=1 # [DEBUG\357\273\277-zw3]\n' > "$P/src/zw3.py"      # BOM
@@ -588,7 +589,6 @@ printf 'x=1 # [DEBUG-suffix]\n' > "$P/src/my-check-gates.sh"
 printf 'u=1 # [DEBUG-upper]\n' > "$P/src/UPPER.MD"
 printf 'grep -rn .\[DEBUG- src/\n' > "$P/scripts/clean-debug.sh"
 out="$(staged_run "$P")"
-has "fw.py" "$out" "全角括号的调试标记要拦"
 has "zw.py" "$out" "零宽字符插在 DEBU 与 G 之间的调试标记要拦"
 has "zw2.py" "$out" "零宽字符插在 G 与 - 之间的调试标记要拦"
 has "zw3.py" "$out" "BOM 插在中间的调试标记要拦"
@@ -741,18 +741,12 @@ printf '\n参见 \140NOTHERE.md\140。\n' >> "$P/AGENTS.md"
 out="$( cd "$P" && git add -A && "$B" scripts/check-gates.sh --staged 2>&1 )"
 not "NOTHERE.md" "$out" "根级引用不查（模板自己的示例名会红，这是有意的边界）"
 
-echo "== G-fw: 全角字母与 tab 注释 =="
+echo "== G-fw: tab 注释与单引号 =="
 P="$TMP/fw1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
-printf 'x = "[\357\274\244EBUG-1]"\n' > "$P/src/fwD.js"
-printf 'x = "[D\357\274\245BUG-2]"\n' > "$P/src/fwE.js"
-printf 'x = "[DEBU\357\274\247-3]"\n' > "$P/src/fwG.js"
 printf 'grep -q foo f\t# [DEBUG-tab]\n' > "$P/src/tabcomment.js"
 printf "grep -E 'foo|\\[DEBUG-' src/\n" > "$P/scripts/squote.sh"
 out="$(staged_run "$P")"
-has "fwD.js" "$out" "全角 D 也要拦"
-has "fwE.js" "$out" "全角 E 也要拦"
-has "fwG.js" "$out" "全角 G 也要拦"
 has "tabcomment.js" "$out" "tab 后的行尾注释里的 marker 也要报"
 not "squote.sh" "$out" "单引号里的 | 不是分隔符（工具行豁免）"
 
@@ -798,16 +792,10 @@ not "assign2.sh" "$out" "多个赋值前缀同样豁免"
 echo "== G-dash: 各类连字符与包装器参数 =="
 P="$TMP/ds1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
-printf 'x = "[DEBUG\357\271\2434]";\n' > "$P/src/fe63.js"
-printf 'x = "[DEBUG\302\255-5]";\n' > "$P/src/soft.js"
-printf 'x = "[DEBUG\342\210\2226]";\n' > "$P/src/minus.js"
 printf 'grep -q foo\\|\\[DEBUG- f\n' > "$P/scripts/esc.sh"
 printf 'sudo -u root grep -q "[DEBUG-x]" f\n' > "$P/scripts/sudo.sh"
 printf 'git -C dir grep -q "[DEBUG-x]" f\n' > "$P/scripts/gitc.sh"
 out="$(staged_run "$P")"
-has "fe63.js" "$out" "U+FE63 全角连字符要拦"
-has "soft.js" "$out" "软连字符当连字符要拦"
-has "minus.js" "$out" "U+2212 减号当连字符要拦"
 not "esc.sh" "$out" "反斜杠转义的 \\| 不是 shell 分隔符"
 not "sudo.sh" "$out" "sudo -u root 的参数不打断豁免"
 not "gitc.sh" "$out" "git -C dir 的参数不打断豁免"
@@ -937,8 +925,6 @@ mkdir -p "$P/src" "$P/scripts"
 printf 'const a = "[DE\342\200\213B\342\200\213UG-1]";\n' > "$P/src/two-zw.js"
 # U+180E（蒙古文元音分隔符）
 printf 'const b = "[DEBU\341\240\216G-2]";\n' > "$P/src/u180e.js"
-# en dash / em dash 当连字符用
-printf 'const c = "[DEBUG\342\200\2233]";\n' > "$P/src/endash.js"
 # 归档里的标记不该被当成残留（.tar 不在后缀排除表里会把提交永久卡死）
 printf 'const x = "[DEBUG-1]";\n' > "$P/a.js"
 ( cd "$P" && tar cf src/mini.tar a.js && rm -f a.js )
@@ -947,7 +933,6 @@ printf 'env FOO=1 grep -n .\\[DEBUG- src/two-zw.js\n' > "$P/scripts/clean2.sh"
 out="$(staged_run "$P")"
 has "two-zw.js" "$out" "两个不可见字符同时打断 BUG/DEB 也要拦"
 has "u180e.js" "$out" "U+180E 插在 BUG 里也要拦"
-has "endash.js" "$out" "en dash 当连字符也要拦"
 not "mini.tar" "$out" "压缩包里的标记不参与闸门 B（否则提交永远红）"
 not "clean2.sh" "$out" "env VAR=1 grep 属于找标记的工具行，不该报"
 
@@ -1061,6 +1046,22 @@ has "core.hooksPath" "$out" "钩子目录不是 .githooks 时提示（钩子丢�
 ( cd "$P" && git config core.hooksPath .githooks ) >/dev/null 2>&1
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 not "core.hooksPath" "$out" "设置正确后不再提示"
+
+echo "== G-dcount: 活文档里不许写死 fixture 的断言项数 =="
+P="$TMP/dcount"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/src" "$P/tasks/2026-01-22-old"
+# 文档里写死项数 → 报（数字每加一条断言就漂一次，钩子里没法核对真实值）
+printf '\n先跑 \140bash scripts/fixtures/gate-test.sh\140 —— 187 项。\n' >> "$P/docs/architecture.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "写死了 fixture 的断言项数" "$out" "活文档里写死项数要报"
+# 只写时长 → 不报
+subst "$P/docs/architecture.md" 's/187 项/约 12 分钟/'
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+not "写死了 fixture 的断言项数" "$out" "只写时长不报"
+# 任务目录是快照，不查
+printf '\n本次跑了 \140scripts/fixtures/gate-test.sh\140，187 项全过。\n' >> "$P/tasks/2026-01-22-old/journal.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+not "写死了 fixture 的断言项数" "$out" "任务目录是快照，里面的项数不查"
 
 printf '\n结果: PASS %d / FAIL %d\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -45,6 +45,9 @@
 #   - docs/adr/*.md：文件里出现的任何 `ADR-NNNN` 引用都要有对应文件（其它文档里的
 #                引用不查）；`Superseded-By` 与 `Supersedes` 必须互指；写了
 #                Superseded-By 就不能还是 `Status: accepted`
+#   - 活文档里不许写死 fixture 的断言项数（会漂）：同一行既有 `fixtures/*.sh` 又有
+#                `N 项` 就报。真实项数只有跑完 fixture 才知道，所以规矩是「文档里
+#                只写时长与覆盖范围」。
 #   - 决策锚点（只提示，不影响退出码）：代码里的 `# 决策: ADR-NNNN` 注释，
 #                指向不存在的 ADR 或没写目标时打一条 [!]。
 #   - 架构：docs/architecture.md 的模块表 vs 实际模块目录（双向，模块根默认 src）。
@@ -91,6 +94,18 @@ fail() { printf '  [x] %s\n' "$*"; violations=$((violations + 1)); }
 # 需要人知道、但项目现状本身没错的情况。
 note() { printf '  [!] %s\n' "$*"; }
 
+# 「活文档」的位置定义——两处检查共用一份。排除清单会随时间变长，而「文档该放
+# 哪儿」本来就是定好的：仓库根、`docs/`、`skills/`、`tasks/README.md` 三处之外
+# 的 md 是快照（`tasks/<任务>/`）或别人的文档（`vendor/`、依赖包）。
+is_doc_path() {
+    case "$1" in
+        tasks/README.md) return 0 ;;
+        docs/*|skills/*) return 0 ;;
+        */*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
 # 用法说明就是文件头那段，用哨兵行圈出来 —— 写死行号会在加注释时漂移。
 usage() {
     sed -n '/^# >>> usage$/,/^# <<< usage$/p' "${BASH_SOURCE[0]}" | sed '1d;$d' | sed 's/^# \{0,1\}//'
@@ -113,8 +128,12 @@ usage() {
 # 用 -a 强制当文本扫，多花的代价是二进制文件里可能命中同样的字节，所以改成
 # **按后缀排除**（图片 / 压缩包 / 字体 / 快照），而不是让 git 猜。
 #
-# 变体也认：全角括号 `［DEBUG-］`、零宽字符插在任意位置（`[DEBU\u200bG-`、`[DEBUG\u200b-`）、
-# 全角连字符。这些都是「看起来像但不是」，而闸门的价值就在于不给它留后门。
+# **判据只管 ASCII 写法和「夹了不可见字符」的写法**（零宽 / 控制字符 / BOM 插在
+# 任意位置都算：归一化时非 ASCII 字节整体删掉，`[DEBU<ZWSP>G-` 会重新拼回 `[DEBUG-`）。
+# 刻意伪装的形态**不查**——全角字母 `[ＤEBUG-]`、花式连字符 `[DEBUG－]` / 软连字符 /
+# U+2212。理由：这些是「看起来像但不是」，覆盖它们要给每个码点写映射表，而 Unicode
+# 十五万个码点里总能找到下一个漏掉的；为此维护的映射表实测每轮都要再修一次。
+# 威胁模型上也站不住：真要用这些绕过的人，`--no-verify` 更省事。
 # 清理脚本里写着 `grep '[DEBUG-'` 不算残留——那行本身是找标记的工具
 # （`xargs grep`、`if grep -q`、`git grep` 这些形态都认）。
 # 删掉零宽字符再匹配。用「模式里给插入点留空位」的办法是堵不完的：
@@ -123,11 +142,12 @@ usage() {
 # 不可见 / 零宽 / 格式字符（字节序列）。**预筛和 strip 共用这一份**：
 # 只在预筛里写「BUG / DEB」，插两个不可见字符就能把两个片段同时打断（实测能过）；
 # 只在 strip 里列，预筛那一步已经把行漏掉了。两边同源才不会互相漏。
-# 闸门 B 的归一化在 awk 里做（见 check_gate_b）。要点：
-#   1. 所有「看起来是连字符」的码点映射成 `-`（**字面替换**，不用字符类——
-#      `LC_ALL=C` 下 `[－–—]` 是字节集合，会把别的字符的尾字节改坏）；
-#   2. 全角括号映射成 ASCII；
-#   3. 删控制字符，再删**所有非 ASCII 字节**（未知格式字符、全角空格一并带走）。
+# 闸门 B 的归一化在 awk 里做（见 check_gate_b）。只剩三步：
+#   1. 制表符换成空格（注释判定要求 `#` 前是空白）；
+#   2. 删控制字符；
+#   3. 删**所有非 ASCII 字节**（零宽、BOM、全角空格、未知格式字符一并带走）。
+# 第 3 步同时就是「夹了不可见字符的变体」的全部防线：不写字面映射表，因此不存在
+# 「又发现一个码点」这类修补——这是有意的取舍，见上一条注释。
 # 归一化之后判据只有一种写法：`[DEBUG-`。
 # 代价：`[DEBUG中文-]` 会被判成残留——安全方向的误报。
 
@@ -136,11 +156,8 @@ check_gate_b() {
     # 预筛用**带间隙**的模式：`[`/`D`/`E`/`B`/`U`/`G` 之间允许任意字节（`{0,}`）。
     # 限长度会漏：`[DE中文中文BUG-]` 有 12 字节间隙，插 4 个汉字就足以让预筛在
     # 归一化之前把行丢掉。判据在归一化之后，预筛宽一点没有代价。
-    # 每个字母都允许「半角 / 全角大写 / 全角小写」三种：`[ＤEBUG-]` 这类写法在
-    # 预筛阶段就会因为 ASCII `D` 不存在而被漏掉，全靠这一步先放进来。
-    local -a pat=(-i -E
-        -e '\[.{0,}(D|Ｄ|ｄ).{0,}(E|Ｅ|ｅ).{0,}(B|Ｂ|ｂ).{0,}(U|Ｕ|ｕ).{0,}(G|Ｇ|ｇ)'
-        -e '［.{0,}(D|Ｄ|ｄ).{0,}(E|Ｅ|ｅ).{0,}(B|Ｂ|ｂ).{0,}(U|Ｕ|ｕ).{0,}(G|Ｇ|ｇ)')
+    # 只写 ASCII：全角写法按设计不查（见上面的边界说明），预筛里也就不必列全角字母。
+    local -a pat=(-i -E -e '\[.{0,}D.{0,}E.{0,}B.{0,}U.{0,}G')
     # 后缀只写一份：git 的 pathspec 和 find 回退都从它生成，两处各写一份必然会漂
     # （实测 find 分支漏掉了新加的后缀，归档里的标记照样报）。
     local -a bins=(md png jpg jpeg gif ico webp pdf zip gz tar tgz bz2 xz zst 7z rar
@@ -187,29 +204,11 @@ check_gate_b() {
     if [ -n "$hits" ]; then
         hits="$(printf '%s\n' "$hits" | LC_ALL=C awk '
             function norm(t) {
-                # 用**八进制字节**写，不写字面字符：`LC_ALL=C` 下 gawk 对源码里的
-                # 多字节字面量匹配不上（实测：全角括号被直接删掉而不是映射成 `[`）。
-                gsub(/\357\274\273/, "[", t); gsub(/\357\274\275/, "]", t)
-                # 全角字母：`[ＤEBUG-]` 这种写法在预筛阶段就会断（ASCII 的 D 不存在）
-                gsub(/\357\274\244/, "D", t); gsub(/\357\274\245/, "E", t)
-                gsub(/\357\274\242/, "B", t); gsub(/\357\274\265/, "U", t)
-                gsub(/\357\274\247/, "G", t)
-                gsub(/\357\275\204/, "d", t); gsub(/\357\275\205/, "e", t)
-                gsub(/\357\275\202/, "b", t); gsub(/\357\275\225/, "u", t)
-                gsub(/\357\275\207/, "g", t)
-                gsub(/\357\274\215/, "-", t)   # － FF0D
-                gsub(/\342\200\223/, "-", t)   # – 2013
-                gsub(/\342\200\224/, "-", t)   # — 2014
-                gsub(/\342\200\220/, "-", t)   # ‐ 2010
-                gsub(/\342\200\221/, "-", t)   # ‑ 2011
-                gsub(/\342\200\222/, "-", t)   # ‒ 2012
-                gsub(/\342\200\225/, "-", t)   # ― 2015
-                gsub(/\342\210\222/, "-", t)   # − 2212
-                gsub(/\357\271\230/, "-", t)   # ﹘ FE58
-                gsub(/\357\271\243/, "-", t)   # ﹣ FE63
-                gsub(/\342\201\203/, "-", t)   # ⁃ 2043
-                gsub(/\313\227/, "-", t)        # ˗ 02D7
-                gsub(/\302\255/, "-", t)        # 软连字符 00AD
+                # 只有三步：tab 转空格、删控制字符、删所有非 ASCII 字节。
+                # **不写码点映射表**：全角字母 / 花式连字符按设计不查（见文件头
+                # 与 check_gate_b 的边界说明）。删非 ASCII 顺带把零宽 / BOM /
+                # 全角空格插在任意位置的变体拼回来——那一类仍然拦得住，且不需要
+                # 每遇到一个新码点就加一行。
                 # 制表符先转空格再删控制字符：注释判定要求「`#` 前是空白」，
                 # 直接删掉 tab 会让 `代码<TAB># [DEBUG-]` 被当成同一个词（实测漏报）。
                 gsub(/\011/, " ", t)
@@ -341,15 +340,6 @@ check_links() {
     # 带的 README）是**别人的文档**，它们的相对链接在这个仓库里必然对不上。把
     # 它们算进来，唯一出路是加一份项目级忽略清单——那会变成永久豁免通道，
     # 而「文档放在哪儿」本来就是明确的，按位置划不需要任何例外。
-    is_doc() {
-        case "$1" in
-            tasks/README.md) return 0 ;;
-            docs/*|skills/*) return 0 ;;
-            */*) return 1 ;;
-            *) return 0 ;;
-        esac
-    }
-
     # 文件清单用 git 拿，**不用 `find`**：`find` 会扫进 `.gitignore` 里的东西
     # （venv/、node_modules/、构建产物、编辑器缓存），那些目录里成千上万个
     # 第三方 README 全是别人的相对链接，跟这个项目没关系。实测一个 Python 项目
@@ -360,7 +350,7 @@ check_links() {
     if [ "$staged_mode" -eq 1 ]; then
         while IFS= read -r f; do
             f="${f#./}"
-            is_doc "$f" || continue
+            is_doc_path "$f" || continue
             files+=("$f")
         done < <(find . -name '*.md' -type f 2>/dev/null | sort)
     elif git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
@@ -368,13 +358,13 @@ check_links() {
         # 那样 awk 打不开这些文件、直接报错退出，后面的文件一个都不会被扫到
         # （表现为「明明是断链却全绿」）。
         while IFS= read -r f; do
-            is_doc "$f" || continue
+            is_doc_path "$f" || continue
             files+=("$f")
         done < <(git -C "$root" -c core.quotepath=false ls-files -co --exclude-standard -- '*.md' 2>/dev/null | sort)
     else
         while IFS= read -r f; do
             f="${f#./}"
-            is_doc "$f" || continue
+            is_doc_path "$f" || continue
             files+=("$f")
         done < <(find . -name '*.md' -type f 2>/dev/null | sort)
     fi
@@ -479,6 +469,43 @@ check_adr() {
 #
 # 为什么值得有：`docs/architecture.md` 讲的是模块级，「这行为什么这么写」在代码里
 # 没有出口。注释指向 ADR 是唯一的低成本路径，而注释最容易在重构中变成死链。
+check_doc_counts() {
+    local staged_mode="${1:-0}" f ln
+    local -a files=()
+
+    # 判据：**同一行**里既有 `fixtures/<名字>.sh` 又有 `N 项`。这是「把会漂的
+    # 数字写进文档」的唯一常见形态（`bash scripts/fixtures/gate-test.sh  # 187 项`）。
+    #
+    # 为什么不拿真实项数比对：真实项数只有跑完 fixture 才知道（十几分钟），钩子
+    # 里不可能跑。也不需要——**唯一不需要维护的形态是文档里不出现这个数字**。
+    # 所以这条守的是「别写回去」，不是「写得对不对」。
+    if [ "$staged_mode" -eq 1 ]; then
+        # cwd 已是索引物化树
+        while IFS= read -r f; do
+            f="${f#./}"
+            is_doc_path "$f" && files+=("$f")
+        done < <(find . -name '*.md' -type f 2>/dev/null | sort)
+    elif git -C . rev-parse --git-dir >/dev/null 2>&1; then
+        while IFS= read -r f; do
+            is_doc_path "$f" && files+=("$f")
+        done < <(git -c core.quotepath=false ls-files -co --exclude-standard -- '*.md' 2>/dev/null | sort)
+    else
+        while IFS= read -r f; do
+            f="${f#./}"
+            is_doc_path "$f" && files+=("$f")
+        done < <(find . -name '*.md' -type f 2>/dev/null | sort)
+    fi
+    [ "${#files[@]}" -gt 0 ] || return 0
+
+    # awk 一次扫完：文档是 UTF-8，但只匹配 ASCII 模式，C locale 下也是字节安全。
+    while IFS= read -r ln; do
+        [ -n "$ln" ] || continue
+        fail "活文档里写死了 fixture 的断言项数（每加一条断言就漂一次）：$ln —— 改成时长或覆盖范围，真实数字看 fixture 收尾输出"
+    done < <(LC_ALL=C awk '
+        /fixtures\/[A-Za-z0-9_.-]+\.sh/ && /[0-9]+[ \t]*项/ { print FILENAME ":" FNR ": " $0 }
+    ' "${files[@]}" 2>/dev/null || true)
+}
+
 check_anchors() {
     local staged="$1" root="$2" hits=""
     local -a adrs=()
@@ -1240,6 +1267,7 @@ main() {
 
     check_links "$staged"
     check_adr
+    check_doc_counts "$staged"
     # 代码里的 `决策: ADR-NNNN` 锚点：只提示，不影响退出码
     check_anchors "$staged" "$root"
 

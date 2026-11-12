@@ -175,9 +175,9 @@ powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
 | 改的东西 | 跑什么 |
 |---|---|
 | `templates/` 或 `init.*` | `check-tree.ps1`（上面那个，约 10–20 秒） |
-| 项目名校验（`init.sh` / `init.ps1`） | `bash scripts/fixtures/name-test.sh` —— 约 1 分钟、19 项：同一张名字表分别喂两个脚本，接受 / 拒绝必须一致；没有 PowerShell 的机器会跳过 |
-| 闸门（`scripts/check-gates.*`） | `bash scripts/fixtures/gate-test.sh` —— 约 12–16 分钟、187 项：对抗性变体、review 字段契约、计划范围归属（HEAD∪索引∪工作区）、索引物化校验（skip-worktree / smudge）、环境提示（模块根缺失 / 钩子丢失）、去向必须是四种之一、规模底线含跨提交累计、空索引豁免与模板目录排除、文档断链、gitignore、产物与后缀解析、ADR 互链、决策锚点、模块表一格多路径、seam 措辞一致性、目标必填、纯重命名豁免、拍平归档、journal 去向 |
-| 更新器（`scripts/scaffold-update.sh`） | `bash scripts/fixtures/update-test.sh` —— 约 2–4 分钟、55 项：冲突现场、脏树、裁决、并集、基线阈值、adopt、闸门计数、机制文件、MANIFEST / JSON、`--quiet` |
+| 项目名校验（`init.sh` / `init.ps1`） | `bash scripts/fixtures/name-test.sh` —— 约 1 分钟：同一张名字表分别喂两个脚本，接受 / 拒绝必须一致；没有 PowerShell 的机器会跳过 |
+| 闸门（`scripts/check-gates.*`） | `bash scripts/fixtures/gate-test.sh` —— 约 12–16 分钟：闸门各项判据的验收（判据清单见 `bash scripts/check-gates.sh --help`，项数看收尾输出）。改了 `check-gates.{sh,awk}` 必须跑 |
+| 更新器（`scripts/scaffold-update.sh`） | `bash scripts/fixtures/update-test.sh` —— 约 2–4 分钟：冲突现场、脏树、裁决、并集、基线阈值、adopt、闸门计数、机制文件、MANIFEST / JSON、`--quiet` |
 
 ### 自动跑
 
