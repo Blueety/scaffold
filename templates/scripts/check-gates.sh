@@ -105,6 +105,9 @@ violations=0
 # 闸门 B 的文件级豁免声明。只有这一种写法（ASCII、行尾不许多余空白）：
 # 声明在允许写注释的位置的第一行——首行是 shebang 的脚本看第二行。
 GATE_B_DECL='# gate-b: mentions-marker'
+# 行尾 CR。判定必须与平台无关：MSYS 的工具在文本模式下替我们吞掉 CR，
+# Linux / macOS 不吞。
+CR=$'\r'
 
 fail() { printf '  [x] %s\n' "$*"; violations=$((violations + 1)); }
 
@@ -212,6 +215,9 @@ check_gate_b() {
         elif [ -r "$f" ]; then
             { IFS= read -r first; IFS= read -r second; } < "$f" 2>/dev/null || :
         fi
+        # 行尾 CR 不算「多余空白」：MSYS 会替我们吞掉，Linux / macOS 不会，
+        # 不剥的话同一份 CRLF 文件在两个平台上得到相反的结论。判定与平台无关。
+        first="${first%$CR}"; second="${second%$CR}"
         # 声明在**第一行**；可执行脚本的 shebang 必须占第一行，所以首行是
         # `#!` 时看第二行——否则这种脚本没有任何诚实的出口（只能删掉，或者
         # 把模式拼成 `'[DEBU'"G-"` 那种伪装，这正是要消灭的写法）。
@@ -532,7 +538,8 @@ task_has_started() {
     # 状态只认 gate 头块里的一行（整行精确匹配；四种结束状态是封闭集合），
     # 所以先把范围收在「第一行到第一个 `-->`」之间：正文里写 `status: DONE`
     # 不算开工依据。头块没闭合时 sed 读到 EOF —— 那种文件本来就判红。
-    st="$(sed -n '1,/^-->$/p' "$d/journal.md" 2>/dev/null |
+    st="$(tr -d '\r' < "$d/journal.md" 2>/dev/null |
+          sed -n '1,/^-->$/p' |
           grep -E '^status: (DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT)$')"
     [ -n "$st" ]
 }
@@ -680,12 +687,13 @@ check_review_by_scope() {
 
 # gate 头块里的档位是否是 T2/T3。头块必须在文件第一行、键只有一种写法，
 # 所以一条整行精确匹配就够——散文里写「档位: T3」不会再被当成声明。
+# 行尾 CR 先删掉：MSYS 的 grep 在文本模式下会吞，Linux / macOS 不会。
 # 参数：文件名（可多个）；不带参数时读 stdin。
 gate_tier_high() {
     if [ "$#" -gt 0 ]; then
-        grep -qx 'tier: T[23]' "$@" 2>/dev/null
+        cat "$@" 2>/dev/null | tr -d '\r' | grep -qx 'tier: T[23]'
     else
-        grep -qx 'tier: T[23]'
+        tr -d '\r' | grep -qx 'tier: T[23]'
     fi
 }
 

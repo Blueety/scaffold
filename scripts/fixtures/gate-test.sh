@@ -1129,6 +1129,36 @@ printf '# 执行日志\n\n## 结束状态\n\n- **结束状态**: `DONE`\n' > "$P
 out="$(staged_run "$P")"
 not "review.md" "$out" "正文里写结束状态不再算开工依据（只读头块）"
 
+sec "G-crlf: 行尾 CR 不能让判定变样（MSYS 会吞，Linux / macOS 不会）"
+echo "== G-crlf: 行尾 CR 不能让判定变样 =="
+P="$TMP/crlf"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-28-t2"
+plan_text T2 > "$P/tasks/2026-01-28-t2/plan.md"
+# awk 造 CRLF：macOS 的 sed 不认替换里的 \r，BSD / GNU 都吃 awk 这条路
+awk 'BEGIN{ORS="\r\n"}{print}' "$P/tasks/2026-01-28-t2/plan.md" > "$P/tasks/2026-01-28-t2/p.tmp" &&
+    mv "$P/tasks/2026-01-28-t2/p.tmp" "$P/tasks/2026-01-28-t2/plan.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+not "起始行写法不对" "$out" "CRLF 的 plan.md：头块照样认得（行尾 CR 不算多余空白）"
+not "档位未声明" "$out" "CRLF 的 plan.md：tier 读得到"
+# 开工判定的 grep 也是行首行尾锚定，同样不能被 CR 打断
+printf '<!-- gate\r\nstatus: DONE\r\ncommit: abc1234\r\nrejections: 0\r\n-->\r\n\r\n# 执行日志\r\n' > "$P/tasks/2026-01-28-t2/journal.md"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "review.md" "$out" "CRLF 的 journal 头块 status 照样算开工（T2 要裁决单）"
+
+sec "G-prdopt: prd.md 的 tier 可选，但填了就要合法"
+echo "== G-prdopt: prd.md 的 tier 可选，但填了就要合法 =="
+P="$TMP/prdopt"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-29-prd"
+# 计划阶段的正常形态：prd 先落盘、档位在 Step 3.3 才定，头块里留空
+printf '<!-- gate\ntier:\n-->\n\n# 需求\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-29-prd/prd.md"
+out="$(staged_run "$P")"
+not "档位" "$out" "prd.md 头块 tier 留空不报（档位 3.3 才定）"
+not "gate 头块" "$out" "prd.md 的空头块本身不是语法错误"
+# 填了就按值域判
+printf '<!-- gate\ntier: T9\n-->\n\n# 需求\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-29-prd/prd.md"
+out="$(staged_run "$P")"
+has "取值不对" "$out" "prd.md 头块 tier 写错值要报"
+
 sec "G-scope: 审查归属取 HEAD ∪ 索引 ∪ 工作区"
 echo "== G-scope: 审查归属取 HEAD ∪ 索引 ∪ 工作区 =="
 P="$TMP/su1"; new_project "$P" || { echo "建项目失败"; exit 2; }
