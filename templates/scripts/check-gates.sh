@@ -25,11 +25,15 @@
 #     journal.md status ∈ DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT、
 #                commit（一个 SHA）、rejections（十进制整数）
 #     NN-*.md    type ∈ slice / decision、tier、status ∈ pending / in_progress / completed、commit
+#   判注释只认**行首**的 `<!--`：正文/行内代码里出现的 `<!--` 当字面量（文档谈论闸门
+#   机制时最自然的写法就是这个形）。行首的注释没闭合时只报这一条真因并跳过该文件的
+#   其余检查——以前会把后文整篇吞掉，然后报十条「缺 N 节」。
 #   - plan.md：头块里的档位与类型已声明、目标 / 相关文件 / 验证命令非空、步骤表非空、
 #              确认清单至少一条且全勾、
 #              目标不能写「无」、预估 diff 范围三行不能全空、
 #              测试 Seam 四行要么全填要么全空、
-#              bug 任务的闸门 A 字段（含 ≥3 条排序假设）、bug-norepro 必须声明 T3
+#              bug 任务的闸门 A 字段（含 ≥3 条排序假设，数的是 `- **3–5 个排序假设**:`
+#              下面列了几条，标签里带不带 `3–5 个` 都认）、bug-norepro 必须声明 T3
 #   - prd.md：验收标准非空且有条目；头块里的 tier 填了就必须合法（不强制存在）
 #   - journal.md：章节齐全（含雾区变化 / 一致性走查）、头块的 status 合法、验证结果有内容且不写「应该可以」、
 #                 改动清单已填且没留模板占位符（src/... 或 <...>）、

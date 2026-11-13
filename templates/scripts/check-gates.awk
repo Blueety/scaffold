@@ -65,23 +65,34 @@ BEGIN {
         FIDX++; FSTART[FIDX] = NL + 1; FNAME[FIDX] = FILENAME
     }
 
-    # gate 头块必须在第一行，且是 HTML 注释——下面的剥注释会把它整块抹掉，
-    # 所以在这里先按原文抓下来（键值判定不能靠剥完之后的残渣）。
+    # gate 头块必须在第一行，且是 HTML 注释——先按原文抓下来（键值判定不能靠剥完
+    # 之后的残渣），抓到之后把这行清空：头块不参与正文解析。
     if (FNR == 1) {
+        # 上一个文件留下的未闭合注释：多文件模式（adr / links）下不能算到
+        # 这个文件头上，先按上一个文件的名字报掉。单文件模式只有 END 那条路。
+        if (incom) { report_unclosed(prev_file); incom = 0 }
+        prev_file = FILENAME
         GATE_N = 0; split("", GV)
         GATE_BAD_START = 0; GATE_MISPLACED = 0
         split("", NEAR_MISS)
         GATE_OPEN = (line == "<!-- gate")
         if (line != "<!-- gate" && line ~ /^[ \t]*<!--[ \t]*gate/) GATE_BAD_START = 1
+        if (GATE_OPEN) line = ""
     } else if (GATE_OPEN) {
         if (line == "-->") GATE_OPEN = 0
         else GL[++GATE_N] = line
+        line = ""
     } else if (line == "<!-- gate") {
         GATE_MISPLACED = 1
     }
 
     # 剥掉 markdown 注释（含跨行）。模板注释里会出现「应该可以」
     # 「（从 prd.md 提取）」这类字样，不剥掉的话会误报。
+    #
+    # 只有**行首**（允许前置空白）的 `<!--` 是注释起点。行内的 `<!--` 不是：
+    # markdown 里它通常出现在行内代码里（`` `<!-- gate` ``），而正文谈论闸门机制时
+    # 最自然的写法就是这个。以前只要行内出现 `<!--` 又没同行闭合，就进入跨行状态，
+    # 把后面整篇吞掉——用户看到的是「缺 N 节」，一个字都不提真正的原因。
     while (1) {
         if (incom) {
             p = index(line, "-->")
@@ -93,7 +104,10 @@ BEGIN {
             head = substr(line, 1, p - 1)
             rest = substr(line, p + 4)
             q = index(rest, "-->")
-            if (q == 0) { line = head; incom = 1; break }
+            if (q == 0) {
+                if (head ~ /^[ \t]*$/) { line = head; incom = 1 }   # 行首：注释起点
+                break                                                # 行内：当字面量，不动这行
+            }
             line = head substr(rest, q + 3)
         }
     }
@@ -103,6 +117,12 @@ BEGIN {
 }
 
 END {
+    # 注释没闭合：正文从这里往后全被吞掉了，「缺 N 节」全是它的副作用。
+    # 只报真因，然后停止这个文件的后续检查——否则真因淹没在十条假象里。
+    if (incom) {
+        report_unclosed(FILENAME)
+        if (kind != "adr" && kind != "links" && kind != "modules" && kind != "related") exit
+    }
     if (kind == "links")   { links_dump(); exit }
     if (kind == "adr")     { adr_check(); exit }
     if (kind == "modules") { modules_dump(); exit }
@@ -117,6 +137,11 @@ END {
 # ---------------------------------------------------------------- 输出
 
 function V(msg) { print "  [x] " fpath ": " msg }
+
+# 未闭合注释按**文件名**报（多文件模式下 fpath 只有一个标签，看不出是哪个文件）。
+function report_unclosed(name) {
+    printf "  [x] %s: 有未闭合的 markdown 注释（`<!--` 之后没有 `-->`）——从这一行往后整篇都被当成注释了；先补上 `-->\n", name
+}
 
 # ---------------------------------------------------------------- 查询
 
@@ -338,10 +363,33 @@ function field_block(lbl,   i, n, found) {
     }
     return n
 }
+# 字段块的宽松版：标签按**子串**找。只给「排序假设」用——模板里的标签是
+# `**3–5 个排序假设**`（数量范围是标签的一部分），而判定器关心的是「下面列了几条」。
+# 用整标签匹配的话，照模板写永远数出 0 条。别处一律走精确匹配（field_block）。
+function field_block_loose(lbl,   i, n, found) {
+    n = 0; found = 0
+    for (i = 1; i <= NL; i++) {
+        if (L[i] ~ /^[ \t]*[-*+][ \t]+\*\*/) {
+            if (found) break
+            if (index(L[i], lbl) > 0) { found = 1; B[++n] = L[i]; continue }
+        } else if (L[i] ~ /^[[:space:]]*#/) {
+            if (found) break
+        }
+        if (found) B[++n] = L[i]
+    }
+    return n
+}
 # 字段块**去掉字段行本身**之后的部分。要数条目时用这个：字段行自己也是
 # `- **…**`，混进去会被当成一条。
 function field_block_body(lbl,   n, i, out) {
     n = field_block(lbl)
+    out = ""
+    for (i = 2; i <= n; i++) out = out (i > 2 ? "\n" : "") B[i]
+    sub(/\n+$/, "", out)
+    return out
+}
+function field_block_body_loose(lbl,   n, i, out) {
+    n = field_block_loose(lbl)
     out = ""
     for (i = 2; i <= n; i++) out = out (i > 2 ? "\n" : "") B[i]
     sub(/\n+$/, "", out)
@@ -666,7 +714,7 @@ function plan_check(   tier, type, n, filled, hy, t) {
         if (!field_filled("能变红的命令")) V("闸门 A —— 「能变红的命令」为空")
         if (!field_filled("已实跑的输出")) V("闸门 A —— 「已实跑的输出」为空")
         if (!field_filled("是否已最小化")) V("闸门 A —— 「是否已最小化」为空")
-        hy = count_items(field_block_body("排序假设"))
+        hy = count_items(field_block_body_loose("排序假设"))
         if (hy < 3) V("闸门 A —— 排序假设只有 " hy " 条（至少要 3 条）")
     }
 

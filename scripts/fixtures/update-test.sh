@@ -223,6 +223,17 @@ not "汇总:" "$out" "没有走合并流程"
 # ---------------------------------------------------------------- 11. 机制文件
 
 echo "== .scaffold-kinds: mechanism =="
+# 钩子必须**全部**标成 mechanism。漏一个的后果不是报错，而是「本地改过钩子的项目
+# 不会被同步纠正」——被改的恰好是闸门入口时，等于闸门在那边静默失灵。
+# 这条清单以前就漏过 pre-push（唯一能兜住 cherry-pick/rebase/am 的入口）。
+hooks="$(cd "$REPO_ROOT/templates/.githooks" && ls -1)"
+miss=""
+for h in $hooks; do
+    grep -qx "mechanism \.githooks/$h" "$REPO_ROOT/templates/.scaffold-kinds" || miss="$miss $h"
+done
+if [ -z "$miss" ]; then ok "每个钩子都在 mechanism 清单里（$hooks）"
+else no "钩子没标 mechanism:$miss"; fi
+
 # 机制文件两边都改过才算数：模板侧也要动一次
 printf '\n模板给执行者加的一条\n' >> "$SCAF/templates/docs/agents/执行者.md"
 git -C "$SCAF" add -A >/dev/null 2>&1

@@ -13,6 +13,7 @@
 
 mechanism .githooks/pre-commit
 mechanism .githooks/pre-merge-commit
+mechanism .githooks/pre-push
 mechanism .scaffold-kinds
 mechanism scripts/check-gates.sh
 mechanism scripts/check-gates.awk

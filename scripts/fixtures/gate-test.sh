@@ -12,6 +12,8 @@ set -u
 trap '' PIPE
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO="$REPO_ROOT"
+TPL="$REPO_ROOT/templates"
 INIT="$REPO_ROOT/init.sh"
 B="${BASH:-bash}"
 
@@ -71,6 +73,32 @@ plan_text() {
     printf '## 步骤\n\n| # | 步骤 | 文件范围 | 风险 | 验证 |\n|---|---|---|---|---|\n'
     printf '| 1 | 改 a | src/a.sh | 低 | 跑闸门 |\n\n'
     printf '## 预估 diff 范围\n\n- 新增文件: 无\n- 修改文件: src/a.sh\n- 删除文件: 无\n\n'
+    printf '## 确认\n\n- [x] 已确认\n'
+}
+
+# 一份能过闸门的 bug 类 plan.md。$1 = 排序假设写几条（默认 3）
+bugplan_text() {
+    local n="${1:-3}" i
+    printf '<!-- gate\ntier: T2\ntype: bug-repro\n-->\n\n'
+    printf '# 实施计划\n\n## 任务概要\n\n'
+    printf -- '- **目标**: 让 X 在 Y 时不再报错\n'
+    printf -- '- **相关文件**:\n  - src/a.sh\n'
+    printf -- '- **验证命令**: `bash scripts/check-gates.sh`\n\n'
+    printf '## 步骤\n\n| # | 步骤 | 文件范围 | 风险 | 验证 |\n|---|---|---|---|---|\n'
+    printf '| 1 | 改 a | src/a.sh | 低 | 跑闸门 |\n\n'
+    printf '## 测试 Seam\n\n'
+    printf -- '- **要测的 seam**: 解析入口\n'
+    printf -- '- **公开接口是什么**: `parse()`\n'
+    printf -- '- **错误与边界**: 空输入\n'
+    printf -- '- **为什么选这个 seam**: 唯一能变红的地方\n\n'
+    printf '## 修 bug 时必填\n\n'
+    printf -- '- **能变红的命令**: `bash t.sh`\n'
+    printf -- '- **已实跑的输出**: FAIL: expect 1 got 0\n'
+    printf -- '- **是否已最小化**: 是\n'
+    printf -- '- **3–5 个排序假设**: <!-- 每个带预测 -->\n'
+    i=1
+    while [ "$i" -le "$n" ]; do printf '  %d. 假设 %d\n' "$i" "$i"; i=$((i + 1)); done
+    printf '\n## 预估 diff 范围\n\n- 新增文件: 无\n- 修改文件: src/a.sh\n- 删除文件: 无\n\n'
     printf '## 确认\n\n- [x] 已确认\n'
 }
 
@@ -1158,6 +1186,46 @@ not "gate 头块" "$out" "prd.md 的空头块本身不是语法错误"
 printf '<!-- gate\ntier: T9\n-->\n\n# 需求\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-29-prd/prd.md"
 out="$(staged_run "$P")"
 has "取值不对" "$out" "prd.md 头块 tier 写错值要报"
+
+sec "G-tpl: 模板拷出来必须能过闸门（模板与判定器不许分叉）"
+echo "== G-tpl: 模板拷出来必须能过闸门（模板与判定器不许分叉） =="
+# 1) 文本级：模板里的字段行只允许 `- **标签**:` 一种写法。全角冒号、标签后带括注
+#    都会被闸门当成「没填」，而拷模板的人不会怀疑模板，于是每个新任务都要手改一次。
+bad="$(grep -nE '^[[:space:]]*[-*+][[:space:]]+\*\*[^*]+\*\*([^:]|$)' "$TPL"/tasks/_template/*.md 2>/dev/null)"
+if [ -z "$bad" ]; then ok "模板里的字段行只用半角冒号、标签后不带括注"
+else no "模板里有非规范字段行：$bad"; fi
+# 2) 行为级：按各自的 kind 判一遍，不许出现「写法不对」
+for k in plan prd journal slice review; do
+    out="$( cd "$REPO" && awk -v kind="$k" -v fpath="$k.md" \
+            -f templates/scripts/check-gates.awk "templates/tasks/_template/$k.md" 2>&1 )"
+    not "写法不对" "$out" "模板 $k.md 自身没有写法违规"
+done
+
+sec "G-cmt: 正文里的 <!-- 不许静默吞掉整篇"
+echo "== G-cmt: 正文里的 <!-- 不许静默吞掉整篇 =="
+P="$TMP/cmt"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-30-cmt"
+# 行内代码里提到这个机制是**最自然**的写法（模板自己就这么写），它不能是注释起点
+printf '## 目标\n\n- 机器字段搬进 `<!-- gate` 头块。\n\n## 主要提交\n\n- `abc1234`\n\n## 验证结果\n\n| 命令 | 结果 |\n|---|---|\n| cmd | 通过 |\n' > "$P/tasks/2026-01-30-cmt/journal.md"
+out="$(staged_run "$P")"
+not "缺「## 主要提交」" "$out" "行内出现的「<!-- gate」不吞后文（## 主要提交 仍读得到）"
+not "缺「## 验证结果」" "$out" "行内出现的「<!-- gate」不吞后文（## 验证结果 仍读得到）"
+# 行首未闭合：只报这一条真因，不连带报十条「缺节」
+printf '## 目标\n\n- 说明\n\n<!-- 忘了闭合\n\n## 主要提交\n\n- `abc1234`\n' > "$P/tasks/2026-01-30-cmt/journal.md"
+out="$(staged_run "$P")"
+has "未闭合的 markdown 注释" "$out" "行首未闭合的注释要报出来"
+not "缺「## 主要提交」" "$out" "未闭合注释只报真因，不报「缺 N 节」"
+
+sec "G-hyp: 排序假设按模板的行首标签数（3–5 个）"
+echo "== G-hyp: 排序假设按模板的行首标签数（3–5 个） =="
+P="$TMP/hyp"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-31-bug"
+bugplan_text 3 > "$P/tasks/2026-01-31-bug/plan.md"
+out="$(staged_run "$P")"
+not "排序假设只有" "$out" "按模板写三条假设就够（标签是「3–5 个排序假设」）"
+bugplan_text 2 > "$P/tasks/2026-01-31-bug/plan.md"
+out="$(staged_run "$P")"
+has "排序假设只有 2 条" "$out" "只写两条要报（标签里的数量范围不被当成已写满）"
 
 sec "G-scope: 审查归属取 HEAD ∪ 索引 ∪ 工作区"
 echo "== G-scope: 审查归属取 HEAD ∪ 索引 ∪ 工作区 =="
