@@ -59,9 +59,8 @@ run_staged() {
 # 一份能过闸门的 plan.md，$2 可选地留空「目标」
 plan_text() {
     local tier="$1" empty_goal="${2:-0}"
+    printf '<!-- gate\ntier: %s\ntype: feat\n-->\n\n' "$tier"
     printf '# 实施计划\n\n## 任务概要\n\n'
-    printf -- '- **档位**: `%s — 2 文件 / 0 调用方 / 行为有变 / 无覆盖测试 / 预估 40 行`\n' "$tier"
-    printf -- '- **类型**: `加功能`\n'
     if [ "$empty_goal" = "1" ]; then
         printf -- '- **目标**:\n'
     else
@@ -73,6 +72,13 @@ plan_text() {
     printf '| 1 | 改 a | src/a.sh | 低 | 跑闸门 |\n\n'
     printf '## 预估 diff 范围\n\n- 新增文件: 无\n- 修改文件: src/a.sh\n- 删除文件: 无\n\n'
     printf '## 确认\n\n- [x] 已确认\n'
+}
+
+# 一份能过闸门的 prd.md。$1 = 头块里的档位（不传 = 头块里不声明档位）
+prd_text() {
+    printf '<!-- gate\n'
+    [ -n "${1:-}" ] && printf 'tier: %s\n' "$1"
+    printf -- '-->\n\n# 需求\n\n## 验收标准\n\n- 能跑\n'
 }
 
 # 一份能过闸门的 review.md。$1 可选地挖空某处：
@@ -97,7 +103,7 @@ echo "== G1: 规模底线不被在飞任务短路 =="
 P="$TMP/g1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-01-big"
 plan_text T2 > "$P/tasks/2026-01-01-big/plan.md"
-printf '# 需求\n\n## 档位\n\n- **档位**: `T2 — 6 文件`\n' > "$P/tasks/2026-01-01-big/prd.md"
+prd_text T2 > "$P/tasks/2026-01-01-big/prd.md"
 wip_commit "$P"
 # 纯代码提交：5 个文件，不碰任何任务目录
 mkdir -p "$P/src"; for i in 1 2 3 4 5; do printf 'echo %s\n' "$i" > "$P/src/f$i.sh"; done
@@ -388,6 +394,13 @@ subst "$P/tasks/2026-01-02-x/plan.md" 's/^- \*\*目标\*\*:$/- **目标**: 写�
 out="$(run_staged "$P")"
 not "「目标」为空" "$out" "填上目标后不再报"
 
+# 差一点的写法（全角冒号）判「没填」，但要额外指出来——否则人盯着一行已填好的字找原因
+subst "$P/tasks/2026-01-02-x/plan.md" 's/^- \*\*目标\*\*: 写清楚了$/- **目标**：写清楚了/'
+( cd "$P" && git add -A ) >/dev/null 2>&1
+out="$(run_staged "$P")"
+has "「目标」为空" "$out" "全角冒号的字段行算没填"
+has '只认 `- **目标**: 值`' "$out" "并报出这一行写法不对（不是只报空）"
+
 sec "G3: 纯重命名的归档不该被判红"
 echo "== G3: 纯重命名的归档不该被判红 =="
 P="$TMP/g3"; new_project "$P" || { echo "建项目失败"; exit 2; }
@@ -437,6 +450,12 @@ mkdir -p "$P/tasks/2026-01-06-note"
 # 拼字符串改文件会在多条目那条用例上写出不可读的 sed。
 journal_head() {
     cat <<'HDR'
+<!-- gate
+status: DONE
+commit: abc1234
+rejections: 1
+-->
+
 # 执行日志
 
 ## 目标
@@ -445,7 +464,7 @@ journal_head() {
 
 ## 主要提交
 
-- **主要提交**: `abc1234`
+见头块
 
 ## 改动文件清单
 
@@ -460,8 +479,6 @@ journal_head() {
 | `bash scripts/check-gates.sh` | 通过 |
 
 - 未运行的检查及原因: 无
-
-- 被打回: 1 次
 
 ## 遇到的问题
 
@@ -492,7 +509,7 @@ journal_tail() {
 
 ## 结束状态
 
-- **结束状态**: `DONE`
+见头块
 FTR
 }
 write_journal() {  # $1 = 下次注意什么 这一节的内容
@@ -503,16 +520,30 @@ staged_run() { ( cd "$P" && git add -A ) >/dev/null 2>&1; run_staged "$P"; }
 write_journal "- 改 A 必须同步 B"
 out="$(staged_run)"
 has "没有去向" "$out" "没写去向的提醒被报出来"
-# 模板自带的 `- 被打回: N 次` 不能算成一条验证结果
-not "验证结果」里没有一行结果" "$out" "「被打回」不计入验证结果条目"
 
+# 唯一写法：条目里有一行正好是 `去向: <docs|adr|memory|journal>`
 write_journal "- 改 A 必须同步 B
-  → pitfalls"
+  去向: docs"
 out="$(staged_run)"
-not "没有去向" "$out" "箭头写在下一行也算去向"
+not "没有去向" "$out" "去向写在条目下一行也算"
 
 write_journal "- 改 A 必须同步 B
-  → pitfalls
+  去向：docs"
+out="$(staged_run)"
+has "没有去向" "$out" "全角冒号不再被认成去向（写歪就是没写）"
+
+write_journal "- 改 A 必须同步 B
+  去向: pitfalls"
+out="$(staged_run)"
+has "没有去向" "$out" "去向必须是四种字面量之一"
+
+write_journal "- 改 A 必须同步 B
+  → docs"
+out="$(staged_run)"
+has "没有去向" "$out" "旧的箭头写法不再算去向"
+
+write_journal "- 改 A 必须同步 B
+  去向: docs
 - 少写一条测试"
 out="$(staged_run)"
 has "少写一条测试" "$out" "多条目时逐条判，缺去向的那条被报出来"
@@ -524,30 +555,37 @@ not "没有去向" "$out" "写「无」不算违规"
 
 # 顿号 / 全角括号编号也要认作条目起始，否则整节被并成一条，静默免检
 write_journal "1、第一条没有去向
-2、第二条 → pitfalls
+2、第二条
+  去向: journal
 3）第三条也没有去向"
 out="$(staged_run)"
 has "第一条没有去向" "$out" "顿号编号的条目被单独检查"
 has "第三条也没有去向" "$out" "全角括号编号的条目被单独检查"
-not "第二条 → pitfalls" "$out" "写了去向的顿号条目不被误报"
-
-# 去向必须是四种之一：写个箭头就算，等于没校验
-write_journal "- 改 A 必须同步 B → 以后再说"
-out="$(staged_run)"
-has "没有去向" "$out" "箭头后面不是四种去向之一，照样报"
-
-write_journal "- 改 A 必须同步 B → 任务分级阈值"
-out="$(staged_run)"
-not "没有去向" "$out" "「→ 任务分级阈值」算有效去向"
-
-write_journal "- 改 A 必须同步 B → skills/tdd"
-out="$(staged_run)"
-not "没有去向" "$out" "「→ skills/<名>」算有效去向"
+not "第二条" "$out" "写了去向的顿号条目不被误报"
 
 # 散文（没有条目符号）也要能在报错里看到原文，而不是空着
 write_journal "这是一句散文，没有条目符号也没有去向"
 out="$(staged_run)"
 has "这是一句散文" "$out" "散文条目的报错带原文（不是空消息）"
+
+# 头块里的 status 写歪 = 违规，并给出正确写法；没填 = 还没收尾，不查收尾字段
+write_journal "- 无"
+subst "$P/tasks/2026-01-06-note/journal.md" 's/^status: DONE$/status: done/'
+out="$(staged_run)"
+has "取值不对" "$out" "status 用小写是违规（大小写不兼容）"
+has "status: DONE" "$out" "报错给出 status 的正确写法"
+
+write_journal "- 无"
+subst "$P/tasks/2026-01-06-note/journal.md" 's/^status: DONE$/status:/'
+out="$(staged_run)"
+not "取值不对" "$out" "status 留空 = 还没收尾，不算违规"
+not '`commit:` 没填' "$out" "没收尾时不查 commit"
+
+write_journal "- 无"
+subst "$P/tasks/2026-01-06-note/journal.md" 's/^status: DONE$/status: DONE_WITH_CONCERNS/'
+subst "$P/tasks/2026-01-06-note/journal.md" 's/^commit: abc1234$/commit:/'
+out="$(staged_run)"
+has '`commit:` 没填' "$out" "结束状态是 DONE 类时头块的 commit 必须回填"
 
 echo "== R1: review.md 的字段契约（「填全」真的查了吗）=="
 P="$TMP/r1"; new_project "$P" || { echo "建项目失败"; exit 2; }
@@ -610,7 +648,7 @@ printf 'x=1 # [DEBUG-diff]\n' > "$P/src/d.py"
 printf '*.py -diff\n' >> "$P/.gitattributes"
 printf 'x=1 # [DEBUG-suffix]\n' > "$P/src/my-check-gates.sh"
 printf 'u=1 # [DEBUG-upper]\n' > "$P/src/UPPER.MD"
-printf 'grep -rn .\[DEBUG- src/\n' > "$P/scripts/clean-debug.sh"
+printf '# gate-b: mentions-marker\n# 清理脚本本体\ngrep -rn .\[DEBUG- src/\n' > "$P/scripts/clean-debug.sh"
 out="$(staged_run "$P")"
 has "zw.py" "$out" "零宽字符插在 DEBU 与 G 之间的调试标记要拦"
 has "zw2.py" "$out" "零宽字符插在 G 与 - 之间的调试标记要拦"
@@ -618,23 +656,55 @@ has "zw3.py" "$out" "BOM 插在中间的调试标记要拦"
 has "d.py" "$out" "「.gitattributes 标了 -diff」不能成为免死金牌"
 has "my-check-gates.sh" "$out" "同名后缀的文件不豁免（排除项要写精确路径）"
 not "UPPER.MD" "$out" "大写 .MD 是文档，不该当代码扫"
-not "clean-debug.sh" "$out" "清理脚本里写着 grep 模式，不算残留"
+not "clean-debug.sh" "$out" "清理脚本首行声明 mentions-marker，整个文件豁免"
 
-# 只声明 T2、没有 plan.md、同一次提交 6 个代码文件
+# 头块声明 T2、没有 plan.md、同一次提交 6 个代码文件
 P="$TMP/atk2"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-09-t2" "$P/src"
-printf '# 需求\n\n- **档位**: `T2`\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-09-t2/prd.md"
+prd_text T2 > "$P/tasks/2026-01-09-t2/prd.md"
 for i in 1 2 3 4 5 6; do printf 'x\n' > "$P/src/m$i.py"; done
 out="$(staged_run "$P")"
 has "没有 plan.md" "$out" "声明 T2 却没有计划，不能豁免规模底线"
 
-# 无 bullet 的档位行也要被认成 T2/T3
+# 头块写歪 = 违规，并给出正确写法（全角冒号 / 大小写变体都不再兼容）
 P="$TMP/atk3"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-10-t3" "$P/src"
-printf '# 需求\n\n档位: T3\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-10-t3/prd.md"
+printf '<!-- gate\ntier\357\274\232 T3\n-->\n\n# 需求\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-10-t3/prd.md"
 echo "echo x" > "$P/src/x.sh"
 out="$(staged_run "$P")"
-has "没有 plan.md" "$out" "写歪的 T3 声明同样要独立审查（宽进严出）"
+has "gate 头块第 1 行写法不对" "$out" "头块里的全角冒号是违规（不再静默兼容）"
+has '只认 `键: 值`' "$out" "报错说明唯一写法"
+
+printf '<!-- gate\ntier: t3\n-->\n\n# 需求\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-10-t3/prd.md"
+out="$(staged_run "$P")"
+has "取值不对" "$out" "头块里的 t3（小写）是违规（大小写不兼容）"
+has '正确写法 `tier: T2`' "$out" "报错给出 tier 的正确写法"
+
+# 头块的其余写法违规：没闭合 / 不在第一行 / 不认识的键 / 同一个键写两遍
+printf '<!-- gate\ntier: T3\n\n# 需求\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-10-t3/prd.md"
+out="$(staged_run "$P")"
+has "没有闭合" "$out" "缺 `-->` 要报"
+not "缺「## 验收标准」" "$out" "头块没闭合时只报这一个原因（不连带报缺节）"
+
+printf '# 需求\n\n<!-- gate\ntier: T3\n-->\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-10-t3/prd.md"
+out="$(staged_run "$P")"
+has "必须在文件第一行" "$out" "头块不在第一行要报"
+
+printf '<!-- gate\ntier: T3\nstatus: DONE\n-->\n\n# 需求\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-10-t3/prd.md"
+out="$(staged_run "$P")"
+has "不认键" "$out" "prd 头块里写 journal 的键要报"
+
+printf '<!-- gate\ntier: T3\ntier: T3\n-->\n\n# 需求\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-10-t3/prd.md"
+out="$(staged_run "$P")"
+has "写了两遍" "$out" "同一个键写两遍要报"
+
+# 散文里写档位不再被读：6 个代码文件照样触发规模底线
+P="$TMP/atk3b"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/tasks/2026-01-10-t3b" "$P/src"
+printf '# 需求\n\n档位: T3\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-10-t3b/prd.md"
+for i in 1 2 3 4 5 6; do printf 'x\n' > "$P/src/n$i.py"; done
+out="$(staged_run "$P")"
+has "没有声明 T2/T3" "$out" "散文里的「档位: T3」不再算声明"
 
 # 任务目录里的文件名不在约定里
 P="$TMP/atk4"; new_project "$P" || { echo "建项目失败"; exit 2; }
@@ -706,14 +776,14 @@ subst "$P/tasks/2026-01-14-diff/plan.md" 's|^- 新增文件: 无|- 新增文件:
 out="$(staged_run "$P")"
 has "预估 diff 范围" "$out" "三行值全空仍要拦（对照组）"
 
-# 档位注释里提到 T2 不能改变档位（也就不能换来规模豁免）
+# 散文里提到 T2 不能改变档位（也就不能换来规模豁免）
 P="$TMP/ex5"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-15-annot" "$P/src"
 plan_text T1 > "$P/tasks/2026-01-15-annot/plan.md"
-subst "$P/tasks/2026-01-15-annot/plan.md" 's|^- \*\*档位\*\*: .*|- **档位**: `T1`（若到 4 文件就升 T2）|'
+printf '\n档位: T2 只是备注，真要升档得改头块的 tier。\n' >> "$P/tasks/2026-01-15-annot/plan.md"
 for i in 1 2 3 4; do printf 'x\n' > "$P/src/z$i.py"; done
 out="$(staged_run "$P")"
-has "没有声明 T2/T3" "$out" "档位注释里提到 T2 不算声明，规模底线仍生效"
+has "没有声明 T2/T3" "$out" "散文里提到 T2 不算声明，规模底线仍生效"
 
 sec "G-idx: 检查内容必须等于提交内容"
 echo "== G-idx: 检查内容必须等于提交内容 =="
@@ -773,10 +843,12 @@ echo "== G-fw: tab 注释与单引号 =="
 P="$TMP/fw1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
 printf 'grep -q foo f\t# [DEBUG-tab]\n' > "$P/src/tabcomment.js"
-printf "grep -E 'foo|\\[DEBUG-' src/\n" > "$P/scripts/squote.sh"
+printf '#!/bin/sh\n# gate-b: mentions-marker\ngrep -E "foo|\\[DEBUG-" src/\n' > "$P/scripts/squote.sh"
+printf '#!/bin/sh\n# 说明这一行\n# gate-b: mentions-marker\ngrep -E "foo|\\[DEBUG-" src/\n' > "$P/scripts/squote2.sh"
 out="$(staged_run "$P")"
 has "tabcomment.js" "$out" "tab 后的行尾注释里的 marker 也要报"
-not "squote.sh" "$out" "单引号里的 | 不是分隔符（工具行豁免）"
+not "squote.sh" "$out" "shebang 之后第二行的声明有效（可执行脚本的唯一出口）"
+has "squote2.sh" "$out" "声明被挤到第三行就无效（只认 shebang 之后那一行）"
 
 sec "G-adr-bold: 加粗字段 / 根级断链 / 百分号 / 验证结果占位符"
 echo "== G-adr-bold: 加粗字段 / 根级断链 / 百分号 / 验证结果占位符 =="
@@ -796,56 +868,58 @@ printf '\n[看](docs/%%E6%%88%%91%%20%%E7%%9A%%84.md)\n' >> "$P/docs/commands.md
 out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
 not "我 的" "$out" "百分号编码的中文文件名不该被误报断链"
 
-sec "G-comment: 注释里的 marker 不算命令参数"
-echo "== G-comment: 注释里的 marker 不算命令参数 =="
-P="$TMP/cm1"; new_project "$P" || { echo "建项目失败"; exit 2; }
+sec "G-hdr: 文件头声明豁免（无声明 / 首行声明 / 写歪的声明）"
+echo "== G-hdr: 文件头声明豁免（无声明 / 首行声明 / 写歪的声明） =="
+P="$TMP/hdr1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
-printf 'grep -q foo f  # [DEBUG-z]\n' > "$P/src/comment.js"
-printf 'grep -q foo f  # 纯注释\n' > "$P/scripts/ok1.sh"
-printf 'grep -q "[DEBUG-" f # 注释\n' > "$P/scripts/ok2.sh"
+printf 'const a = "[DEBUG-1]";\n' > "$P/src/undecl.js"
+printf '# gate-b: mentions-marker\nconst b = "[DEBUG-2]";\ngrep -q "[DEBUG-3]" f\n' > "$P/src/decl.js"
+printf '# gate-b: mentions-marker \nconst c = "[DEBUG-4]";\n' > "$P/src/trail.js"
+printf '# gate-b: mentions marker\nconst d = "[DEBUG-5]";\n' > "$P/src/alt.js"
 out="$(staged_run "$P")"
-has "comment.js" "$out" "行尾注释里的 marker 要报（它不是 grep 的参数）"
-not "ok1.sh" "$out" "grep 行尾纯注释仍豁免"
-not "ok2.sh" "$out" "marker 在 grep 参数里、注释无 marker，仍豁免"
+has "undecl.js" "$out" "无声明文件里的 marker = 违规"
+not "src/decl.js" "$out" "第一行精确声明 = 整文件豁免（字符串里的 marker 也不报）。注：必须带 src/ 前缀——`grep -F decl.js` 会匹配到 undecl.js 的违规行，产生假失败"
+has "trail.js" "$out" "声明行尾多一个空白 = 声明无效"
+has "alt.js" "$out" "写法差一点（mentions marker，少了冒号）= 声明无效"
 
-sec "G-prefix: 内容里有时间戳 / 双引号内转义"
-echo "== G-prefix: 内容里有时间戳 / 双引号内转义 =="
+sec "G-prefix: 内容里有时间戳 / 工具行不再豁免"
+echo "== G-prefix: 内容里有时间戳 / 工具行不再豁免 =="
 P="$TMP/px1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
 printf 'console.log("[DEBUG-x]", "12:30:45");\n' > "$P/src/ts.js"
 printf 'grep -q "foo\\"|\\[DEBUG-" f\n' > "$P/scripts/esc2.sh"
-printf 'VAR=1 VAR2=2 grep -q x f\n' > "$P/scripts/assign2.sh"
+printf 'VAR=1 VAR2=2 grep -q "[DEBUG-x]" f\n' > "$P/scripts/assign2.sh"
 out="$(staged_run "$P")"
 has "ts.js" "$out" "内容里带时间戳不能把 marker 吞进前缀"
-not "esc2.sh" "$out" "反斜杠转义的引号不结束字符串"
-not "assign2.sh" "$out" "多个赋值前缀同样豁免"
+has "esc2.sh" "$out" "工具行的引号 / 转义不再豁免（无声明 = 违规）"
+has "assign2.sh" "$out" "赋值前缀的 grep 不再豁免（无声明 = 违规）"
 
-sec "G-dash: 各类连字符与包装器参数"
-echo "== G-dash: 各类连字符与包装器参数 =="
+sec "G-dash: 工具行豁免废除（包装器 / 引号 / 赋值前缀都要声明）"
+echo "== G-dash: 工具行豁免废除（包装器 / 引号 / 赋值前缀都要声明） =="
 P="$TMP/ds1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
 printf 'grep -q foo\\|\\[DEBUG- f\n' > "$P/scripts/esc.sh"
 printf 'sudo -u root grep -q "[DEBUG-x]" f\n' > "$P/scripts/sudo.sh"
 printf 'git -C dir grep -q "[DEBUG-x]" f\n' > "$P/scripts/gitc.sh"
+printf '# gate-b: mentions-marker\nsudo -u root grep -q "[DEBUG-x]" f\n' > "$P/scripts/decl.sh"
 out="$(staged_run "$P")"
-not "esc.sh" "$out" "反斜杠转义的 \\| 不是 shell 分隔符"
-not "sudo.sh" "$out" "sudo -u root 的参数不打断豁免"
-not "gitc.sh" "$out" "git -C dir 的参数不打断豁免"
+has "esc.sh" "$out" "找标记的工具行无声明也违规"
+has "sudo.sh" "$out" "sudo -u root 前缀不再是豁免（无声明 = 违规）"
+has "gitc.sh" "$out" "git -C dir 前缀不再是豁免（无声明 = 违规）"
+not "scripts/decl.sh" "$out" "同样的工具行加了首行声明就整文件豁免（带路径前缀，避免误配其他文件名）"
 
-sec "G-exempt3: 引号内分隔符 / 包装器 / 报告路径"
-echo "== G-exempt3: 引号内分隔符 / 包装器 / 报告路径 =="
+sec "G-exempt3: 声明豁免 / 报告路径"
+echo "== G-exempt3: 声明豁免 / 报告路径 =="
 P="$TMP/ex10"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
-printf 'grep -q "foo|\\[DEBUG-" f\n' > "$P/scripts/q1.sh"
-printf 'grep -q "a|\\[DEBUG-" f && echo ok\n' > "$P/scripts/q2.sh"
+printf 'grep -q "a|\\[DEBUG-" f\n' > "$P/scripts/q1.sh"
 printf 'FOO=1 grep -q "[DEBUG-x]" f\n' > "$P/scripts/q3.sh"
 printf 'grep -q foo f & echo "[DEBUG-1] x"\n' > "$P/src/amp.js"
 printf 'grep -q "[DEBUG-" f && echo "[DEBUG-2] x"\n' > "$P/src/chain.js"
 printf 'const s = "[DEBUG-x]";\n' > "$P/src/中文.js"
 out="$(staged_run "$P")"
-not "q1.sh" "$out" "引号里的 | 不是分隔符（grep 参数里有 marker 应豁免）"
-not "q2.sh" "$out" "引号里有 | 且后面 echo 无 marker，仍豁免"
-not "q3.sh" "$out" "FOO=1 grep 是工具行"
+has "q1.sh" "$out" "引号里的 | 不再换来豁免（无声明 = 违规）"
+has "q3.sh" "$out" "FOO=1 grep 不再豁免（无声明 = 违规）"
 has "amp.js" "$out" "单个 & 之后还有 marker 要报"
 has "chain.js" "$out" "&& 之后的 echo 里还有 marker 要报"
 has "src/中文.js" "$out" "报告里的路径要保留原文（归一化只作用于内容）"
@@ -865,27 +939,38 @@ has "u2065.js" "$out" "LC_ALL=C 下 U+2065 仍要拦"
 has "zw-de.js" "$out" "LC_ALL=C 下零宽插在 D/E 之间仍要拦"
 has "gap.js" "$out" "预筛间隙不限长度（12 字节间隙也要进候选）"
 
-sec "G-exempt2: 豁免的两个方向"
-echo "== G-exempt2: 豁免的两个方向 =="
+sec "G-exempt2: 有声明的工具行 / staged 与工作区各读各的"
+echo "== G-exempt2: 有声明的工具行 / staged 与工作区各读各的 =="
 P="$TMP/ex9"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/src" "$P/scripts"
 printf 'grep -q foo debug.txt && echo "[DEBUG-1] x"\n' > "$P/src/and-echo.js"
-printf 'LC_ALL=C grep -q "[DEBUG-x]" f\n' > "$P/scripts/clean-lc.sh"
-printf 'command grep -q "[DEBUG-x]" f\n' > "$P/scripts/clean-cmd.sh"
+printf '# gate-b: mentions-marker\nLC_ALL=C grep -q "[DEBUG-x]" f\n' > "$P/scripts/clean-lc.sh"
+printf '# gate-b: mentions-marker\ncommand grep -q "[DEBUG-x]" f\n' > "$P/scripts/clean-cmd.sh"
 out="$(staged_run "$P")"
-has "and-echo.js" "$out" "首段里出现 debug.txt 不能豁免整行（marker 在 && 之后）"
-not "clean-lc.sh" "$out" "LC_ALL=C grep 是工具行，不该报"
-not "clean-cmd.sh" "$out" "command grep 是工具行，不该报"
+has "and-echo.js" "$out" "无声明文件里 && 之后的 marker 要报"
+not "clean-lc.sh" "$out" "首行声明的 LC_ALL=C grep 整文件豁免"
+not "clean-cmd.sh" "$out" "首行声明的 command grep 整文件豁免"
+
+# staged 的豁免读索引、全量的豁免读工作区——两边可以不一致
+P="$TMP/ex12"; new_project "$P" || { echo "建项目失败"; exit 2; }
+mkdir -p "$P/scripts"
+printf '# gate-b: mentions-marker\ngrep -q "[DEBUG-x]" f\n' > "$P/scripts/idxhdr.sh"
+( cd "$P" && git add -A )
+printf 'no header\ngrep -q "[DEBUG-x]" f\n' > "$P/scripts/idxhdr.sh"
+out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
+not "idxhdr.sh" "$out" "staged 的豁免看索引第一行（工作区改掉不算）"
+out="$( cd "$P" && "$B" scripts/check-gates.sh 2>&1 )"
+has "idxhdr.sh" "$out" "全量的豁免看工作区第一行（改掉就报）"
 
 sec "G-tier-head: prd / 切片的档位也取三版本"
 echo "== G-tier-head: prd / 切片的档位也取三版本 =="
 P="$TMP/th1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-25-t" "$P/src"
-printf '# 需求\n\n- **档位**: `T2`\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-25-t/prd.md"
+prd_text T2 > "$P/tasks/2026-01-25-t/prd.md"
 plan_text T1 > "$P/tasks/2026-01-25-t/plan.md"
 wip_commit "$P"
-# 工作区把 prd 的档位改成 T1（不 stage），HEAD 里仍是 T2
-printf '# 需求\n\n- **档位**: `T1`\n\n## 验收标准\n\n- 能跑\n' > "$P/tasks/2026-01-25-t/prd.md"
+# 工作区把 prd 头块的 tier 改成 T1（不 stage），HEAD 里仍是 T2
+prd_text T1 > "$P/tasks/2026-01-25-t/prd.md"
 ( cd "$P" && printf 'echo a\n' > src/a.sh && git add src/a.sh )
 out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
 has "review.md" "$out" "prd.md 的 T2 在 HEAD 里，工作区改小也躲不过"
@@ -895,11 +980,11 @@ echo "== G-tier-note: journal 不是档位来源 =="
 P="$TMP/tn1"; new_project "$P" || { echo "建项目失败"; exit 2; }
 mkdir -p "$P/tasks/2026-01-26-t" "$P/src"
 plan_text T1 > "$P/tasks/2026-01-26-t/plan.md"
-printf '# 日志\n\n- **档位**: `T2`\n' > "$P/tasks/2026-01-26-t/journal.md"
+printf '# 日志\n\n档位: T2（散文，不是头块）\n' > "$P/tasks/2026-01-26-t/journal.md"
 wip_commit "$P"
 ( cd "$P" && printf 'echo a\n' > src/a.sh && git add src/a.sh )
 out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
-not "review.md" "$out" "journal 里写「档位: T2」不触发审查（它不是档位来源）"
+not "review.md" "$out" "journal 里的档位散文不触发审查（它不是档位来源）"
 
 echo "== G-norm: 归一化（控制字符 / 未列出的格式字符 / locale）=="
 P="$TMP/nm1"; new_project "$P" || { echo "建项目失败"; exit 2; }
@@ -968,13 +1053,13 @@ printf 'const b = "[DEBU\341\240\216G-2]";\n' > "$P/src/u180e.js"
 # 归档里的标记不该被当成残留（.tar 不在后缀排除表里会把提交永久卡死）
 printf 'const x = "[DEBUG-1]";\n' > "$P/a.js"
 ( cd "$P" && tar cf src/mini.tar a.js && rm -f a.js )
-# env VAR=1 grep 是找标记的工具行
-printf 'env FOO=1 grep -n .\\[DEBUG- src/two-zw.js\n' > "$P/scripts/clean2.sh"
+# 带声明的找标记脚本（工具行豁免已废除，声明是唯一出路）
+printf '# gate-b: mentions-marker\nenv FOO=1 grep -n .\\[DEBUG- src/two-zw.js\n' > "$P/scripts/clean2.sh"
 out="$(staged_run "$P")"
 has "two-zw.js" "$out" "两个不可见字符同时打断 BUG/DEB 也要拦"
 has "u180e.js" "$out" "U+180E 插在 BUG 里也要拦"
 not "mini.tar" "$out" "压缩包里的标记不参与闸门 B（否则提交永远红）"
-not "clean2.sh" "$out" "env VAR=1 grep 属于找标记的工具行，不该报"
+not "clean2.sh" "$out" "首行声明的 env VAR=1 grep 整文件豁免"
 
 sec "G-union: tier 与相关文件对三个版本取并集"
 echo "== G-union: tier 与相关文件对三个版本取并集 =="
@@ -1029,6 +1114,20 @@ mkdir -p "$P/tasks/2026-01-17-t2" "$P/src"
 plan_text T2 > "$P/tasks/2026-01-17-t2/plan.md"
 out="$(staged_run "$P")"
 not "review.md" "$out" "T2 只提交 plan.md（还没开工）不要求裁决单 —— 否则「先提交计划」这条路被堵死"
+
+# 「开工」的依据也只有 gate 头块：头块宣告结束状态 = 已开工，裁决单躲不掉；
+# 头块 status 留空、或只在正文里写结束状态，都还算计划阶段。
+printf '<!-- gate\nstatus: DONE\ncommit: abc1234\nrejections: 0\n-->\n\n# 执行日志\n' > "$P/tasks/2026-01-17-t2/journal.md"
+out="$(staged_run "$P")"
+has "review.md" "$out" "journal 头块宣告 DONE = 已开工，T2 必须有裁决单"
+
+printf '<!-- gate\nstatus:\ncommit:\nrejections: 0\n-->\n\n# 执行日志\n' > "$P/tasks/2026-01-17-t2/journal.md"
+out="$(staged_run "$P")"
+not "review.md" "$out" "journal 头块 status 留空 = 还没收尾，不要求裁决单"
+
+printf '# 执行日志\n\n## 结束状态\n\n- **结束状态**: `DONE`\n' > "$P/tasks/2026-01-17-t2/journal.md"
+out="$(staged_run "$P")"
+not "review.md" "$out" "正文里写结束状态不再算开工依据（只读头块）"
 
 sec "G-scope: 审查归属取 HEAD ∪ 索引 ∪ 工作区"
 echo "== G-scope: 审查归属取 HEAD ∪ 索引 ∪ 工作区 =="

@@ -7,8 +7,10 @@
 # 用法：
 #   awk -v kind=plan|prd|journal|slice|review -v fpath=<路径> -f check-gates.awk <文件>
 #       输出 `  [x] <路径>: <消息>` 行（没有违规就什么都不输出）
-#   awk -v kind=tier -f check-gates.awk <plan.md> <切片...>
-#       输出 yes / no —— 任务档位是否落在 T2/T3
+#
+# 被闸门判定的字段只有一个写法：文件第一行的 `<!-- gate` 头块，块内一行一键
+# `键: 值`。键固定 ASCII、值域封闭，写歪就是违规并报出正确写法——不静默兼容。
+# 人读的散文区照旧自由写，闸门不再从散文里猜这些字段。
 #
 # 注意：所有函数的局部变量都必须写在参数表里（awk 没有别的局部变量语法），
 # 漏写会变成全局变量，在多次调用之间串味。
@@ -34,6 +36,14 @@ BEGIN {
     REVIEW_SECS[4] = "审查者明确未判断的"
     REVIEW_SECS[5] = "结论"
 
+    # gate 头块：每类文件只认自己被查的那几个键。键名与值域都是封闭集合。
+    # review.md 没有任何机器字段，所以一个键都不认（写了就是违规）。
+    GATE_ALLOWED["plan"]    = " tier type "
+    GATE_ALLOWED["prd"]     = " tier "
+    GATE_ALLOWED["slice"]   = " tier type status commit "
+    GATE_ALLOWED["journal"] = " status commit rejections "
+    GATE_ALLOWED["review"]  = " "
+
     # 断链检查只认这些扩展名。见 emit_link 里的说明。
     _n = split("md sh awk bash ps1 cmd py pyi js mjs cjs ts tsx jsx json jsonc yaml yml toml ini cfg conf css scss sass less html htm vue svelte astro go rs java kt kts c h cc cpp hpp cs fs rb php pl lua sql txt csv tsv lock xml svg png jpg ico", _e, " ")
     for (_i = 1; _i <= _n; _i++) LINK_EXT[_e[_i]] = 1
@@ -48,6 +58,21 @@ BEGIN {
     # 记下每个文件的起止：L[] 是跨文件累积的，不留边界就会把 A 的行算到 B 头上。
     if ((kind == "adr" || kind == "links") && FNR == 1) {
         FIDX++; FSTART[FIDX] = NL + 1; FNAME[FIDX] = FILENAME
+    }
+
+    # gate 头块必须在第一行，且是 HTML 注释——下面的剥注释会把它整块抹掉，
+    # 所以在这里先按原文抓下来（键值判定不能靠剥完之后的残渣）。
+    if (FNR == 1) {
+        GATE_N = 0; split("", GV)
+        GATE_BAD_START = 0; GATE_MISPLACED = 0
+        split("", NEAR_MISS)
+        GATE_OPEN = (line == "<!-- gate")
+        if (line != "<!-- gate" && line ~ /^[ \t]*<!--[ \t]*gate/) GATE_BAD_START = 1
+    } else if (GATE_OPEN) {
+        if (line == "-->") GATE_OPEN = 0
+        else GL[++GATE_N] = line
+    } else if (line == "<!-- gate") {
+        GATE_MISPLACED = 1
     }
 
     # 剥掉 markdown 注释（含跨行）。模板注释里会出现「应该可以」
@@ -73,52 +98,6 @@ BEGIN {
 }
 
 END {
-    # 档位：plan.md / prd.md / 切片里**任何一处**声明了 T2/T3 就算。
-    # 不能只看第一条声明：同一文件里先写 T1、后面补一条 T3 也算；多个切片里
-    # 最后一个才是 T3 也算。只看第一条会让这类任务躲过 review.md 的强制检查。
-    # （awk 的变量是全局的，`awk plan.md 01-a.md` 一次进程跑多个文件——
-    #  所以这里不能有「找到就停」的状态，否则只有第一个文件会被看到。）
-    # 放在 END 里而不是读行循环里：要等整个文件读完才能看「值换行写在下一行」。
-    if (kind == "tier") {
-        j = 0
-        for (i = 1; i <= NL; i++) {
-            # 档位可能写歪（没有 bullet、没有粗体）。这时不能整行扫 T2/T3——
-            # `- **档位**: T1（若到 4 文件就升 T2）` 会被误判成 T2，反而绕开规模底线。
-            # 判据固定为「档位二字后面的冒号，冒号之后第一个 T0–T3」。
-            if (L[i] ~ /^[[:space:]]*#/) continue
-            if (index(L[i], "档位") == 0) continue
-            v = ""
-            if (match(L[i], /档位/)) {
-                v = substr(L[i], RSTART + RLENGTH)
-                sub(/^[[:space:]]*\**[[:space:]]*[:：][[:space:]]*/, "", v)
-                if (v !~ /^[[:space:]]*[`Tt]/) {
-                    # 冒号不在这一行，看看是不是换行写的
-                    if (v ~ /^[[:space:]]*$/) {
-                        j = i
-                        while (++j <= NL) {
-                            if (L[j] ~ /^[[:space:]]*[-*+][[:space:]]+\*\*/) break
-                            if (L[j] ~ /^[[:space:]]*#/) break
-                            if (L[j] !~ /^[[:space:]]*$/) { v = L[j]; break }
-                        }
-                    } else v = ""
-                }
-            }
-            if (v != "" && token_of(v) ~ /^T[23]/) high = 1
-            if (L[i] !~ /^[[:space:]]*[-*+][[:space:]]+\*\*/ || index(L[i], "**档位**") == 0) continue
-            v = field_value_of(L[i])
-            if (v == "") {
-                j = i
-                while (++j <= NL) {
-                    if (L[j] ~ /^[[:space:]]*[-*+][[:space:]]+\*\*/) break
-                    if (L[j] ~ /^[[:space:]]*#/) break
-                    if (L[j] !~ /^[[:space:]]*$/) { v = L[j]; break }
-                }
-            }
-            if (token_of(v) ~ /^T[23]/) high = 1
-        }
-        print (high ? "yes" : "no"); exit
-    }
-    if (kind == "status")  { print md_token("结束状态"); exit }
     if (kind == "links")   { links_dump(); exit }
     if (kind == "adr")     { adr_check(); exit }
     if (kind == "modules") { modules_dump(); exit }
@@ -209,35 +188,47 @@ function has_section(want,   i, hl, t) {
 }
 
 # `- **标签**: 值` 行的原文（第一次出现）。没找到返回空串。
-# `-` / `*` / `+` 三种列表符号都认：只认前两种的话，用 `+` 写的档位会被判「未声明」，
-# 而 task_is_high_tier 也看不见它——T2/T3 任务就此躲过 review.md。
-# 标签必须**精确**匹配 `**标签**`。
-# 用子串匹配（index(L[i], lbl)）会让 `- **非目标**: 这次什么都不做` 顶替空的
-# `- **目标**:`——判定「目标已填」，而目标根本没写。
-function field_raw(lbl,   i) {
-    for (i = 1; i <= NL; i++)
-        if (L[i] ~ /^[[:space:]]*[-*+][[:space:]]+\*\*/ && index(L[i], "**" lbl "**") > 0) return L[i]
-    return ""
-}
+# 只认**一种**写法：`-` + 空格 + `**标签**` + 半角冒号。`*` / `+` 列表符和全角冒号
+# 都不再兼容——写歪就是没写，闸门按「这个字段没填」报出来，不再猜作者的意思。
+# 标签必须**精确**匹配 `**标签**`：用子串匹配会让 `- **非目标**: 这次什么都不做`
+# 顶替空的 `- **目标**:`——判定「目标已填」，而目标根本没写。
+function field_line_pat(lbl) { return "^[ \\t]*- \\*\\*" lbl "\\*\\*:" }
 
-# 字段行冒号后的值。全角冒号先归一化——**必须认**：认不出的话 `sub` 不生效，
-# 整行被当成值返回，所有 field_filled 检查会一律判「已填」（fail-open）。
+# 差一点的写法：同一行里有 `**标签**`，但不是唯一的写法（全角冒号、`*` / `+`
+# 列表符、冒号前多了空格）。判据不因此放宽——**写歪就是没写**；但只报「字段为空」
+# 的话，人会盯着一行看起来已经填好的字，找不到原因。所以每个标签额外提示一次。
+function near_miss(lbl,   i, l, t, tag) {
+    if (lbl in NEAR_MISS) return
+    tag = "**" lbl "**"
+    for (i = 1; i <= NL; i++) {
+        l = L[i]
+        if (index(l, tag) == 0) continue
+        # 只认「去掉列表符之后就以标签开头」的行：正文里引用这个写法
+        # （`例：- **目标**: 值`）不该被当成写歪的字段行。
+        t = l
+        sub(/^[ \t]*([-*+][ \t]+)?/, "", t)
+        if (substr(t, 1, length(tag)) != tag) continue
+        if (l ~ field_line_pat(lbl)) return          # 有正确写法，不需要提示
+        NEAR_MISS[lbl] = 1
+        V("`" lbl "` 这一行写法不对: `" l "` —— 只认 `- **" lbl "**: 值`（半角冒号，`-` 后面一个空格）；全角冒号、`*` / `+` 列表符都会被当成没填")
+        return
+    }
+}
 function field_value_of(r,   v) {
     v = r
-    gsub(/：/, ":", v)
-    sub(/^[^:]*:[[:space:]]*/, "", v)
+    sub(/^[^:]*:[ \t]*/, "", v)
     return v
 }
 function field_value(lbl,   i, v) {
+    near_miss(lbl)
     for (i = 1; i <= NL; i++) {
-        if (L[i] !~ /^[[:space:]]*[-*+][[:space:]]+\*\*/ || index(L[i], "**" lbl "**") == 0) continue
+        if (L[i] !~ field_line_pat(lbl)) continue
         v = field_value_of(L[i])
         if (v != "") return v
-        # 同行是空的：值可能换行写在下一行（`- **档位**:` 换行再写 `` `T3` — … ``）。
-        # 不认的话档位判「未声明」，而 task_is_high_tier 也就看不见它——
-        # T2/T3 任务会因此躲过 review.md。遇到下一个字段行或标题行就停。
+        # 同行是空的：值可能换行写在下一行。遇到下一个字段行或标题行就停。
         while (++i <= NL) {
-            if (L[i] ~ /^[[:space:]]*[-*+][[:space:]]+\*\*/) return ""
+            if (L[i] ~ field_line_pat(lbl)) return ""
+            if (L[i] ~ /^[ \t]*- \*\*/) return ""
             if (L[i] ~ /^[[:space:]]*#/) return ""
             if (L[i] !~ /^[[:space:]]*$/) return L[i]
         }
@@ -246,31 +237,93 @@ function field_value(lbl,   i, v) {
     return ""
 }
 
-# 取值的 token：有反引号就取**第一对反引号里的第一个词**，没写反引号就取第一个词。
-# 不回退的话 `- **档位**: T2`（忘了反引号）会被报成「档位未声明」，
-# 而且 T2/T3 的任务会因此躲过 review.md 的强制检查。
-# 反引号里再切一个词：模板给的形状是 `` `T1 — 2 文件 / 0 调用方 / …` ``
-# —— 整段都在反引号里，不切的话整行都会被当成档位值。
-# 切词用 [ \t] 而不是 [[:space:]]：本机 locale 下 0xA0 也算空白，
-# 而中文（UTF-8 里含 0xA0 字节的字）会被从中间切坏。
-function token_of(v,   s, p) {
-    s = v
-    sub(/^[ \t]+/, "", s)      # 值可能换行写在下一行，带着缩进进来
-    if (substr(s, 1, 1) == "`" && index(substr(s, 2), "`") > 0) {
-        s = substr(s, 2)
-        s = substr(s, 1, index(s, "`") - 1)
-        sub(/^[ \t]+/, "", s)
-    }
-    p = match(s, /[ \t]/)
-    return p ? substr(s, 1, p - 1) : s
+# ---------------------------------------------------------------- gate 头块
+#
+# 头块是**唯一**的机器字段入口：本次任务被闸门判定的档位 / 类型 / 状态 /
+# 主要提交 / 被打回次数都只从这里读。散文区里写同样的字不再被解析。
+
+# 头块的取值（已经在 gate_check 里验过值域）。没写这一键返回空串。
+function gate_value(k) { return (k in GV) ? GV[k] : "" }
+
+# 报错里要给出能直接抄的那一行。
+function gate_hint(kind, k) {
+    if (k == "tier")   return "T2"
+    if (k == "type")   return (kind == "slice") ? "slice" : "feat"
+    if (k == "status") return (kind == "slice") ? "pending" : "DONE"
+    if (k == "commit") return "3f9a1c2"
+    return "0"
 }
-function md_token(lbl) { return token_of(field_value(lbl)) }
+
+# 值域是封闭集合，逐键不同。slice 的类型轴是「切片 / 决策条目」、状态轴是
+# pending / in_progress / completed；plan 的类型轴是 feat / refactor /
+# bug-repro / bug-norepro；journal 的状态轴是四种结束状态。
+function gate_value_ok(kind, k, v) {
+    if (k == "tier") return v ~ /^T[0-3]$/
+    if (k == "type") {
+        if (kind == "slice") return v == "slice" || v == "decision"
+        return v == "feat" || v == "refactor" || v == "bug-repro" || v == "bug-norepro"
+    }
+    if (k == "status") {
+        if (kind == "slice") return v == "pending" || v == "in_progress" || v == "completed"
+        return v == "DONE" || v == "DONE_WITH_CONCERNS" || v == "BLOCKED" || v == "NEEDS_CONTEXT"
+    }
+    if (k == "commit")     return v ~ /^[^ \t]+$/
+    if (k == "rejections") return v ~ /^[0-9]+$/
+    return 0
+}
+
+# 头块的语法与取值：
+#   - 头块整个不在 → 不报「缺头块」，各字段按「未填」交给各自的检查（沿用旧语义：
+#     plan 的档位/类型必填、prd 的可选、journal 的没填就是还没收尾）。
+#   - 头块在但某一行写歪（全角冒号、大小写变体、多余文字、不认识的键、写两遍）
+#     → 违规，消息里给出正确写法。
+#   - `键:` 后面留空 = 这个键还没填（模板里就是留位用的）。
+function gate_check(kind,   i, l, k, v, p, allowed, keys) {
+    if (GATE_BAD_START) { V("gate 头块起始行写法不对：第一行必须正好是 `<!-- gate`（行首、无多余空格）"); GATE_BAD_START = 0 }
+    if (GATE_MISPLACED) { V("gate 头块必须在文件第一行——`<!-- gate` 前面不能有空行、标题或别的注释"); GATE_MISPLACED = 0 }
+    # 没闭合时 GL[] 里装的是整篇正文，剥注释也把正文一并吞了——各节检查会
+    # 全部报「缺这一节」，把真正的原因埋掉。只报这一条，然后结束这个文件的检查。
+    if (GATE_OPEN)      { V("gate 头块没有闭合：`<!-- gate` 之后要有一行正好是 `-->`"); exit }
+    if (GATE_N == 0) return
+
+    allowed = GATE_ALLOWED[kind]
+    keys = allowed
+    gsub(/^ +| +$/, "", keys)
+    for (i = 1; i <= GATE_N; i++) {
+        l = GL[i]
+        if (l ~ /^[a-z]+:$/) { k = substr(l, 1, length(l) - 1); v = "" }
+        else if (l ~ /^[a-z]+: /) {
+            p = index(l, ": ")
+            k = substr(l, 1, p - 1)
+            v = substr(l, p + 2)
+            if (v ~ /^[ \t]*$/) v = ""
+        } else {
+            V("gate 头块第 " i " 行写法不对: `" l "` —— 只认 `键: 值`（半角冒号 + 一个空格，行首行尾不许多余字符）；" kind ".md 认的键是 " keys)
+            continue
+        }
+        if (index(allowed, " " k " ") == 0) {
+            if (keys == "") V("gate 头块里不认键 `" k "`: " kind ".md 没有任何机器字段，头块里不该有键（删掉这一行）")
+            else            V("gate 头块里不认键 `" k "`: " kind ".md 只认 " keys "（删掉这一行，或改成正确的键）")
+            continue
+        }
+        if (k in GV) { V("gate 头块里 `" k "` 写了两遍：一个文件只有一个 " k " 值"); continue }
+        if (v == "") continue            # 留空 = 还没填，交给各自的检查
+        if (!gate_value_ok(kind, k, v)) {
+            V("gate 头块 `" k ": " v "` 取值不对 —— 正确写法 `" k ": " gate_hint(kind, k) "`")
+            continue
+        }
+        GV[k] = v
+    }
+}
 
 # 字段行及其后续块（到下一个 `- **` 标签行或标题行为止）。返回行数，存进 B[]。
+# 这里是**找块**不是**判写法**：列表符三种、冒号全半角都认。写法是否合规由
+# field_value / near_miss 判——但「相关文件」的路径提取走这里，写歪的字段行
+# 也要能把路径读出来，否则审查归属会静默漏掉这个任务（漏判比多判危险）。
 function field_block(lbl,   i, n, found) {
     n = 0; found = 0
     for (i = 1; i <= NL; i++) {
-        if (L[i] ~ /^[[:space:]]*[-*+][[:space:]]+\*\*/) {
+        if (L[i] ~ /^[ \t]*[-*+][ \t]+\*\*/) {
             if (found) break
             if (index(L[i], "**" lbl "**") > 0) { found = 1; B[++n] = L[i]; continue }
         } else if (L[i] ~ /^[[:space:]]*#/) {
@@ -280,14 +333,6 @@ function field_block(lbl,   i, n, found) {
     }
     return n
 }
-function field_block_text(lbl,   n, i, out) {
-    n = field_block(lbl)
-    out = ""
-    for (i = 1; i <= n; i++) out = out (i > 1 ? "\n" : "") B[i]
-    sub(/\n+$/, "", out)
-    return out
-}
-
 # 字段块**去掉字段行本身**之后的部分。要数条目时用这个：字段行自己也是
 # `- **…**`，混进去会被当成一条。
 function field_block_body(lbl,   n, i, out) {
@@ -430,9 +475,6 @@ function count_result_items(text,   n, i, c, t) {
         # 「未运行的检查及原因: 无」这种行，照抄就非空的话这条检查形同虚设。
         if (t ~ /^[^:：]*[:：][[:space:]]*$/ || t ~ /^[^:：]*[:：][[:space:]]*(无|没有|N\/A|None|TODO)[[:space:]]*$/) continue
         if (t ~ /^\*\*(未运行的检查|没跑|未运行)[^*]*\*\*[[:space:]]*[:：]?[[:space:]]*(无|没有)?[[:space:]]*$/) continue
-        # 模板自带的固定字段不是「验证结果」：`- 返工: 0 次` 只要照抄模板就会出现，
-        # 算进来的话这一节永远非空，「没有一行结果」这条检查就废了。
-        if (ROWS[i] ~ /^[[:space:]]*[-*+][[:space:]]*(返工|被打回)[[:space:]]*[:：]/) continue
         c++
     }
     return c
@@ -563,17 +605,14 @@ function related_has_path(   i, n, out) {
 }
 
 function plan_check(   tier, type, n, filled, hy, t) {
+    # 档位与类型只从 gate 头块读（gate_check 已经验过值域）。
+    gate_check("plan")
     if (!has_section("任务概要")) { V("缺「## 任务概要」一节"); return }
 
-    tier = md_token("档位")
-    if (tier == "")                    V("档位未声明（找不到 `- **档位**:` 行）")
-    else if (index(tier, "T?") > 0)    V("档位仍是模板占位符 T?")
-    else if (tier !~ /^T[0-3]$/)       V("档位 '" tier "' 不是 T0–T3")
-
-    type = md_token("类型")
-    if (type == "") V("类型未声明（找不到 `- **类型**:` 行）")
-    else if (type != "加功能" && type != "重构" && type != "bug-可复现" && type != "bug-不可复现")
-        V("类型 '" type "' 不在 {加功能, 重构, bug-可复现, bug-不可复现}")
+    tier = gate_value("tier")
+    type = gate_value("type")
+    if (tier == "") V("档位未声明（gate 头块的 `tier:` 没填；正确写法 `tier: T2`）")
+    if (type == "") V("类型未声明（gate 头块的 `type:` 没填；正确写法 `type: feat`）")
 
     t = field_value("目标")
     gsub(/[[:space:]`]/, "", t)
@@ -627,8 +666,8 @@ function plan_check(   tier, type, n, filled, hy, t) {
     }
 
     # 任务分级.md：bug 不可复现强制 T3
-    if (type == "bug-不可复现" && tier !~ /^T3$/)
-        V("类型 bug-不可复现 必须声明 T3（现在写的是 '" tier "')")
+    if (type == "bug-norepro" && tier !~ /^T3$/)
+        V("类型 bug-norepro 必须声明 T3（现在写的是 '" tier "')")
 }
 
 # ---------------------------------------------------------------- prd.md
@@ -636,13 +675,10 @@ function plan_check(   tier, type, n, filled, hy, t) {
 # Spec 轴的基准。只卡两件机器能判的事：
 #   1. 「## 验收标准」非空——AGENTS.md 的 Done Means 和 pre-review 的 Spec 轴
 #      都拿它当指涉对象，缺了它 Spec 轴悬空。
-#   2. 档位行填了就必须是 T0–T3。**不要求它必须填**——prd.md 在 Step 3.2 落笔、
-#      档位在 3.3 才定，强制存在会在中途提交时误报。这里只抓「模板占位符没删」和写错值。
-function prd_check(   tier, acc) {
-    tier = md_token("档位")
-    if (tier == "")                 { }
-    else if (index(tier, "T?") > 0) V("档位仍是模板占位符 T?")
-    else if (tier !~ /^T[0-3]$/)    V("档位 '" tier "' 不是 T0–T3")
+#   2. gate 头块里的 tier 写歪了要报。**不要求它必须填**——prd.md 在 Step 3.2 落笔、
+#      档位在 3.3 才定，强制存在会在中途提交时误报。
+function prd_check(   acc) {
+    gate_check("prd")
 
     acc = section_text("验收标准")
     if (!has_section("验收标准")) V("缺「## 验收标准」一节（Spec 轴和 Done Means 都拿它当基准）")
@@ -653,6 +689,7 @@ function prd_check(   tier, acc) {
 # ---------------------------------------------------------------- journal.md
 
 function journal_check(   i, missing, end_state, verify, changed) {
+    gate_check("journal")
     missing = 0
     for (i = 1; i <= 11; i++) {
         if (!has_section(JOURNAL_SECS[i])) {
@@ -662,20 +699,16 @@ function journal_check(   i, missing, end_state, verify, changed) {
     }
     if (missing > 0) return
 
-    # 「结束状态」没填 = 这个任务还没收尾（journal.md 按设计在 Step 3.11 才写，
-    # 而 Step 3.9 的 `git add .` 会先把一份空模板扫进提交）。这时不查收尾字段——
-    # 和 prd.md 的档位同理：填了才校验，没填不算违规。
-    if (!field_filled("结束状态")) return
+    # 头块里的 status 没填 = 这个任务还没收尾（journal.md 按设计在 Step 3.11 才写，
+    # 而 Step 3.9 的 `git add .` 会先把一份空模板扫进提交）。这时不查收尾字段：
+    # 填了才校验，没填不算违规。
+    end_state = gate_value("status")
+    if (end_state == "") return
 
-    # 「主要提交」与「结束状态」绑定：BLOCKED / NEEDS_CONTEXT 的任务可能一次提交都没有
-    end_state = md_token("结束状态")
+    # 「主要提交」与结束状态绑定：BLOCKED / NEEDS_CONTEXT 的任务可能一次提交都没有。
     if (end_state == "DONE" || end_state == "DONE_WITH_CONCERNS") {
-        if (!field_filled("主要提交"))
-            V("结束状态是 " end_state "，但「主要提交」没回填（写工作提交的 SHA，见 tasks/README.md）")
-    } else if (end_state == "BLOCKED" || end_state == "NEEDS_CONTEXT") {
-        # 卡住 / 缺信息的任务允许零提交
-    } else {
-        V("「结束状态」是 '" end_state "'，不在 {DONE, DONE_WITH_CONCERNS, BLOCKED, NEEDS_CONTEXT}")
+        if (gate_value("commit") == "")
+            V("结束状态是 " end_state "，但头块的 `commit:` 没填（写工作提交的 SHA，见 tasks/README.md；正确写法 `commit: 3f9a1c2`）")
     }
 
     verify = section_text("验证结果")
@@ -699,8 +732,10 @@ function journal_check(   i, missing, end_state, verify, changed) {
 # 这条只判**形式**（有没有写出口），不判内容质量——「写得对不对」机器管不了，
 # 判质量只会退化成勾选表演。
 #
-# 按**条目**判，不按行判：一个条目可以写两行——先说要记住什么，箭头另起一行。
-# 模板注释里给的就是这种排版，按行判会让模板自己的示例判红。
+# 笔迹只有一个：条目里要有一行正好是 `去向: docs` / `去向: adr` /
+# `去向: memory` / `去向: journal` 之一。箭头写法（`→ pitfalls`）不再认——
+# 四种值的含义写在 tasks/README.md，闸门只认那四个字面量。
+# 按**条目**判：一个条目可以写两行（先说记住什么，去向另起一行）。
 function check_next_notes(   n, i, l, txt, item, item_line, have_item) {
     if (!has_section("下次注意什么")) return
     txt = section_text("下次注意什么")
@@ -729,20 +764,19 @@ function check_next_notes(   n, i, l, txt, item, item_line, have_item) {
 # 只要其中任意一行有去向就全部放行——静默免检。
 function is_bullet(l) { return l ~ /^[ \t]*([-*+][ \t]+|(（|\()?[0-9]+([.]|、|\)|）)[ \t]*)[^ \t]/ }
 
-# 一个条目里只要**任何一行**写了去向就算数。
+# 一个条目里只要**任何一行**是 `去向: <四选一>` 就算数。
 function flush_note(item, item_line, have_item,   l, n, i) {
     if (item == "") return
     n = split(item, NOTE_TMP, "\n")
     for (i = 1; i <= n; i++) {
         l = NOTE_TMP[i]
-        gsub(/^[ \t]*([-*+]|(（|\()?[0-9]+([.]|、|\)|）))?[ \t]*/, "", l)
+        gsub(/^[ \t]+/, "", l)
         sub(/[ \t]+$/, "", l)
+        # 整节只写「无」是合法写法：带条目符号的 `- 无` 也算。
         if (l == "无" || l == "无。" || l == "N/A") return
-        # 去向必须是四种之一，不能「出现一个 → 就算」：
-        # `- 改 A 要同步 B → 以后再说` 这种写法原先会被放过，而报错文案印的是四选一，
-        # 读的人会以为它真的校验了。
-        if (index(l, "不沉淀") > 0) return
-        if (match(l, /→[ \t]*(pitfalls|任务分级|skills\/)/) > 0) return
+        if (l ~ /^([-*+]|(（|\()?[0-9]+([.]|、|\)|）))[ \t]+(无。?|N\/A)[ \t]*$/) return
+        # 去向整行精确匹配：全角冒号、多一个词、写成箭头都算没写。
+        if (l ~ /^去向: (docs|adr|memory|journal)$/) return
     }
     # 报错要能定位。条目可能以换行开头（前面是「第一个项目符号之前的散文」），
     # 直接剥前缀会剥空，消息就变成「没有去向:  —— …」，指不到任何东西。
@@ -750,33 +784,33 @@ function flush_note(item, item_line, have_item,   l, n, i) {
     while (substr(l, 1, 1) == "\n") l = substr(l, 2)
     sub(/^[ \t]*([-*+]|(（|\()?[0-9]+([.]|、|\)|）))[ \t]*/, "", l)
     sub(/\n.*/, "", l)
-    V("「下次注意什么」这条没有去向: " l " —— 每条要么 `→ pitfalls` / `→ 任务分级阈值` / `→ skills/<名>`，要么写「不沉淀」")
+    V("「下次注意什么」这条没有去向: " l " —— 每条里要有一行 `去向: docs` / `去向: adr` / `去向: memory` / `去向: journal`")
 }
 
 # ---------------------------------------------------------------- NN-*.md 切片 / 决策条目
 
-# 类型决定哪一节必填（同 plan.md 的「修 bug 时必填」）。
+# 类型决定哪一节必填（同 plan.md 的「修 bug 时必填」）。类型、档位、状态与
+# 主要提交都在 gate 头块里；优先级没有头块键，只认 `- **优先级**: P0` 这一种写法。
 function slice_check(   type, tier, prio, st, n, t) {
-    type = md_token("类型")
-    if (type == "") { V("类型未声明（找不到 `- **类型**:` 行，值应为 切片 或 决策条目）"); return }
-    if (type != "切片" && type != "决策条目") { V("类型 '" type "' 不在 {切片, 决策条目}"); return }
+    gate_check("slice")
+    type = gate_value("type")
+    if (type == "") { V("类型未声明（gate 头块的 `type:` 没填；正确写法 `type: slice`）"); return }
 
-    if (type == "决策条目") {
+    if (type == "decision") {
         if (!field_filled("问题")) V("决策条目 —— 「问题」为空")
         if (!field_filled("结论")) V("决策条目 —— 「结论」为空")
         if (!field_filled("依据")) V("决策条目 —— 「依据」为空")
         return
     }
 
-    tier = md_token("档位")
-    if (tier == "")                 V("档位未声明（找不到 `- **档位**:` 行）")
-    else if (index(tier, "T?") > 0) V("档位仍是模板占位符 T?")
-    else if (tier !~ /^T[0-3]$/)    V("档位 '" tier "' 不是 T0–T3")
+    tier = gate_value("tier")
+    if (tier == "") V("档位未声明（gate 头块里没有 `tier:` 行；正确写法 `tier: T2`）")
 
-    prio = md_token("优先级")
-    if (prio == "") V("优先级未声明（找不到 `- **优先级**:` 行）")
+    prio = field_value("优先级")
+    sub(/[ \t]+$/, "", prio)
+    if (prio == "") V("优先级未声明（正文里缺 `- **优先级**: P0` 这一行）")
     else if (prio != "P0" && prio != "P1" && prio != "P2")
-        V("优先级 '" prio "' 不在 {P0, P1, P2}")
+        V("优先级 '" prio "' 不在 {P0, P1, P2}（正确写法 `- **优先级**: P0`）")
 
     if (!field_filled("完成后可以看到什么")) V("「完成后可以看到什么」为空")
     if (!field_filled("完成标准"))           V("「完成标准」为空")
@@ -786,13 +820,12 @@ function slice_check(   type, tier, prio, st, n, t) {
     gsub(/[[:space:]`]/, "", t)
     if (t == "") V("「被谁挡」为空（没有前置就写「无」）")
 
-    st = md_token("状态")
-    if (st == "") V("状态未声明（找不到 `- **状态**:` 行）")
-    else if (st != "pending" && st != "in_progress" && st != "completed")
-        V("状态 '" st "' 不在 {pending, in_progress, completed}")
+    st = gate_value("status")
+    if (st == "") V("状态未声明（gate 头块的 `status:` 没填；正确写法 `status: pending`）")
 
     # 标记完成却回填不了提交，说明这个切片的状态是假的
-    if (st == "completed" && !field_filled("主要提交")) V("状态是 completed，但「主要提交」没回填")
+    if (st == "completed" && gate_value("commit") == "")
+        V("状态是 completed，但头块里没有 `commit:` 行（正确写法 `commit: 3f9a1c2`）")
 
     if (!has_section("确认")) V("缺「## 确认」一节")
     else {
@@ -808,6 +841,7 @@ function slice_check(   type, tier, prio, st, n, t) {
 
 # 只有 T2 / T3 需要。模板里那几段说明文字如果被当成内容，一个没填的裁决单会通过。
 function review_check(   i, undecided) {
+    gate_check("review")
     for (i = 1; i <= 5; i++)
         if (!has_section(REVIEW_SECS[i])) V("缺「## " REVIEW_SECS[i] "」一节")
 

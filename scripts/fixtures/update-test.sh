@@ -153,7 +153,7 @@ grep -q '^decision union .gitignore ' "$P/.scaffold-version" && ok "union 记进
 
 echo "== 落盘后跑闸门 =="
 P="$TMP/p6"; cp -r "$TMP/withver" "$P"
-# 造一条存量违规：plan 不写「目标」
+# 造存量违规：旧格式 plan（档位 / 类型写在散文行、头块里没有 → 判「未声明」，且「目标」为空）
 mkdir -p "$P/tasks/2026-01-09-legacy"
 printf '# 实施计划\n\n## 任务概要\n\n- **档位**: `T1 — 1 文件 / 0 调用方 / 行为有变 / 无覆盖测试 / 预估 5 行`\n- **类型**: `加功能`\n- **目标**:\n- **相关文件**:\n  - src/a.sh\n- **验证命令**: `bash scripts/check-gates.sh`\n\n## 步骤\n\n| # | 步骤 | 文件范围 | 风险 | 验证 |\n|---|---|---|---|---|\n| 1 | 改 a | src/a.sh | 低 | 跑闸门 |\n\n## 确认\n\n- [x] 已确认\n' > "$P/tasks/2026-01-09-legacy/plan.md"
 commit_all "$P" init

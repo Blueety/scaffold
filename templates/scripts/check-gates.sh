@@ -12,25 +12,39 @@
 # 覆盖：
 #   - 闸门 B：非 .md 文件里没有 [DEBUG- 残留（大小写不敏感；.md 是文档，会引用这个约定）。
 #              排除 scripts/check-gates.sh 自身、node_modules/、二进制文件；
-#              全量模式还排除 .gitignore 命中的本地文件（那是数据不是代码）
-#   - plan.md：档位与类型已声明、目标 / 相关文件 / 验证命令非空、步骤表非空、
+#              全量模式还排除 .gitignore 命中的本地文件（那是数据不是代码）。
+#              唯一豁免（文件级）：第一行精确等于 `# gate-b: mentions-marker`
+#              的文件整体不报——由文件自己声明「本文在谈论这个标记」；
+#              首行是 shebang 的可执行脚本看第二行。
+#   机器字段只有一个写法：文件第一行的 `<!-- gate` 头块，块内一行一键 `键: 值`
+#   （半角冒号 + 一个空格，键固定 ASCII）。块内写歪（全角冒号、大小写变体、多余文字、
+#   不认识的键）一律报违规并给出正确写法；`键:` 后面留空 = 还没填。散文区里写这些
+#   字段不再被读取。每类文件只认自己那几个键：
+#     plan.md    tier ∈ T0–T3、type ∈ feat / refactor / bug-repro / bug-norepro
+#     prd.md     tier（可选）
+#     journal.md status ∈ DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT、
+#                commit（一个 SHA）、rejections（十进制整数）
+#     NN-*.md    type ∈ slice / decision、tier、status ∈ pending / in_progress / completed、commit
+#   - plan.md：头块里的档位与类型已声明、目标 / 相关文件 / 验证命令非空、步骤表非空、
 #              确认清单至少一条且全勾、
 #              目标不能写「无」、预估 diff 范围三行不能全空、
 #              测试 Seam 四行要么全填要么全空、
-#              bug 任务的闸门 A 字段（含 ≥3 条排序假设）、bug-不可复现 必须声明 T3
-#   - prd.md：验收标准非空且有条目；档位行填了就必须合法（不强制存在）
-#   - journal.md：章节齐全（含雾区变化 / 一致性走查）、结束状态合法、验证结果有内容且不写「应该可以」、
+#              bug 任务的闸门 A 字段（含 ≥3 条排序假设）、bug-norepro 必须声明 T3
+#   - prd.md：验收标准非空且有条目；头块里的 tier 填了就必须合法（不强制存在）
+#   - journal.md：章节齐全（含雾区变化 / 一致性走查）、头块的 status 合法、验证结果有内容且不写「应该可以」、
 #                 改动清单已填且没留模板占位符（src/... 或 <...>）、
-#                 结束状态是 DONE / DONE_WITH_CONCERNS 时「主要提交」必须回填、
-#                 「下次注意什么」每一条都写了去向（→ pitfalls / → 任务分级阈值 /
-#                 → skills/<名> / 不沉淀）——只判有没有出口，不判内容质量。
+#                 status 是 DONE / DONE_WITH_CONCERNS 时头块的 commit 必须回填、
+#                 「下次注意什么」每一条都有一行 `去向: docs` / `去向: adr` /
+#                 `去向: memory` / `去向: journal`——只判有没有出口，不判内容质量。
 #                 「验证结果」的判据是**有证据**：`- TODO`、`- 无`、`- 字段: 无` 一律不算
 #                 结果（全过就写表格或带证据的条目，例如 `- npm test: 12 passed`）
-#   - NN-*.md（切片）：类型与状态取值合法、档位与优先级取值合法、演示与完成标准非空、
-#                      文件范围与被谁挡已填、确认清单至少一条且全勾、状态 completed 时必须回填主要提交；
+#   - NN-*.md（切片）：头块的 type / tier / status 合法、优先级（正文 `- **优先级**: P0`）合法、
+#                      演示与完成标准非空、文件范围与被谁挡已填、确认清单至少一条且全勾、
+#                      status 是 completed 时头块的 commit 必须回填；
 #                      决策条目则要求问题 / 结论 / 依据三字段非空
 #   - review.md（裁决单）：任务档位是 T2 / T3、且任务**已经开工**时必须存在——plan.md /
-#                          prd.md / 切片里**任何一处**声明了 T2/T3 就算，不依赖 plan.md 是否存在；
+#                          prd.md / 切片里**任何一处**的头块写了 `tier: T2` / `tier: T3` 就算，
+#                          不依赖 plan.md 是否存在；三个版本（索引 / HEAD / 工作区）取并集。
 #                          （只提交了 prd.md 的计划阶段还不要求，那时候还没东西可审）
 #                          章节齐全、固定点 / 审查者 / 给了它什么 / 轮次 / 结论都已填、
 #                          审查者原文非空、逐条处理表非空、「审查者明确未判断的」不许留空
@@ -88,6 +102,10 @@ trap '' PIPE
 
 violations=0
 
+# 闸门 B 的文件级豁免声明。只有这一种写法（ASCII、行尾不许多余空白）：
+# 声明在允许写注释的位置的第一行——首行是 shebang 的脚本看第二行。
+GATE_B_DECL='# gate-b: mentions-marker'
+
 fail() { printf '  [x] %s\n' "$*"; violations=$((violations + 1)); }
 
 # 提示，不是失败：计入输出，不影响退出码。用于「检查器当前覆盖不到」这类
@@ -119,170 +137,99 @@ usage() {
 # 循环在 C 里跑。这里只负责挑文件、起进程、把违规行打出来并计数。
 
 # 闸门 B：[DEBUG- 残留。
-#   --staged：直接查索引（git grep --cached）。范围 = 这次提交后的仓库，和全量自查对齐；
-#             不扫物化出来的临时树——那要先 checkout-index 把整棵树写到磁盘、再全扫一遍，
-#             3000 文件 / 20MB 的仓库上 19s vs 0.67s。
-#   全量：扫工作区（含未跟踪文件，那才是「全量」的意义）。
-# **不用 -I**：`-I` 让 git 按「二进制」跳过文件，而「二进制」的判定包括一个 NUL 字节、
-# 也包括 `.gitattributes` 里的 `-diff`——一行 `*.py -diff` 就能让所有 .py 免疫。
-# 用 -a 强制当文本扫，多花的代价是二进制文件里可能命中同样的字节，所以改成
-# **按后缀排除**（图片 / 压缩包 / 字体 / 快照），而不是让 git 猜。
-#
-# **判据只管 ASCII 写法和「夹了不可见字符」的写法**（零宽 / 控制字符 / BOM 插在
-# 任意位置都算：归一化时非 ASCII 字节整体删掉，`[DEBU<ZWSP>G-` 会重新拼回 `[DEBUG-`）。
-# 刻意伪装的形态**不查**——全角字母 `[ＤEBUG-]`、花式连字符 `[DEBUG－]` / 软连字符 /
-# U+2212。理由：这些是「看起来像但不是」，覆盖它们要给每个码点写映射表，而 Unicode
-# 十五万个码点里总能找到下一个漏掉的；为此维护的映射表实测每轮都要再修一次。
-# 威胁模型上也站不住：真要用这些绕过的人，`--no-verify` 更省事。
-# 清理脚本里写着 `grep '[DEBUG-'` 不算残留——那行本身是找标记的工具
-# （`xargs grep`、`if grep -q`、`git grep` 这些形态都认）。
-# 删掉零宽字符再匹配。用「模式里给插入点留空位」的办法是堵不完的：
-# `.{1,6}G.{0,4}-` 只覆盖了 DEBU 与 G 之间、G 与 - 之间；`[DEBUG\u200b-`
-# 这种插在 G 后面的照样溜过去（实测过）。先把不可见字符本身删掉，判据就只剩一种。
-# 不可见 / 零宽 / 格式字符（字节序列）。**预筛和 strip 共用这一份**：
-# 只在预筛里写「BUG / DEB」，插两个不可见字符就能把两个片段同时打断（实测能过）；
-# 只在 strip 里列，预筛那一步已经把行漏掉了。两边同源才不会互相漏。
-# 闸门 B 的归一化在 awk 里做（见 check_gate_b）。只剩三步：
-#   1. 制表符换成空格（注释判定要求 `#` 前是空白）；
-#   2. 删控制字符；
-#   3. 删**所有非 ASCII 字节**（零宽、BOM、全角空格、未知格式字符一并带走）。
-# 第 3 步同时就是「夹了不可见字符的变体」的全部防线：不写字面映射表，因此不存在
-# 「又发现一个码点」这类修补——这是有意的取舍，见上一条注释。
-# 归一化之后判据只有一种写法：`[DEBUG-`。
-# 代价：`[DEBUG中文-]` 会被判成残留——安全方向的误报。
-
+#   --staged 查索引（git grep --cached，范围 = 这次提交后的仓库，不物化临时树）；
+#   全量扫工作区（含未跟踪，不含 .gitignore 命中的本地数据）；不在 git 仓库时退回 find。
+# 不用 -I：按「二进制」跳过的判定含 NUL 字节、含 `.gitattributes` 的 `-diff`——
+#   一行 `*.py -diff` 就能让所有 .py 免疫。改成用 -a 强制文本扫 + 按后缀排除（bins）。
+# 判据只管 ASCII 写法和「夹了不可见字符」的写法：归一化删所有非 ASCII 字节，
+#   `[DEBU<ZWSP>G-` 会拼回 `[DEBUG-`，预筛与归一化同一份序列、两边不漏。
+#   刻意伪装的形态（全角字母、花式 / 软连字符、U+2212）不查——按码点写映射表
+#   堵不完十五万个码点，真要绕过的人 `--no-verify` 更省事；判据只有 `[DEBUG-`
+#   一种写法，`[DEBUG中文-]` 判成残留是安全方向的误报。
+# 豁免（**唯一的机制，文件级**）：文件第一行精确等于 `# gate-b: mentions-marker`
+#   （ASCII、单一写法、行尾不许有多余空白）→ 该文件整体不报——机器不再猜
+#   「这行是不是搜索命令」（旧的逐行状态机正是打补丁的主产区），由文件自己
+#   声明「本文在谈论这个标记」。首行是 `#!` 的脚本看第二行：可执行脚本的
+#   shebang 必须占第一行，不给这条路，这种脚本就只能把模式拼成伪装形态。
+#   staged 模式从 `git show :<路径>` 读头两行（看的是索引内容），
+#   工作区 / find 模式直接读文件；二进制后缀与 .md 早已不在扫描范围。
 check_gate_b() {
-    local staged="$1" root="$2" hits
-    # 预筛用**带间隙**的模式：`[`/`D`/`E`/`B`/`U`/`G` 之间允许任意字节（`{0,}`）。
-    # 限长度会漏：`[DE中文中文BUG-]` 有 12 字节间隙，插 4 个汉字就足以让预筛在
-    # 归一化之前把行丢掉。判据在归一化之后，预筛宽一点没有代价。
-    # 只写 ASCII：全角写法按设计不查（见上面的边界说明），预筛里也就不必列全角字母。
+    local staged="$1" root="$2" hits f first second
+    # 预筛模式带间隙且不限长（12 字节间隙也要进候选）；判据在归一化之后，宽没有代价。
     local -a pat=(-i -E -e '\[.{0,}D.{0,}E.{0,}B.{0,}U.{0,}G')
-    # 后缀只写一份：git 的 pathspec 和 find 回退都从它生成，两处各写一份必然会漂
-    # （实测 find 分支漏掉了新加的后缀，归档里的标记照样报）。
+    # 后缀只写一份：git pathspec 和 find 回退都从 bins 生成，两处各写必漂。
     local -a bins=(md png jpg jpeg gif ico webp pdf zip gz tar tgz bz2 xz zst 7z rar
                    whl iso jar war class pyc so dll exe bin o a lib obj wasm pdb
                    apk ipa nupkg deb rpm msi dmg xlsx docx pptx mp3 mp4 mov wav db sqlite)
     local -a skip=(
         ':(exclude,icase)*.md'
-        ':(exclude)scripts/check-gates.sh' ':(exclude)scripts/check-gates.awk'
-        ':(exclude)node_modules/*' ':(exclude)*/node_modules/*'
+        ':(exclude)scripts/check-gates.sh' ':(exclude)scripts/check-gates.awk' ':(exclude)node_modules/*' ':(exclude)*/node_modules/*'
     )
-    local e
+    local e files excl
     for e in "${bins[@]}"; do skip+=(":(exclude,icase)*.$e"); done
     if [ "$staged" -eq 1 ]; then
         hits="$(git -C "$root" grep -a -i -n --cached "${pat[@]}" -- "${skip[@]}" 2>/dev/null || true)"
+    elif git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
+        hits="$(git -C "$root" grep --untracked --exclude-standard -a -i -n "${pat[@]}" -- "${skip[@]}" 2>/dev/null || true)"
     else
-        # 全量扫工作区。优先用 git：`--untracked --exclude-standard` = 已跟踪 +
-        # 未跟踪但**不含 .gitignore 命中的**。那些是本地数据/缓存，不是要提交的
-        # 代码，扫出 [DEBUG- 只会误报（全量自查常年红，人就开始无视它）。
-        # 不在 git 仓库里时退回 find。
-        if git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
-            hits="$(git -C "$root" grep --untracked --exclude-standard -a -i -n "${pat[@]}" -- "${skip[@]}" 2>/dev/null || true)"
-        else
-            # find 分支的排除项**从同一份 bins 生成**：手抄的第二份清单一定会漂
-            # （实测加过 .tar 之后这条路仍然报归档里的标记）。
-            local -a fex=()
-            for e in "${bins[@]}"; do fex+=(! -iname "*.$e"); done
-            hits="$(find . -type f \
-                ! -path './.git/*' ! -path '*/node_modules/*' \
-                ! -path './scripts/check-gates.sh' ! -path './scripts/check-gates.awk' \
-                "${fex[@]}" \
-                -exec grep -H -a -i -n "${pat[@]}" {} + 2>/dev/null | sed 's|^\./||' || true)"
-        fi
+        local -a fex=()
+        for e in "${bins[@]}"; do fex+=(! -iname "*.$e"); done
+        hits="$(find . -type f \
+            ! -path './.git/*' ! -path '*/node_modules/*' \
+            ! -path './scripts/check-gates.sh' ! -path './scripts/check-gates.awk' \
+            "${fex[@]}" \
+            -exec grep -H -a -i -n "${pat[@]}" {} + 2>/dev/null | sed 's|^\./||' || true)"
     fi
-    # 归一化 + 判据 + 豁免全在一个 awk 里（每个 hit 行起三次进程的写法实测
-    # 让 50 个 marker 的项目从 2.9s 涨到 10.6s）。输出始终是**原始行**——
-    # 早先整行过 normalize 时 `src/中文.js` 被删成 `src/.js`，报告里的路径没法用。
-    #
-    # 判定顺序：
-    #   1. 拆出 `file:line:` 前缀（`(.+)` 贪婪，兼容路径里有冒号）；
-    #   2. 归一化**内容**，要求 `[DEBUG` + 连字符；
-    #   3. 拆 shell 段（**认引号、认反斜杠转义**，未加引号的 `&&` / `||` / `;` /
-    #      `|` / `&` 才算分隔），凡含 marker 的段，段首必须是搜索命令；
-    #   4. 全部满足才算「工具行」，否则输出原始行。
-    if [ -n "$hits" ]; then
-        hits="$(printf '%s\n' "$hits" | LC_ALL=C awk '
-            function norm(t) {
-                # 只有三步：tab 转空格、删控制字符、删所有非 ASCII 字节。
-                # **不写码点映射表**：全角字母 / 花式连字符按设计不查（见文件头
-                # 与 check_gate_b 的边界说明）。删非 ASCII 顺带把零宽 / BOM /
-                # 全角空格插在任意位置的变体拼回来——那一类仍然拦得住，且不需要
-                # 每遇到一个新码点就加一行。
-                # 制表符先转空格再删控制字符：注释判定要求「`#` 前是空白」，
-                # 直接删掉 tab 会让 `代码<TAB># [DEBUG-]` 被当成同一个词（实测漏报）。
-                gsub(/\011/, " ", t)
-                gsub(/[\001-\037\177]/, "", t)
-                gsub(/[\200-\377]/, "", t)
-                return t
-            }
-            function is_search(t,   low) {
-                low = tolower(t)
-                # 三段前缀，任意组合、任意顺序：
-                #   1. 顶层 `VAR=value`（`FOO=1 grep`、`LC_ALL=C grep`）；
-                #   2. wrapper（`sudo`/`git`/`env`/`xargs`/...）；
-                #   3. wrapper 的 option，可能带参数（`sudo -u root`、`git -C dir`、
-                #      `xargs -I {}`）或者又是一段赋值（`env FOO=1 grep`）。
-                # 之前把赋值组只放进 wrapper 后面，`FOO=1 grep` 就不再豁免（实测）。
-                return low ~ /^[ \t]*(\([ \t]*)?([A-Za-z_][A-Za-z0-9_]*=[^ \t]+[ \t]+)*((exec|command|xargs|sudo|time|env|git|nice|if|then|elif|while|until|!)[ \t]+(-[^ \t]+([ \t]+[^ \t]+)?[ \t]+|[A-Za-z_][A-Za-z0-9_]*=[^ \t]+[ \t]+|[^ \t]+[ \t]+)*)*([^ \t]*\/)?(grep|rg|ag|ack)([ \t]|$)/
-            }
-            {
-                # 取**第一个** `:数字:` 作分隔，不能贪婪：内容里带时间戳
-                # （`"[DEBUG-x]", "12:30:45"`）时，贪婪会把 marker 连同前半行
-                # 一起吞进「前缀」，真残留在归一化之前就被丢掉了。
-                # 路径本身带冒号（POSIX 合法）时，`src/a:b.js:1:` 的第一个候选
-                # 是 `src/a:b.js` 之后的 `:1:`，仍然正确。
-                if (!match($0, /:[0-9]+:/)) { print; next }
-                s = substr($0, RSTART + RLENGTH)
-                ns = norm(s)
-                # 大小写不敏感：预筛是 `git grep -i`，这里必须同样。
-                if (tolower(ns) !~ /\[debug[ \t]*-/) next
-                n = 0; seg[0] = ""; q = ""
-                for (i = 1; i <= length(ns); i++) {
-                    c = substr(ns, i, 1)
-                    if (q == "" && c == "\\") {
-                        # 反斜杠转义：`\\|`、`\\"`、`\\;`、`\\&` 都不是分隔符。
-                        # 单引号里反斜杠是字面量，仍然照常处理下一字符。
-                        seg[n] = seg[n] c substr(ns, i + 1, 1)
-                        i++
-                        continue
-                    }
-                    if (q != "") {
-                        # 双引号里 `\"` 是转义的引号，不结束字符串；单引号里反斜杠
-                        # 是字面量，不能吞（shell 里 `a\` + 引号就是两个字符）。
-                        if (q == "\"" && c == "\\") {
-                            seg[n] = seg[n] c substr(ns, i + 1, 1)
-                            i++
-                            continue
-                        }
-                        seg[n] = seg[n] c
-                        if (c == q) q = ""
-                        continue
-                    }
-                    if (c == "\"" || c == "\047") { q = c; seg[n] = seg[n] c; continue }
-                    # `#` 前面是行首或空白时是注释起点：注释里的 marker 不是命令参数，
-                    # 不能跟着 `grep ...` 一起豁免（实测 `grep -q foo f  # [DEBUG-]` 漏报）。
-                    if (c == "#" && (i == 1 || prev == " " || prev == "\t")) {
-                        n++; seg[n] = substr(ns, i)
-                        break
-                    }
-                    prev = c
-                    if (c == "&" || c == "|" || c == ";") {
-                        n++; seg[n] = ""
-                        d = substr(ns, i + 1, 1)
-                        if (d == c) i++
-                        continue
-                    }
-                    seg[n] = seg[n] c
-                }
-                bad = 0
-                for (k = 0; k <= n; k++) {
-                    if (tolower(seg[k]) !~ /\[debug[ \t]*-/) continue
-                    if (!is_search(seg[k])) { bad = 1; break }
-                }
-                if (!bad) next
-                print
-            }' 2>/dev/null || true)"
+    [ -n "$hits" ] || return 0
+    # 归一化三步：tab→空格、删控制字符、删所有非 ASCII 字节。输出**原始行**——
+    # 整行归一化会把 `src/中文.js` 删成 `src/.js`。前缀取**第一个** `:数字:`
+    # （非贪婪）：贪婪会把带时间戳的行连同前半行一起吞进「前缀」；tolower 对齐 -i。
+    hits="$(printf '%s\n' "$hits" | LC_ALL=C awk '
+        function norm(t) {
+            gsub(/\011/, " ", t)
+            gsub(/[\001-\037\177]/, "", t)
+            gsub(/[\200-\377]/, "", t)
+            return t
+        }
+        {
+            if (!match($0, /:[0-9]+:/)) { print; next }
+            s = norm(substr($0, RSTART + RLENGTH))
+            if (tolower(s) ~ /\[debug[ \t]*-/) print
+        }' 2>/dev/null || true)"
+    [ -n "$hits" ] || return 0
+    # 文件级豁免：违规行按文件去重，每个文件读头两行比对声明。
+    files="$(printf '%s\n' "$hits" | LC_ALL=C awk '
+        { if (match($0, /:[0-9]+:/)) print substr($0, 1, RSTART - 1) }' | sort -u)"
+    excl="|"
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        first=""; second=""
+        if [ "$staged" -eq 1 ]; then
+            { IFS= read -r first; IFS= read -r second; } \
+                < <(git -C "$root" show ":$f" 2>/dev/null) || :
+        elif [ -r "$root/$f" ]; then
+            { IFS= read -r first; IFS= read -r second; } < "$root/$f" 2>/dev/null || :
+        elif [ -r "$f" ]; then
+            { IFS= read -r first; IFS= read -r second; } < "$f" 2>/dev/null || :
+        fi
+        # 声明在**第一行**；可执行脚本的 shebang 必须占第一行，所以首行是
+        # `#!` 时看第二行——否则这种脚本没有任何诚实的出口（只能删掉，或者
+        # 把模式拼成 `'[DEBU'"G-"` 那种伪装，这正是要消灭的写法）。
+        if [ "$first" = "$GATE_B_DECL" ]; then
+            excl="$excl$f|"
+        else
+            case "$first" in
+                '#!'*) [ "$second" = "$GATE_B_DECL" ] && excl="$excl$f|" ;;
+            esac
+        fi
+    done <<EOF
+$files
+EOF
+    if [ "$excl" != "|" ]; then
+        # 两端加 `|` 整段比对：`|a|` 不会误配 `|x/a|`。
+        hits="$(printf '%s\n' "$hits" | EXEMPT="$excl" LC_ALL=C awk '
+            { if (match($0, /:[0-9]+:/) && index(ENVIRON["EXEMPT"], "|" substr($0, 1, RSTART - 1) "|")) next
+              print }')"
     fi
     if [ -n "$hits" ]; then
         printf '%s\n' "$hits" | while IFS= read -r line; do
@@ -582,7 +529,11 @@ task_has_started() {
     # journal 记了结束状态 → 任务至少跑到收尾了。任何非空状态都算，
     # 不能只认 DONE：`DONE_WITH_CONCERNS` / `BLOCKED` 同样是「跑过了」。
     [ -f "$d/journal.md" ] || return 1
-    st="$(awk -v kind=status -v fpath="$d/journal.md" -f "$AWK_PROG" "$d/journal.md")"
+    # 状态只认 gate 头块里的一行（整行精确匹配；四种结束状态是封闭集合），
+    # 所以先把范围收在「第一行到第一个 `-->`」之间：正文里写 `status: DONE`
+    # 不算开工依据。头块没闭合时 sed 读到 EOF —— 那种文件本来就判红。
+    st="$(sed -n '1,/^-->$/p' "$d/journal.md" 2>/dev/null |
+          grep -E '^status: (DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT)$')"
     [ -n "$st" ]
 }
 
@@ -661,13 +612,13 @@ check_review_by_scope() {
         # T2/T3 就算高档。只看 plan 的话，「prd 写 T2、plan 写 T1」能绕过归属检查。
         high=0
         for v in "${versions[@]}"; do
-            if [ "$(printf '%s\n' "$v" | awk -v kind=tier -f "$AWK_PROG" - 2>/dev/null)" = "yes" ]; then
+            if printf '%s\n' "$v" | gate_tier_high; then
                 high=1; break
             fi
         done
         if [ "$high" -eq 0 ]; then
             # 档位来源只有三类：plan.md、prd.md、切片（NN-*.md）——与 task_is_high_tier 同一张
-            # 名单。把目录里所有 .md 都读会让 journal 里写一行 `档位: T2` 触发审查（实测），
+            # 名单。把目录里所有 .md 都读会让 journal 里的一行 `tier: T2` 触发审查，
             # 而文档从没把 journal 当档位来源。
             # 每个文件同样读三版本：只读工作区的话，HEAD 里的 T2 被改成 T1 或直接删掉
             # 就能绕开归属检查（实测两条都能过）。
@@ -727,39 +678,36 @@ check_review_by_scope() {
     done
 }
 
-# 一个文件（相对仓库根）在「索引 / HEAD / 工作区」三个版本里，任一版本声明了
+# gate 头块里的档位是否是 T2/T3。头块必须在文件第一行、键只有一种写法，
+# 所以一条整行精确匹配就够——散文里写「档位: T3」不会再被当成声明。
+# 参数：文件名（可多个）；不带参数时读 stdin。
+gate_tier_high() {
+    if [ "$#" -gt 0 ]; then
+        grep -qx 'tier: T[23]' "$@" 2>/dev/null
+    else
+        grep -qx 'tier: T[23]'
+    fi
+}
+
+# 一个文件（相对仓库根）在「索引 / HEAD / 工作区」三个版本里，任一版本的头块声明了
 # T2/T3 就返回 yes。用于 prd.md 与切片——它们和 plan.md 一样是档位来源，
 # 单版本判定会给「HEAD 写 T2、工作区改 T1」留下后门。
 plan_versions_tier() {
     local root="$1" f="$2" v
     for v in ":$f" "HEAD:$f"; do
-        if [ "$(git -C "$root" cat-file blob "$v" 2>/dev/null |
-                awk -v kind=tier -f "$AWK_PROG" - 2>/dev/null)" = "yes" ]; then
+        if git -C "$root" cat-file blob "$v" 2>/dev/null | gate_tier_high; then
             printf 'yes'; return 0
         fi
     done
-    if [ -f "$root/$f" ] &&
-       [ "$(awk -v kind=tier -f "$AWK_PROG" "$root/$f" 2>/dev/null)" = "yes" ]; then
+    if [ -f "$root/$f" ] && gate_tier_high "$root/$f"; then
         printf 'yes'; return 0
     fi
     printf 'no'
 }
 
-# 一个任务计划文本的「最佳可得版本」：索引 → HEAD → 工作区。
-# 只在需要「看某一份」时用；审查归属那种必须并集的地方不要用这个函数。
-# 一个任务计划文本的「最佳可得版本」：索引 → HEAD → 工作区。
-# 只在需要「看某一份」时用；审查归属那种必须并集的地方不要用这个函数。
-task_plan_text() {
-    local root="$1" d="$2" t
-    t="$(git -C "$root" cat-file blob ":$d/plan.md" 2>/dev/null)"
-    [ -n "$t" ] || t="$(git -C "$root" cat-file blob "HEAD:$d/plan.md" 2>/dev/null)"
-    [ -n "$t" ] || t="$(cat "$root/$d/plan.md" 2>/dev/null)"
-    printf '%s' "$t"
-}
-
-# 任务档位是否落在 T2/T3：plan.md / prd.md / 切片里任何一处声明了 T2/T3 就算。
+# 任务档位是否落在 T2/T3：plan.md / prd.md / 切片里任何一处头块声明了 T2/T3 就算。
 # 不能只看 plan.md——档位也可能只写在 prd.md 或切片里；
-# prd.md 的档位行也是同一个字段，只写在那里时同样得认。
+# prd.md 的 tier 也是同一个键，只写在那里时同样得认。
 task_is_high_tier() {
     local d="$1" f
     local files=()
@@ -767,7 +715,7 @@ task_is_high_tier() {
         [ -f "$f" ] && files+=("$f")
     done
     [ "${#files[@]}" -gt 0 ] || return 1
-    [ "$(awk -v kind=tier -f "$AWK_PROG" "${files[@]}")" = "yes" ]
+    gate_tier_high "${files[@]}"
 }
 
 # 规模底线：声明的档位不能低于**数得出来**的改动量。
@@ -835,7 +783,7 @@ check_scale() {
         max="$(count_code_changes "" "$root")"
         for d in "$root"/tasks/*/; do
             d="${d%/}"; d="${d#"$root"/}"
-            # 模板目录不是任务：它的 plan.md 档位是 `T?`，会被当成 T0/T1，
+            # 模板目录不是任务：它的 plan.md 头块里 `tier:` 是空的，不算 T2/T3，
             # 而它的起点是脚手架落地那次提交——于是「累计」把项目至今的全部
             # src 改动都算进一个假任务里，任何只改代码的提交都被拦。
             case "$d" in tasks/_template) continue ;; esac
@@ -871,7 +819,7 @@ check_scale() {
     else
         who="本次改动"
     fi
-    fail "$who 的代码改动累计 $n 个 $MODULE_ROOT 下的文件，但没有声明 T2/T3 —— 按 docs/agents/任务分级.md 的 6 条信号，文件数 ≥ 4 就是 T2。把 plan.md 的档位升到 T2 并补 review.md（3.4 批准 + 3.8 独立审查）；如果这些文件分属别的任务，说明这个提交混了多个任务，按「一个任务一个提交」拆开"
+    fail "$who 的代码改动累计 $n 个 $MODULE_ROOT 下的文件，但没有声明 T2/T3 —— 按 docs/agents/任务分级.md 的 6 条信号，文件数 ≥ 4 就是 T2。把 plan.md 头块的 tier 改成 \`tier: T2\` 并补 review.md（3.4 批准 + 3.8 独立审查）；如果这些文件分属别的任务，说明这个提交混了多个任务，按「一个任务一个提交」拆开"
 }
 
 # ---------------------------------------------------------------- 架构
