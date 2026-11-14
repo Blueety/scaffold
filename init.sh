@@ -25,11 +25,38 @@ reject_project_name() {
     exit 1
 }
 
-# 控制字符单独挡一道：下面的 tr 结果要过 $(...) 命令替换，而它会吃掉结尾换行，
-# 于是纯换行的名字会被误判成合法。
+# 控制字符逐字节挡：**不用 `[[:cntrl:]]`**。那个字符类是 locale 相关的——UTF-8
+# locale 下按字符判，C locale 下按字节判，于是同一个名字在两台机器上得到相反结论
+# （实测：Windows CI 上 U+0085 / U+009B 被放行，本地被拦下）。这份集合与 init.ps1
+# 的 `[\x00-\x1F\x7F-\x9F]` 一一对应：C0 与 DEL 是单字节；C1（U+0080–U+009F）在
+# UTF-8 里是 `0xC2` 后跟 `0x80–0x9F`，所以按两字节序列挡。
+#
+# 字节用 `printf -v` 落到变量，**不能**写成 `$(printf ...)`：命令替换会吃掉结尾
+# 换行，0x0A 会变成空串，而 `*""*` 在 case 里匹配一切——一个换行条目就能把整批
+# 合法名字误杀（实测）。
 case "$PROJECT_NAME" in
-    ""|*[[:cntrl:]]*) reject_project_name ;;
+    "") reject_project_name ;;
 esac
+octet() { printf -v OCTET "\\$(printf '%o' "$1")"; }
+controls=()
+_i=1
+while [ "$_i" -le 31 ]; do
+    octet "$_i"; controls+=("$OCTET")
+    _i=$((_i + 1))
+done
+octet 127; controls+=("$OCTET")
+# 十进制边界：`[ ]` 的 -le 不是算术上下文，`0200` 在那里是 200。写成八进制会让
+# 循环多跑 3 倍、还会把 0xA0 之后的第二字节也造进表里。
+_i=128
+while [ "$_i" -le 159 ]; do
+    octet "$_i"; controls+=("$(printf '\302')$OCTET")
+    _i=$((_i + 1))
+done
+for _ch in "${controls[@]}"; do
+    case "$PROJECT_NAME" in
+        *"$_ch"*) reject_project_name ;;
+    esac
+done
 
 # .git 不分大小写：Windows 的文件名不区分大小写，.GIT 和 .git 是同一个东西。
 # 保留设备名同理：Windows 上 CON/NUL/COM1 之类的名字建不出普通目录（Git Bash 下

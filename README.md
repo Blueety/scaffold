@@ -39,7 +39,7 @@
 |---|---|
 | 公共 | `git`（两个脚本都会 `git init` 并写 `.git/config`） |
 | Windows | PowerShell 5.1 或 pwsh |
-| Linux / macOS / WSL | `bash`（3.2 即可）、`awk`、`sed`——**尚未在真机上验证**，见下方「CI」一节 |
+| Linux / macOS / WSL | `bash`（3.2 即可）、`awk`、`sed`——三组 CI job 每次 push 都跑，macOS 那组用系统 `/bin/sh`（bash 3.2 的 POSIX 模式） |
 
 生成的**项目**不需要 Node / Python / 任何运行时——闸门是 bash + awk。
 
@@ -192,12 +192,12 @@ powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
 git config core.hooksPath .githooks
 ```
 
-非 Windows 平台（Linux / macOS）上钩子**一律跳过**——`uname` 判断在找 PowerShell 之前，所以装了 pwsh 也不跑（本仓库暂无 POSIX 版检查器，那半边本该由 CI 覆盖——而 CI 至今没跑过，见下）。Windows 上找不到 PowerShell 时同样跳过并提示。
+非 Windows 平台（Linux / macOS）上钩子**一律跳过**——`uname` 判断在找 PowerShell 之前，所以装了 pwsh 也不跑（本仓库暂无 POSIX 版检查器，那半边由 CI 覆盖，见下）。Windows 上找不到 PowerShell 时同样跳过并提示。
 
 - `-SkipEndToEnd`：只跑前半段（纯文件系统对比，毫秒级）——给手动排查用，提交闸门不用它
 - `-BashPath <path>`：Git Bash 不在常见位置时手动指定
 
-### CI（`.github/workflows/check.yml`）——首次 push 后才算数
+### CI（`.github/workflows/check.yml`）——三组 job 跑同一组不变量
 
 本地钩子只在你自己的机器、你自己的提交上生效。外部 PR 跑不了 `check-tree.ps1`——**脚本第一道门就是平台判断，非 Windows 直接 `exit 3`**（它依赖 `init.ps1` 与 Git for Windows 的路径语义），所以同一组不变量在 CI 上再跑一遍：
 
@@ -209,9 +209,7 @@ git config core.hooksPath .githooks
 
 三组都是红的就说明不变量破了；红了别合，和本地钩子一个标准。
 
-> **这三组 job 在推上 GitHub 之前一次都没跑过。** 仓库此前没有 remote，所以上面的 macOS / Linux 支持目前只有**代码层面的保证**——生成出来的脚本不用 bash 4 语法（`local -A`、`mapfile`、`${x,,}`、`local -n`、`&>>`）、`mktemp` 一律带模板、不依赖 BSD 不认的长选项、不用 `sed -i`（写到临时文件再读回）。这些都是靠人工逐处避开写成的，**没有实际运行证据**。
->
-> 第一次 push 之后以 Actions 的结果为准；三组全绿时删掉这段提示，任一组红了就是真缺陷，修完再发版。
+> **这三组 job 在第一次 push 时跑过一遍，抓出两个真缺陷**（macOS：闸门脚本用了进程替换，`/bin/sh` 直接解析失败；Windows：`init.sh` 的 C1 控制字符判定依赖 locale）。两处都已修，并在 fixture 里加了对应断言（`G-tpl` 的静态可移植性检查、`name-test` 的双 locale 对照）。生成出来的脚本不用 bash 4 语法（`local -A`、`mapfile`、`${x,,}`、`local -n`、`&>>`）、不用进程替换 `< <(...)`、`mktemp` 一律带模板、不依赖 BSD 不认的长选项、不用 `sed -i`（写到临时文件再读回）。
 
 
 ## 设计原则

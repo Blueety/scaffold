@@ -53,14 +53,26 @@ compare() {
 
     ( cd "$TMP/sh" && "$B" "$INIT_SH" "$bash_val" ) >/dev/null 2>&1
     r1=$?
+    # 同一张表还要在 LC_ALL=C 下再跑一遍：init.sh 的判定必须与 locale 无关。
+    # 真实缺陷正是这样漏掉的——本地 UTF-8 locale 拦下的名字，CI 的 C locale 放行
+    # （Windows runner 实测）。只比两边一致性发现不了它，只在一种 locale 下跑也发现不了。
+    #
+    # 两次之间必须清空目录：上一次接受了就会生成 `<名字>/`，再跑一次 init.sh 会因为
+    # 「目录已存在」而拒绝——那是另一条规则，会伪装成 locale 差异（实测踩过一次）。
+    rm -rf "$TMP/sh"; mkdir -p "$TMP/sh"
+    ( cd "$TMP/sh" && LC_ALL=C "$B" "$INIT_SH" "$bash_val" ) >/dev/null 2>&1
+    r1c=$?
     ( cd "$TMP/ps" && "$PS" -NoProfile -ExecutionPolicy Bypass \
         -Command "& '$(ps_path "$INIT_PS1")' $ps_expr" ) >/dev/null 2>&1
     r2=$?
 
     a=$([ "$r1" -eq 0 ] && echo 接受 || echo 拒绝)
+    ac=$([ "$r1c" -eq 0 ] && echo 接受 || echo 拒绝)
     b=$([ "$r2" -eq 0 ] && echo 接受 || echo 拒绝)
     case "$want" in accept) want="接受" ;; reject) want="拒绝" ;; esac
-    if [ "$a" != "$b" ]; then
+    if [ "$a" != "$ac" ]; then
+        no "$label：init.sh 的判定依赖 locale（UTF-8 locale $a，C locale $ac）"
+    elif [ "$a" != "$b" ]; then
         no "$label：init.sh $a（exit $r1）但 init.ps1 $b（exit $r2）"
     elif [ -n "$want" ] && [ "$a" != "$want" ]; then
         no "$label：两边都$a，但应当$want"

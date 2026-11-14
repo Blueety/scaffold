@@ -1200,6 +1200,14 @@ for k in plan prd journal slice review; do
             -f templates/scripts/check-gates.awk "templates/tasks/_template/$k.md" 2>&1 )"
     not "写法不对" "$out" "模板 $k.md 自身没有写法违规"
 done
+# 3) 可移植性：随项目分发的 sh 脚本不许用进程替换。macOS 的 /bin/sh 是 bash 3.2 的
+#    POSIX 模式，`< <(cmd)` 会让**整个文件解析失败**（CI macos 实测：闸门一行都跑不到）。
+#    这类写法在 Windows / Linux 上完全正常，只有 macOS 会红——所以必须静态挡。
+bashish="$(grep -nE '(^|[^<])<\(|(^|[^>])>\(' \
+    "$TPL"/scripts/check-gates.sh "$TPL"/.githooks/* 2>/dev/null |
+    grep -vE ':[0-9]+:[[:space:]]*#')"
+if [ -z "$bashish" ]; then ok "分发的 sh 脚本不用进程替换（POSIX sh 能解析）"
+else no "有进程替换，macOS 的 /bin/sh 会解析失败：$bashish"; fi
 
 sec "G-cmt: 正文里的 <!-- 不许静默吞掉整篇"
 echo "== G-cmt: 正文里的 <!-- 不许静默吞掉整篇 =="

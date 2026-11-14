@@ -115,6 +115,30 @@ CR=$'\r'
 
 fail() { printf '  [x] %s\n' "$*"; violations=$((violations + 1)); }
 
+# POSIX 的 sh 没有进程替换。macOS 的 /bin/sh 是 bash 3.2 的 POSIX 模式，脚本里写
+# `done < <(cmd)` 会让**整个文件解析失败**（syntax error near unexpected token `<`），
+# 一条检查都跑不到。所以「按行读某个命令的输出」一律改成先落盘再重定向：
+#
+#     while IFS= read -r x; do ...; done < "$(cmd | feed)"
+#
+# feed 把 stdin 写进临时文件并打印路径；循环体仍跑在当前 shell（变量不丢），
+# 与进程替换语义相同。
+#
+# 临时目录在**顶层**建好、顶层注册 EXIT trap：feed 自己跑在 `$(...)` 子 shell 里，
+# 在那里 mktemp -d 或注册 trap 都只作用于子 shell —— 目录会漏，trap 永远不执行。
+# 命令替换的子 shell 不会触发 EXIT trap（实测），所以这一份在脚本结束时才删。
+GATES_TMP="$(mktemp -d "${TMPDIR:-/tmp}/gates.XXXXXX")" || {
+    printf '  [x] 无法创建临时目录（mktemp -d 失败）\n' >&2
+    exit 2
+}
+trap 'rm -rf "$GATES_TMP"' EXIT
+
+feed() {
+    _feed_file="$(mktemp "$GATES_TMP/feed.XXXXXX")" || exit 2
+    cat > "$_feed_file"
+    printf '%s\n' "$_feed_file"
+}
+
 # 提示，不是失败：计入输出，不影响退出码。用于「检查器当前覆盖不到」这类
 # 需要人知道、但项目现状本身没错的情况。
 note() { printf '  [!] %s\n' "$*"; }
@@ -213,7 +237,7 @@ check_gate_b() {
         first=""; second=""
         if [ "$staged" -eq 1 ]; then
             { IFS= read -r first; IFS= read -r second; } \
-                < <(git -C "$root" show ":$f" 2>/dev/null) || :
+                < "$(git -C "$root" show ":$f" 2>/dev/null | feed)" || :
         elif [ -r "$root/$f" ]; then
             { IFS= read -r first; IFS= read -r second; } < "$root/$f" 2>/dev/null || :
         elif [ -r "$f" ]; then
@@ -309,7 +333,7 @@ check_links() {
             f="${f#./}"
             is_doc_path "$f" || continue
             files+=("$f")
-        done < <(find . -name '*.md' -type f 2>/dev/null | sort)
+        done < "$(find . -name '*.md' -type f 2>/dev/null | sort | feed)"
     elif git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
         # `core.quotepath=false`：默认会把非 ASCII 文件名转义成 `"\344\273..."`，
         # 那样 awk 打不开这些文件、直接报错退出，后面的文件一个都不会被扫到
@@ -317,13 +341,13 @@ check_links() {
         while IFS= read -r f; do
             is_doc_path "$f" || continue
             files+=("$f")
-        done < <(git -C "$root" -c core.quotepath=false ls-files -co --exclude-standard -- '*.md' 2>/dev/null | sort)
+        done < "$(git -C "$root" -c core.quotepath=false ls-files -co --exclude-standard -- '*.md' 2>/dev/null | sort | feed)"
     else
         while IFS= read -r f; do
             f="${f#./}"
             is_doc_path "$f" || continue
             files+=("$f")
-        done < <(find . -name '*.md' -type f 2>/dev/null | sort)
+        done < "$(find . -name '*.md' -type f 2>/dev/null | sort | feed)"
     fi
     total="${#files[@]}"
     [ "$total" -gt 0 ] || return 0
@@ -335,13 +359,13 @@ check_links() {
         # 工作区还留着」的目标被判存在——提交进去的树里它已经没了，链接是死的。
         # 产物（被 .gitignore 命中的）另有精确存在性豁免，不靠这份清单。
         while IFS= read -r f; do [ -n "$f" ] && all+=("${f#./}"); done \
-            < <(find . -type f 2>/dev/null | sort)
+            < "$(find . -type f 2>/dev/null | sort | feed)"
     elif git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
         while IFS= read -r f; do all+=("$f"); done \
-            < <(git -C "$root" -c core.quotepath=false ls-files -co --exclude-standard 2>/dev/null)
+            < "$(git -C "$root" -c core.quotepath=false ls-files -co --exclude-standard 2>/dev/null | feed)"
     else
         while IFS= read -r f; do all+=("${f#./}"); done \
-            < <(find . -type f -not -path './.git/*' 2>/dev/null | sort)
+            < "$(find . -type f -not -path './.git/*' 2>/dev/null | sort | feed)"
     fi
 
     # 后缀索引：文档里常写简称（`static/app.js` 而真实路径是 `web/static/app.js`）。
@@ -374,7 +398,7 @@ check_links() {
         printf '%s\t%s\n' "$f" "$ref"
     # LC_ALL=C：百分号解码用 `sprintf("%c", 0xE6)` 生成**字节**，在 UTF-8 locale 下
     # gawk 会把它编码成 U+00E6（`æ`），中文路径就再也对不上了。C locale 下按字节输出。
-    done < <(LC_ALL=C awk -v kind=links -f "$AWK_PROG" "${files[@]}" 2>/dev/null | sort -u) > "$refs_tmp"
+    done < "$(LC_ALL=C awk -v kind=links -f "$AWK_PROG" "${files[@]}" 2>/dev/null | sort -u | feed)" > "$refs_tmp"
 
     out="$(awk -F'\t' -v idx="$idx_tmp" '
         BEGIN {
@@ -441,16 +465,16 @@ check_doc_counts() {
         while IFS= read -r f; do
             f="${f#./}"
             is_doc_path "$f" && files+=("$f")
-        done < <(find . -name '*.md' -type f 2>/dev/null | sort)
+        done < "$(find . -name '*.md' -type f 2>/dev/null | sort | feed)"
     elif git -C . rev-parse --git-dir >/dev/null 2>&1; then
         while IFS= read -r f; do
             is_doc_path "$f" && files+=("$f")
-        done < <(git -c core.quotepath=false ls-files -co --exclude-standard -- '*.md' 2>/dev/null | sort)
+        done < "$(git -c core.quotepath=false ls-files -co --exclude-standard -- '*.md' 2>/dev/null | sort | feed)"
     else
         while IFS= read -r f; do
             f="${f#./}"
             is_doc_path "$f" && files+=("$f")
-        done < <(find . -name '*.md' -type f 2>/dev/null | sort)
+        done < "$(find . -name '*.md' -type f 2>/dev/null | sort | feed)"
     fi
     [ "${#files[@]}" -gt 0 ] || return 0
 
@@ -458,9 +482,9 @@ check_doc_counts() {
     while IFS= read -r ln; do
         [ -n "$ln" ] || continue
         fail "活文档里写死了 fixture 的断言项数（每加一条断言就漂一次）：$ln —— 改成时长或覆盖范围，真实数字看 fixture 收尾输出"
-    done < <(LC_ALL=C awk '
+    done < "$(LC_ALL=C awk '
         /fixtures\/[A-Za-z0-9_.-]+\.sh/ && /[0-9]+[ \t]*项/ { print FILENAME ":" FNR ": " $0 }
-    ' "${files[@]}" 2>/dev/null || true)
+    ' "${files[@]}" 2>/dev/null | feed || true)"
 }
 
 check_anchors() {
@@ -582,7 +606,7 @@ check_review_by_scope() {
         [ -n "$f" ] || continue
         case "$f" in tasks/*) continue ;; esac
         changed+=("$f")
-    done < <(git -C "$root" -c core.quotepath=false diff --cached --name-only --diff-filter=ACMRD 2>/dev/null)
+    done < "$(git -C "$root" -c core.quotepath=false diff --cached --name-only --diff-filter=ACMRD 2>/dev/null | feed)"
     [ "${#changed[@]}" -gt 0 ] || return 0
 
     # 候选任务取 **HEAD ∪ 索引 ∪ 工作区** 的并集。
@@ -600,9 +624,9 @@ check_review_by_scope() {
         case "$seen" in *" $d "*) continue ;; esac
         seen="$seen$d "
         dirs+=("$d")
-    done < <(git -C "$root" -c core.quotepath=false ls-tree -r --name-only HEAD 2>/dev/null;
+    done < "$({ git -C "$root" -c core.quotepath=false ls-tree -r --name-only HEAD 2>/dev/null;
              git -C "$root" -c core.quotepath=false ls-files 2>/dev/null;
-             find "$root/tasks" -mindepth 2 -maxdepth 2 -name plan.md 2>/dev/null | sed "s|^${root%/}/||")
+             find "$root/tasks" -mindepth 2 -maxdepth 2 -name plan.md 2>/dev/null | sed "s|^${root%/}/||"; } | feed)"
 
     for d in ${dirs[@]+"${dirs[@]}"}; do
         case "$d" in tasks/_template|tasks/_archive/*|tasks/_template/*) continue ;; esac
@@ -644,9 +668,9 @@ check_review_by_scope() {
                 if [ "$(plan_versions_tier "$root" "$tf")" = "yes" ]; then
                     high=1; break
                 fi
-            done < <(git -C "$root" -c core.quotepath=false ls-files -- "$d" 2>/dev/null;
+            done < "$({ git -C "$root" -c core.quotepath=false ls-files -- "$d" 2>/dev/null;
                      git -C "$root" -c core.quotepath=false ls-tree -r --name-only HEAD -- "$d" 2>/dev/null;
-                     find "$root/$d" -maxdepth 1 -name '*.md' 2>/dev/null | sed "s|^${root%/}/||")
+                     find "$root/$d" -maxdepth 1 -name '*.md' 2>/dev/null | sed "s|^${root%/}/||"; } | feed)"
         fi
         [ "$high" -eq 1 ] || continue
 
@@ -666,7 +690,7 @@ check_review_by_scope() {
         for v in "${versions[@]}"; do
             while IFS= read -r rel; do
                 [ -n "$rel" ] && rels+=("$rel")
-            done < <(printf '%s\n' "$v" | awk -v kind=related -f "$AWK_PROG" - 2>/dev/null)
+            done < "$(printf '%s\n' "$v" | awk -v kind=related -f "$AWK_PROG" - 2>/dev/null | feed)"
         done
         [ "${#rels[@]}" -gt 0 ] || continue
         hit=""
@@ -755,8 +779,8 @@ count_code_changes() {
             md|markdown|txt|rst|png|jpg|jpeg|gif|svg|webp|ico|pdf|csv|json|yml|yaml) continue ;;
         esac
         n=$((n + 1))
-    done < <(git -c core.quotepath=false -C "$root" diff --cached --name-only -M \
-             --diff-filter=ACMRD ${range[@]+"${range[@]}"} -- "${MODULE_ROOT%/}" 2>/dev/null)
+    done < "$(git -c core.quotepath=false -C "$root" diff --cached --name-only -M \
+             --diff-filter=ACMRD ${range[@]+"${range[@]}"} -- "${MODULE_ROOT%/}" 2>/dev/null | feed)"
     printf '%s' "$n"
 }
 
@@ -875,10 +899,10 @@ arch_module_dirs() {
             files="$(git -C "$root" -c core.quotepath=false ls-files -co --exclude-standard -- "$d" 2>/dev/null | head -n 1)"
         fi
         [ -n "$files" ] && printf '%s\n' "$d"
-    done < <(
+    done < "$({
         [ -d "$MODULE_ROOT" ] || exit 0
         find "$MODULE_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -u
-    )
+    } | feed)"
 }
 
 arch_path_exists() { [ -e "$1/$2" ]; }
@@ -975,7 +999,7 @@ check_architecture() {
         done
         [ "$covered" -eq 1 ] \
             || fail "「$d」是 $MODULE_ROOT 下的模块目录，但 docs/architecture.md 的模块表里没有它"
-    done < <(arch_module_dirs "$staged" "$root")
+    done < "$(arch_module_dirs "$staged" "$root" | feed)"
 
     # 提示（不是失败）：表里全是宽声明时，规则 2 永远不触发——新增模块目录不会被检查。
     # 只在全量自查时报；--staged 每次提交都跑，不适合反复提示。
@@ -1019,7 +1043,7 @@ verify_materialized() {
             120000) continue ;;                        # 符号链接：内容不在文件里，-f 判不了
         esac
         paths+=("$path"); shas+=("$sha")
-    done < <(git -C "$root" ls-files -s -z 2>/dev/null)
+    done < "$(git -C "$root" ls-files -s -z 2>/dev/null | feed)"
 
     local i n="${#paths[@]}"
     [ "$n" -gt 0 ] || return 0
@@ -1062,11 +1086,11 @@ verify_materialized() {
             return 1
         fi
         local -a got=()
-        while IFS= read -r line; do got+=("$line"); done < <(
+        while IFS= read -r line; do got+=("$line"); done < "$({
             cd "$tree" || exit 1
             printf '%s\n' "${present[@]}" |
                 GIT_DIR="$gitdir" GIT_WORK_TREE="$tree" git hash-object --stdin-paths 2>/dev/null
-        )
+        } | feed)"
         if [ "${#got[@]}" -ne "${#present[@]}" ]; then
             printf '  [x] 无法对索引内容求哈希（%s 个文件只拿到 %s 个）\n' "${#present[@]}" "${#got[@]}" >&2
             return 1
@@ -1139,10 +1163,11 @@ main() {
         # .git/config 里，不随 clone 走。少了它，clone 回来的仓库里中文名路径会被
         # 引号+八进制转义，case 匹配失配 —— 那些文件会静默逃过全部检查。
         #
-        # 临时目录用全局变量：EXIT trap 在 main 返回之后才执行，那时 local 已经出作用域，
-        # set -u 会把 "$check_tree_tmp" 当成未绑定变量，trap 失败 → 脚本整体非 0。
-        check_tree_tmp="$(mktemp -d "${TMPDIR:-/tmp}/gates-tree.XXXXXX")"
-        trap 'rm -rf "$check_tree_tmp"' EXIT
+        # 物化目标用全局变量：它要在 main 返回之后仍然可见（EXIT trap 在这个
+        # 目录的父目录上），用 local 会在 set -u 下变成未绑定变量。
+        # 直接建在 $GATES_TMP 下：一个临时目录、一个 EXIT trap。
+        check_tree_tmp="$GATES_TMP/tree"
+        mkdir -p "$check_tree_tmp"
         # 物化失败必须硬停：否则会在一个空临时树里继续跑，每个任务目录都报
         # 「缺 plan.md / journal.md」——一堆假违规比一句报错难查得多。
         if ! git -C "$root" checkout-index -a --prefix="$check_tree_tmp/" 2>/dev/null; then
@@ -1298,7 +1323,7 @@ main() {
                     case "$d" in tasks/_template) continue ;; esac
                     dirs+=("$d") ;;
             esac
-        done < <(git -c core.quotepath=false -C "$root" diff --cached --name-status -M --diff-filter=ACMRD 2>/dev/null)
+        done < "$(git -c core.quotepath=false -C "$root" diff --cached --name-status -M --diff-filter=ACMRD 2>/dev/null | feed)"
     else
         # `tasks/_archive/` 里**直接躺着 .md 文件**说明归档方式用错了：
         # `git mv tasks/x tasks/_archive/` 在 _archive 不存在时会把任务目录改名成

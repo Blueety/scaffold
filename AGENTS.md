@@ -37,7 +37,7 @@ powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
 
 提交时 `.githooks/pre-commit` 会自动跑同一份（全量，约 20 秒）。被拦下就修，**不要**习惯性 `git commit --no-verify`。
 
-CI 上（`.github/workflows/check.yml`）跑同一组不变量，外加三个 fixture（项目名一致性 / 闸门 / 更新器）；macOS 那组用系统 bash 3.2 生成并跑闸门——**生成的脚本不许用 bash 4 语法**，这条只有真在 3.2 上跑才算数。**注意：这三组 job 至今一次都没跑过**（仓库还没有 remote），所以「macOS / Linux 能跑」目前只是代码层面的约定，不是已验证的事实；改模板时不要因为「CI 会兜」而省掉本地核对。
+CI 上（`.github/workflows/check.yml`）跑同一组不变量，外加三个 fixture（项目名一致性 / 闸门 / 更新器）；macOS 那组用系统 bash 3.2 生成并跑闸门——**生成的脚本不许用 bash 4 语法，也不许用进程替换**（`< <(cmd)` 在 bash 3.2 的 POSIX 模式下是解析错误，整个文件一行都跑不到；要按行读命令输出用 `| feed`，见 `check-gates.sh` 顶部）。第一次 push 已抓出这两个真缺陷；之后每次 push 都以 Actions 结果为准。
 
 `-SkipEndToEnd` 只跑纯文件系统对比（毫秒级），**提交闸门不用它**——逐字节比对才是这个仓库的核心不变量。`-BashPath <path>` 在 Git Bash 不在常见位置时用。
 

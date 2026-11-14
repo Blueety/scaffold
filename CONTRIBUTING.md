@@ -26,7 +26,7 @@ bash scripts/fixtures/name-test.sh     # 项目名接受集，约 1 分钟（没
 
 提交时 `.githooks/pre-commit` 会自动跑第一项（全量，约 20 秒）。被拦下就修，**不要**用 `git commit --no-verify` 绕过。
 
-非 Windows 机器跑不了 `check-tree.ps1`（脚本自身拒绝非 Windows，`exit 3`，与有没有 `pwsh` 无关）——`templates/` 与 `init.sh` 产物的逐字节比对与三个 fixture 本该在 CI 里跑，见 `.github/workflows/check.yml`。**那三组 job 在第一次 push 之前没跑过**（仓库此前没有 remote），所以在 macOS / Linux 上改这些东西时，本地能跑多少就跑多少；推上去之后以 Actions 结果为准。
+非 Windows 机器跑不了 `check-tree.ps1`（脚本自身拒绝非 Windows，`exit 3`，与有没有 `pwsh` 无关）——`templates/` 与 `init.sh` 产物的逐字节比对与三个 fixture 在 CI 里跑，见 `.github/workflows/check.yml`。三组 job 每次 push 都跑，macOS 那组用系统 `/bin/sh`（bash 3.2 的 POSIX 模式）：**分发的 sh 脚本不许用进程替换 `< <(...)`**，否则整个文件在那边解析失败（`gate-test` 的 `G-tpl` 会静态拦住）。
 
 ## 提交信息
 
