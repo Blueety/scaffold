@@ -103,8 +103,23 @@ compare "保留设备名 CON"        'CON'                "'CON'" reject
 compare "保留设备名 com1.txt"   'com1.txt'           "'com1.txt'" reject
 compare "尾随换行"              $'abc\n'             "([string]'abc' + [char]10)" reject
 compare "C0 制表符"             $'a\tb'              "([string]'a' + [char]9 + 'b')" reject
-compare "C1 U+0085"             $'a\u0085b'          "([string]'a' + [char]0x85 + 'b')" reject
-compare "C1 U+009B"             $'a\u009bb'          "([string]'a' + [char]0x9B + 'b')" reject
+# C1 必须用**显式 UTF-8 字节**构造，不能写 `$'a\u0085b'`：bash 在非 UTF-8 locale 下
+# 会把 `\u0085` 编成裸字节 0x85（不是 U+0085 的 UTF-8 编码 C2 85），于是同一个用例
+# 在不同机器上喂的其实是两种输入——Windows CI 上就是这样被误判成「init.sh 放行」的。
+compare "C1 U+0085"             "$(printf 'a\302\205b')" "([string]'a' + [char]0x85 + 'b')" reject
+compare "C1 U+009B"             "$(printf 'a\302\233b')" "([string]'a' + [char]0x9B + 'b')" reject
+
+# init.sh 专属：**非法 UTF-8 字节串**必须拒绝。PowerShell 收不到裸字节（argv 会先被
+# 解码），所以这里没有对照物，只断言 bash 侧的行为——否则一个 0x85 裸字节在 bash
+# 侧被放行、在 ps 侧被解码成 U+0085 后拒绝，「接受集相同」这条就悄悄破了。
+for v in "$(printf 'a\205b')" "$(printf 'a\303\050b')"; do
+    rm -rf "$TMP/sh"; mkdir -p "$TMP/sh"
+    if ( cd "$TMP/sh" && "$B" "$INIT_SH" "$v" ) >/dev/null 2>&1; then
+        no "非法 UTF-8 字节串被 init.sh 接受（应当拒绝）"
+    else
+        ok "非法 UTF-8 字节串被 init.sh 拒绝"
+    fi
+done
 
 printf '\n结果: PASS %d / FAIL %d\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -43,7 +43,7 @@ bash init.sh my-project-name
 git config core.hooksPath .githooks
 ```
 
-项目名允许字母、数字、`.`、`_`、`-` 和中文；不接受空格、引号、shell 元字符、Windows 保留设备名，以及 `.` / `..` / `.git`。两个脚本的接受集完全一致。
+项目名允许字母、数字、`.`、`_`、`-` 和中文（须是合法 UTF-8）；不接受空格、引号、shell 元字符、控制字符、Windows 保留设备名，以及 `.` / `..` / `.git`。两个脚本的接受集完全一致。
 
 ### 生成出来的东西
 

@@ -58,6 +58,46 @@ for _ch in "${controls[@]}"; do
     esac
 done
 
+# 名字必须是**合法 UTF-8**。这一步不是洁癖：C1 控制字符有两种到达方式——UTF-8 编码
+# 的 U+0085（`C2 85`，上面的表能挡）和一个裸字节 `0x85`。后者不是合法 UTF-8，
+# PowerShell 那边按控制台代码页解码成 U+0085 然后拒绝，bash 这边如果只认字节序列
+# 就会放行——两边接受集就此分叉（Windows CI 实测）。拒绝非法字节序列，两侧才对得上。
+# 逐字节走：在 C locale 下 `?` 匹配一个字节，`${s#?}` 正好切掉一个。
+utf8_valid() {
+    _s="$1"
+    while [ -n "$_s" ]; do
+        _rest="${_s#?}"; _b="${_s%"$_rest"}"
+        printf -v _v '%d' "'$_b" 2>/dev/null || return 1
+        if [ "$_v" -lt 128 ]; then
+            _need=0
+        elif [ "$_v" -ge 194 ] && [ "$_v" -le 223 ]; then
+            _need=1
+        elif [ "$_v" -ge 224 ] && [ "$_v" -le 239 ]; then
+            _need=2
+        elif [ "$_v" -ge 240 ] && [ "$_v" -le 244 ]; then
+            _need=3
+        else
+            return 1                     # 0x80–0xC1 / 0xF5–0xFF 不能做首字节
+        fi
+        _s="$_rest"
+        while [ "$_need" -gt 0 ]; do
+            [ -n "$_s" ] || return 1
+            _rest="${_s#?}"; _b="${_s%"$_rest"}"
+            printf -v _v '%d' "'$_b" 2>/dev/null || return 1
+            [ "$_v" -ge 128 ] && [ "$_v" -le 191 ] || return 1
+            _s="$_rest"; _need=$((_need - 1))
+        done
+    done
+    return 0
+}
+# LC_ALL=C 只在这个子 shell 里生效：校验要按字节走，调用方的 locale 不能改。
+if ! ( LC_ALL=C; utf8_valid "$PROJECT_NAME" ); then
+    echo "错误: 项目名不是合法的 UTF-8"
+    echo "模板内容是 UTF-8；名字按别的编码传进来会写出一堆乱码。终端 locale 不是 UTF-8 时，"
+    echo "先 export LANG=en_US.UTF-8（或 zh_CN.UTF-8）再重试。"
+    exit 1
+fi
+
 # .git 不分大小写：Windows 的文件名不区分大小写，.GIT 和 .git 是同一个东西。
 # 保留设备名同理：Windows 上 CON/NUL/COM1 之类的名字建不出普通目录（Git Bash 下
 # mkdir 会留下一个设备项）。取第一个点之前的部分来判断，CON.txt 也是设备名。
