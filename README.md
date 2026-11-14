@@ -1,8 +1,18 @@
+<div align="center">
+
 # AI 工作流脚手架
 
 `scaffold` —— 一条命令生成项目骨架，骨架里带**一套让 AI 按流程干活、并且能被机器检查的规则**。
 
+[![CI](https://github.com/Blueety/scaffold/actions/workflows/check.yml/badge.svg)](https://github.com/Blueety/scaffold/actions/workflows/check.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)
+![Shell](https://img.shields.io/badge/shell-bash%203.2%2B-informational)
+![Runtime deps](https://img.shields.io/badge/runtime%20deps-none-success)
+
 ![闸门演示：提交被拦下，补上内容后通过](assets/demo.svg)
+
+</div>
 
 **生成出来的是什么**：一套骨架，内容是 markdown 与纯 POSIX sh——规范、档位判定规则、两个角色提示词、七个流程 skill、五份任务模板、四份活文档、三份目录索引，外加闸门检查器（`check-gates.sh` + `check-gates.awk`）、git 钩子（提交 / 合并 / 推送三个入口）和三份配置。**不含语言、框架、依赖**——技术栈由你自己 `npm init` / `uv init`，骨架只管「AI 按什么流程干活」。
 
@@ -17,6 +27,19 @@
 > ```bash
 > bash init.sh my-project-name      # Windows: .\init.ps1 my-project-name
 > ```
+
+## 目录
+
+- [它解决什么问题](#它解决什么问题)
+- [需要什么](#需要什么)
+- [用法](#用法)
+- [生成的目录结构](#生成的目录结构)
+- [生成后要做的事](#生成后要做的事)
+- [更新已生成的项目](#更新已生成的项目)
+- [自检](#自检)
+- [设计原则](#设计原则)
+- [进一步阅读](#进一步阅读)
+- [许可](#许可)
 
 ## 它解决什么问题
 
