@@ -24,17 +24,26 @@ pass=0; fail=0
 # 分段计时：闸门 fixture 一轮十几分钟，某一段变慢时没有这个就只能靠猜。
 # 设置 FIXTURE_TIME=1 才打印，平时保持输出干净。
 _t0=$SECONDS
-sec() { [ -n "${FIXTURE_TIME:-}" ] && printf '[%4ds] %s\n' "$((SECONDS - _t0))" "$1"; }
+sec() { if [ -n "${FIXTURE_TIME:-}" ]; then printf '[%4ds] %s\n' "$((SECONDS - _t0))" "$1"; fi; }
 ok()  { printf '  ok   %s\n' "$1"; pass=$((pass + 1)); }
 no()  { printf '  FAIL %s\n' "$1"; fail=$((fail + 1)); }
+
+# 断言失败时把被断言的输出打出来（截前 40 行）。CI 上看不到本地环境，
+# 只报「FAIL xxx」等于让人猜——这条曾让两个平台差异多查了一整轮。
+dump_out() {
+    [ -n "$1" ] || { printf '    --- 输出为空 ---\n'; return; }
+    printf '    --- 输出 ---\n'
+    printf '%s\n' "$1" | sed -n '1,40p' | sed 's/^/    | /'
+    printf '    --- 结束 ---\n'
+}
 # 原地替换。不能用 `sed -i`：BSD（macOS 自带）的 -i 必须带备份后缀，
 # 写成 `sed -i '...' file` 在 macOS 上直接报 invalid command code。
 subst() { # $1=文件 $2=sed 脚本
     sed "$2" "$1" > "$1.tmp" && mv "$1.tmp" "$1"
 }
 
-has() { if printf '%s' "$2" | grep -qF -- "$1"; then ok "$3"; else no "$3"; fi; }
-not() { if printf '%s' "$2" | grep -qF -- "$1"; then no "$3"; else ok "$3"; fi; }
+has() { if printf '%s' "$2" | grep -qF -- "$1"; then ok "$3"; else no "$3"; dump_out "$2"; fi; }
+not() { if printf '%s' "$2" | grep -qF -- "$1"; then no "$3"; dump_out "$2"; else ok "$3"; fi; }
 
 # 一个生成出来的项目 + git 仓库。安装钩子但用 -c core.hooksPath=/dev/null
 # 绕过它：fixture 要造「闸门会判红」的历史状态，不能让钩子拦在造数据的路上。

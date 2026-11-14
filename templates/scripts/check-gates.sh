@@ -608,6 +608,7 @@ check_review_by_scope() {
     # 不限于 MODULE_ROOT：计划里写 `scripts/deploy.sh`、`app/main.py` 的任务同样要有
     # 裁决单。任务目录自己的改动排除在外（那是计划/日志，不是被审的代码）。
     while IFS= read -r f; do
+        f="${f%$CR}"
         [ -n "$f" ] || continue
         case "$f" in tasks/*) continue ;; esac
         changed+=("$f")
@@ -694,6 +695,7 @@ check_review_by_scope() {
         local -a rels=()
         for v in "${versions[@]}"; do
             while IFS= read -r rel; do
+                rel="${rel%$CR}"
                 [ -n "$rel" ] && rels+=("$rel")
             done < "$(printf '%s\n' "$v" | awk -v kind=related -f "$AWK_PROG" - 2>/dev/null | feed)"
         done

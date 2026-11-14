@@ -823,6 +823,7 @@ function flush_note(item, item_line, have_item,   l, n, i) {
     n = split(item, NOTE_TMP, "\n")
     for (i = 1; i <= n; i++) {
         l = NOTE_TMP[i]
+        gsub(/\r/, "", l)
         gsub(/^[ \t]+/, "", l)
         sub(/[ \t]+$/, "", l)
         # 整节只写「无」是合法写法：带条目符号的 `- 无` 也算。
