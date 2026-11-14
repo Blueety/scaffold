@@ -4,12 +4,12 @@
 
 ![闸门演示：提交被拦下，补上内容后通过](assets/demo.svg)
 
-**生成出来的是什么**：30 个文件——23 份 markdown（一份规范、一份定档规则、两个角色提示词、七个流程 skill、五份任务模板、四份活文档、三份目录索引），外加检查器与钩子（`check-gates.sh` + `check-gates.awk` + 两个 POSIX sh 钩子）和三份配置。**不含语言、框架、依赖**——技术栈由你自己 `npm init` / `uv init`，骨架只管「AI 按什么流程干活」。
+**生成出来的是什么**：一套骨架，内容是 markdown 与纯 POSIX sh——规范、档位判定规则、两个角色提示词、七个流程 skill、五份任务模板、四份活文档、三份目录索引，外加闸门检查器（`check-gates.sh` + `check-gates.awk`）、git 钩子（提交 / 合并 / 推送三个入口）和三份配置。**不含语言、框架、依赖**——技术栈由你自己 `npm init` / `uv init`，骨架只管「AI 按什么流程干活」。
 
 **它需要什么样的 agent**：能派**独立子 agent** 的工具（Claude Code、Codex CLI、任何能开子会话的编排器）——整套设计的核心是「写计划的人和实施的人不共享上下文」。没有这个原语的编辑器（比如 Cursor 的对话式 Composer）也能用其余部分，但规划 / 实施分离会退化成同一个上下文里自演，那一条只能靠人自觉。
 
 > **English (short)** — One command scaffolds a project skeleton that encodes an **AI workflow with
-> executable checks**: task state in git, a gate checker on `pre-commit`, and planning / implementation /
+> executable checks**: task state in git, a gate checker on `pre-commit` / `pre-merge-commit` / `pre-push`, and planning / implementation /
 > review in *separate* agent contexts. Every core rule has either a machine check or an explicit
 > "human judgment" label. Windows (PowerShell 5.1+) / Linux / macOS, stock bash 3.2, no runtime deps.
 > Docs are Chinese; start with [`INTRO.md`](INTRO.md).
@@ -46,6 +46,8 @@
 更新器的额外要求（bash 4）写在 [`UPDATE.md`](UPDATE.md) 里——那是另一件事。
 
 ## 用法
+
+先把这个仓库 clone 到本地任意目录（`git clone <仓库地址>`，然后 `cd` 进去）。**这不是一个 npm 包**，没有 `install` 步骤——仓库本身就是脚手架，两个脚本在原地跑。
 
 ### Windows (PowerShell)
 
@@ -177,7 +179,7 @@ powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
 |---|---|
 | `templates/` 或 `init.*` | `check-tree.ps1`（上面那个，约 10–20 秒） |
 | 项目名校验（`init.sh` / `init.ps1`） | `bash scripts/fixtures/name-test.sh` —— 约 1 分钟：同一张名字表分别喂两个脚本，接受 / 拒绝必须一致；没有 PowerShell 的机器会跳过 |
-| 闸门（`scripts/check-gates.*`） | `bash scripts/fixtures/gate-test.sh` —— 约 20 分钟：闸门各项判据的验收（判据清单见 `bash scripts/check-gates.sh --help`，项数看收尾输出）。改了 `check-gates.{sh,awk}` 必须跑 |
+| 闸门（`scripts/check-gates.*`） | `bash scripts/fixtures/gate-test.sh` —— 约 20–30 分钟：闸门各项判据的验收（判据清单见 `bash scripts/check-gates.sh --help`，项数看收尾输出）。改了 `check-gates.{sh,awk}` 必须跑 |
 | 更新器（`scripts/scaffold-update.sh`） | `bash scripts/fixtures/update-test.sh` —— 约 2–4 分钟：冲突现场、脏树、裁决、并集、基线阈值、adopt、闸门计数、机制文件、MANIFEST / JSON、`--quiet` |
 
 ### 自动跑
@@ -195,7 +197,7 @@ git config core.hooksPath .githooks
 - `-SkipEndToEnd`：只跑前半段（纯文件系统对比，毫秒级）——给手动排查用，提交闸门不用它
 - `-BashPath <path>`：Git Bash 不在常见位置时手动指定
 
-### CI（`.github/workflows/check.yml`）——写好待跑
+### CI（`.github/workflows/check.yml`）——首次 push 后才算数
 
 本地钩子只在你自己的机器、你自己的提交上生效。外部 PR 跑不了 `check-tree.ps1`——**脚本第一道门就是平台判断，非 Windows 直接 `exit 3`**（它依赖 `init.ps1` 与 Git for Windows 的路径语义），所以同一组不变量在 CI 上再跑一遍：
 
@@ -207,9 +209,9 @@ git config core.hooksPath .githooks
 
 三组都是红的就说明不变量破了；红了别合，和本地钩子一个标准。
 
-> **这三组 job 一次都没跑过。** 仓库还没推到 GitHub，没有 remote，所以上面的 macOS / Linux 支持目前只有**代码层面的保证**——生成出来的脚本不用 bash 4 语法（`local -A`、`mapfile`、`${x,,}`、`local -n`、`&>>`）、`mktemp` 一律带模板、不依赖 BSD 不认的长选项、不用 `sed -i`（写到临时文件再读回）。这些都是靠人工逐处避开写成的，**没有实际运行证据**。
+> **这三组 job 在推上 GitHub 之前一次都没跑过。** 仓库此前没有 remote，所以上面的 macOS / Linux 支持目前只有**代码层面的保证**——生成出来的脚本不用 bash 4 语法（`local -A`、`mapfile`、`${x,,}`、`local -n`、`&>>`）、`mktemp` 一律带模板、不依赖 BSD 不认的长选项、不用 `sed -i`（写到临时文件再读回）。这些都是靠人工逐处避开写成的，**没有实际运行证据**。
 >
-> 结论：在 CI 第一次跑通之前，把 macOS / Linux 当成「按约定写成这样」，不要当成「已验证」。Windows 那半边不受影响——那是本地钩子每次提交都在跑的。
+> 第一次 push 之后以 Actions 的结果为准；三组全绿时删掉这段提示，任一组红了就是真缺陷，修完再发版。
 
 
 ## 设计原则

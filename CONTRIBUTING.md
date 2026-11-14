@@ -15,7 +15,7 @@
 powershell -ExecutionPolicy Bypass -File scripts/check-tree.ps1
 
 # 改过闸门检查器或更新器时，另跑对应验收
-bash scripts/fixtures/gate-test.sh     # 闸门判据，约 20 分钟
+bash scripts/fixtures/gate-test.sh     # 闸门判据，约 20–30 分钟
 bash scripts/fixtures/update-test.sh   # 更新器，约 2–4 分钟
 bash scripts/fixtures/name-test.sh     # 项目名接受集，约 1 分钟（没有 PowerShell 的机器会跳过）
 # 项数不写在这里：它每加一条断言就漂一次（闸门 check_doc_counts 会拦）。
@@ -26,7 +26,7 @@ bash scripts/fixtures/name-test.sh     # 项目名接受集，约 1 分钟（没
 
 提交时 `.githooks/pre-commit` 会自动跑第一项（全量，约 20 秒）。被拦下就修，**不要**用 `git commit --no-verify` 绕过。
 
-非 Windows 机器跑不了 `check-tree.ps1`（脚本自身拒绝非 Windows，`exit 3`，与有没有 `pwsh` 无关）——`templates/` 与 `init.sh` 产物的逐字节比对与三个 fixture 本该在 CI 里跑，见 `.github/workflows/check.yml`。**但那三组 job 至今没跑过**（仓库还没有 remote），所以在 macOS / Linux 上改这些东西时，本地能跑多少就跑多少，别指望 CI 兜底。
+非 Windows 机器跑不了 `check-tree.ps1`（脚本自身拒绝非 Windows，`exit 3`，与有没有 `pwsh` 无关）——`templates/` 与 `init.sh` 产物的逐字节比对与三个 fixture 本该在 CI 里跑，见 `.github/workflows/check.yml`。**那三组 job 在第一次 push 之前没跑过**（仓库此前没有 remote），所以在 macOS / Linux 上改这些东西时，本地能跑多少就跑多少；推上去之后以 Actions 结果为准。
 
 ## 提交信息
 

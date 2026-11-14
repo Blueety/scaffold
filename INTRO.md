@@ -64,7 +64,7 @@ git config core.hooksPath .githooks
 | `tasks/README.md` | 任务目录怎么建、怎么归档、闸门升级后的存量违规怎么治 |
 | `tasks/_template/` | prd、plan、journal、review、slice 五个模板 |
 | `scripts/check-gates.sh` `.awk` | 闸门检查器 |
-| `.githooks/pre-commit` | 提交时自动跑 `--staged` 模式 |
+| `.githooks/` | `pre-commit` 提交时跑 `--staged`；`pre-merge-commit` 合并时同一份检查；`pre-push` 推送前补一次全量 |
 | `src/` | 空目录，你的代码 |
 
 ## 一个任务走一遍
@@ -115,7 +115,7 @@ flowchart TD
 |---|---|---|---|
 | 闸门 A | 修 bug，进根因假设前 | 一条**已实跑过**、能对**这个** bug 变红的命令 | 人确认；检查器验字段非空 |
 | 规划 / 实施分离 | 计划批准后 | 实施者是独立子 agent，输入只有 `plan.md`（+ 有则 `prd.md`）+ 规范文件 | 机器验不了，靠流程与审查 |
-| 闸门 B | 提交前 | 非 `.md` 文件里没有 `[DEBUG-` 残留（自动）；一次性脚本已删（机器验不了，自己看） | `check-gates.sh` 自动 |
+| 闸门 B | 提交前 | 非 `.md` 文件里没有 `[DEBUG-` 残留（自动；确实要谈论这个标记的文件，首行写 `# gate-b: mentions-marker` 自我声明）；一次性脚本已删（机器验不了，自己看） | `check-gates.sh` 自动 |
 | 规模底线 | 提交时 | 任务累计改 ≥4 个 `src/` 文件却没声明 T2/T3 | `check-gates.sh` 自动 |
 
 `pre-commit` 钩子跑的是 `scripts/check-gates.sh --staged`，它检查的东西包括：

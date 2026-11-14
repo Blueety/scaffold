@@ -680,7 +680,7 @@ scripts/check-gates.sh --staged     # 检查索引内容（pre-commit 钩子用�
 
 它随项目分发，并在 `git init` 后被 `core.hooksPath` 挂成 pre-commit 钩子——所以闸门 B 是**自动**过的，不靠自觉。临时绕过用 `git commit --no-verify`。
 
-覆盖范围要说清：`git commit` 走 `.githooks/pre-commit`，`git merge` 走 `.githooks/pre-merge-commit`（两者是同一份检查）；`cherry-pick` / `rebase` / `am` **不触发任何钩子**，那三种操作之后补跑一次全量自查，或者把闸门架上 CI。
+覆盖范围要说清：`git commit` 走 `.githooks/pre-commit`，`git merge` 走 `.githooks/pre-merge-commit`（两者是同一份检查，`--staged`）；`cherry-pick` / `rebase` / `am` **不触发任何钩子**，所以 `.githooks/pre-push` 在 `git push` 前补跑一次**全量**自查——还有违规没清掉就推不上去。它只看当前检出的那份内容：推一个没检出的分支时，查的不是那个分支。要更早发现，就在那三种操作之后自己跑一次 `bash scripts/check-gates.sh`，或者把闸门架上 CI。
 
 `--staged` 检查的是**索引里的内容**，不是工作区：「先 `git add` 了坏版本、事后又把文件改好」不会放行。任务目录只挑这次改动涉及的那些，其余检查（闸门 B、架构）和全量自查同范围。
 
