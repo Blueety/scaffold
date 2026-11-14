@@ -1,6 +1,6 @@
-# 个人项目脚手架
+# AI 工作流脚手架
 
-一条命令生成项目骨架，骨架里带**一套让 AI 按流程干活、并且能被机器检查的规则**。
+`ai-workflow-scaffold` —— 一条命令生成项目骨架，骨架里带**一套让 AI 按流程干活、并且能被机器检查的规则**。
 
 ![闸门演示：提交被拦下，补上内容后通过](assets/demo.svg)
 
@@ -47,7 +47,7 @@
 
 ## 用法
 
-先把这个仓库 clone 到本地任意目录（`git clone <仓库地址>`，然后 `cd` 进去）。**这不是一个 npm 包**，没有 `install` 步骤——仓库本身就是脚手架，两个脚本在原地跑。
+先把这个仓库 clone 到本地任意目录（`git clone https://github.com/Blueety/ai-workflow-scaffold.git`），`cd` 进去。**这不是一个 npm 包**，没有 `install` 步骤——仓库本身就是脚手架，两个脚本在原地跑。
 
 ### Windows (PowerShell)
 
