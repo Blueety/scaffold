@@ -1,6 +1,6 @@
 # Agent Instructions — 脚手架仓库
 
-> 这个仓库**不是**某个产品项目，它是「AI 工作流脚手架」（`ai-workflow-scaffold`）的源码：`templates/` 是模板，`init.sh` / `init.ps1` 把模板复制成 `my-project-name/` 并替换占位符。
+> 这个仓库**不是**某个产品项目，它是「AI 工作流脚手架」（`scaffold`）的源码：`templates/` 是模板，`init.sh` / `init.ps1` 把模板复制成 `my-project-name/` 并替换占位符。
 >
 > 生成出来的项目**自己有一份 `AGENTS.md`**（`templates/AGENTS.md`），规则完全不同（任务分级、闸门、审查）。别把那一套当成本仓库的规则。
 >
