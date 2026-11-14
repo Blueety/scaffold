@@ -1217,6 +1217,27 @@ bashish="$(grep -nE '(^|[^<])<\(|(^|[^>])>\(' \
     grep -vE ':[0-9]+:[[:space:]]*#')"
 if [ -z "$bashish" ]; then ok "分发的 sh 脚本不用进程替换（POSIX sh 能解析）"
 else no "有进程替换，macOS 的 /bin/sh 会解析失败：$bashish"; fi
+# 4) 可移植性：awk 的方括号表达式**按字节比较**。多字节字符放进 `[...]` 只匹配它的
+#    第一个字节，于是「在中文标点处截断」会从汉字中间切开，留下半个字节序列——
+#    Windows CI 实测：`src/我的 文件.js` 被读成 `src/<半个字节>`，归属检查静默失配。
+#    必须静态挡：这条在 Linux / macOS 上不红，只有 Git for Windows 的 gawk 才露馅。
+mb="$(LC_ALL=C awk '
+    /^[ \t]*#/ { next }
+    {
+        line = $0
+        p = index(line, "#")
+        if (p > 0) line = substr(line, 1, p - 1)
+        while ((i = index(line, "[")) > 0) {
+            rest = substr(line, i)
+            j = index(rest, "]")
+            if (j == 0) break
+            seg = substr(rest, 1, j)
+            if (seg ~ /[^\001-\177]/) { print FNR ": " seg; break }
+            line = substr(rest, j + 1)
+        }
+    }' "$TPL/scripts/check-gates.awk" 2>/dev/null)"
+if [ -z "$mb" ]; then ok "awk 判定器里没有多字节方括号（按字节比会切碎中文）"
+else no "awk 判定器把多字节字符放进了方括号：$mb"; fi
 
 sec "G-cmt: 正文里的 <!-- 不许静默吞掉整篇"
 echo "== G-cmt: 正文里的 <!-- 不许静默吞掉整篇 =="

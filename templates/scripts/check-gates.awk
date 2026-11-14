@@ -47,6 +47,11 @@ BEGIN {
     # 断链检查只认这些扩展名。见 emit_link 里的说明。
     _n = split("md sh awk bash ps1 cmd py pyi js mjs cjs ts tsx jsx json jsonc yaml yml toml ini cfg conf css scss sass less html htm vue svelte astro go rs java kt kts c h cc cpp hpp cs fs rb php pl lua sql txt csv tsv lock xml svg png jpg ico", _e, " ")
     for (_i = 1; _i <= _n; _i++) LINK_EXT[_e[_i]] = 1
+
+    # 行尾标点表（给 strip_trail_punct 用）。只放字面量，不进方括号——见那个函数的说明。
+    TRAIL_PUNCT[1] = "，"; TRAIL_PUNCT[2] = "。"; TRAIL_PUNCT[3] = "；"
+    TRAIL_PUNCT[4] = "、"; TRAIL_PUNCT[5] = "："; TRAIL_PUNCT[6] = "）"
+    TRAIL_PUNCT[7] = ",";  TRAIL_PUNCT[8] = ";";  TRAIL_PUNCT[9] = ":"; TRAIL_PUNCT[10] = ")"
 }
 
 # ---------------------------------------------------------------- 读入
@@ -133,6 +138,43 @@ END {
     else if (kind == "slice")   slice_check()
     else if (kind == "review")  review_check()
 }
+
+# ---------------------------------------------------------------- 多字节安全的字面量工具
+#
+# **方括号表达式按字节比较**：把多字节字符放进 `[...]` 只会匹配它的第一个字节，
+# 于是「在某个中文标点处截断」会从汉字中间切开，留下半个字节序列。Git for Windows
+# 的 gawk 上实测过后果：`src/我的 文件.js` 被读成 `src/<半个字节>`，归属检查静默失配。
+# 所以中文 / 全角标点一律走**字面量**（`sub(/，$/,"")`）或 index / substr，不进方括号。
+# 静态闸门在 gate-test 的 G-mb 里守着这条：awk 里出现多字节方括号即红。
+
+# 反复剥掉末尾的标点（半角与全角混在一张表里，逐个按字面量比）
+function strip_trail_punct(s,   k, changed, m) {
+    do {
+        changed = 0
+        for (k = 1; k <= 10; k++) {
+            m = length(TRAIL_PUNCT[k])
+            if (length(s) < m) continue
+            if (substr(s, length(s) - m + 1) == TRAIL_PUNCT[k]) {
+                s = substr(s, 1, length(s) - m)
+                changed = 1
+            }
+        }
+    } while (changed)
+    return s
+}
+
+# 在第一个 `（` 或 `(` 处截断（没有就原样返回）
+function cut_at_paren(s,   i, j, p) {
+    i = index(s, "（"); j = index(s, "(")
+    p = 0
+    if (i > 0) p = i
+    if (j > 0 && (p == 0 || j < p)) p = j
+    if (p == 0) return s
+    return substr(s, 1, p - 1)
+}
+
+# 全角冒号统一成半角，之后就可以用只含 ASCII 的正则去判断
+function norm_colon(s) { gsub(/：/, ":", s); return s }
 
 # ---------------------------------------------------------------- 输出
 
@@ -526,8 +568,11 @@ function count_result_items(text,   n, i, c, t) {
         if (is_placeholder(t)) continue
         # `- 字段: 无` / `- 字段:` / `- **字段**: 无` 都不算结果：模板里本来就有
         # 「未运行的检查及原因: 无」这种行，照抄就非空的话这条检查形同虚设。
-        if (t ~ /^[^:：]*[:：][[:space:]]*$/ || t ~ /^[^:：]*[:：][[:space:]]*(无|没有|N\/A|None|TODO)[[:space:]]*$/) continue
-        if (t ~ /^\*\*(未运行的检查|没跑|未运行)[^*]*\*\*[[:space:]]*[:：]?[[:space:]]*(无|没有)?[[:space:]]*$/) continue
+        # 先把全角冒号归一成半角，后面的判断就只剩 ASCII——`[:：]` 这种方括号
+        # 在各平台上行为不一致（见 strip_trail_punct 上方的说明）。
+        t = norm_colon(t)
+        if (t ~ /^[^:]*:[[:space:]]*$/ || t ~ /^[^:]*:[[:space:]]*(无|没有|N\/A|None|TODO)[[:space:]]*$/) continue
+        if (t ~ /^\*\*(未运行的检查|没跑|未运行)[^*]*\*\*[[:space:]]*:?[[:space:]]*(无|没有)?[[:space:]]*$/) continue
         c++
     }
     return c
@@ -595,18 +640,18 @@ function related_dump(   i, n, l, first) {
         sub(/<!--.*-->/, "", l)
         gsub(/`/, "", l)
         sub(/[[:space:]]*——.*$/, "", l)
-        sub(/[[:space:]]*[（(].*$/, "", l)
+        l = cut_at_paren(l)
         l = trim(l)
         if (l == "") continue
         # 一行写多个路径时，第一个 token 只是其中一个候选（`src/a.py, src/b.py`）。
         # 先剥标点再切空格，否则会留下 `src/a.py,` 这种拼不上文件的串。
         first = l
         sub(/[[:space:]].*$/, "", first)
-        sub(/[，。；、,;]+$/, "", first)
+        first = strip_trail_punct(first)
         if (first != "") print first
         # 整行也输出一次：文件名里**带空格**时（`src/我的 文件.js`）只有整行才对得上。
         # 调用方按「任何一个候选匹配上就算命中」，多输出一个候选没有副作用。
-        gsub(/[，。；、,;]+$/, "", l)
+        l = strip_trail_punct(l)
         if (l != "" && l != first) print l
     }
 }
@@ -624,9 +669,10 @@ function diff_range_filled(   t, n, A, i, l, v) {
     for (i = 1; i <= n; i++) {
         l = A[i]
         sub(/^[ \t]*[-*+][ \t]*/, "", l)
-        if (l !~ /^(新增|修改|删除)文件[ \t]*[:：]/) continue
+        l = norm_colon(l)
+        if (l !~ /^(新增|修改|删除)文件[ \t]*:/) continue
         v = l
-        sub(/^[^:：]*[:：][ \t]*/, "", v)
+        sub(/^[^:]*:[ \t]*/, "", v)
         gsub(/[ \t`]/, "", v)
         if (v != "") return 1
     }
@@ -1060,7 +1106,7 @@ function emit_link(file, s,   last, t, ext, had_pct) {
     sub(/.*\./, "", ext)
     if (!(ext in LINK_EXT)) return
     # 去掉行尾的标点（中文句读紧跟在反引号外的情形）
-    sub(/[，。；：、）)]+$/, "", s)
+    s = strip_trail_punct(s)
     if (s == "" || index(s, "/") == 0) return
     print file "\t" s
 }
