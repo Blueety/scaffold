@@ -1282,6 +1282,19 @@ plan_text T2 > "$P/tasks/2026-01-21-t2/plan.md"
 subst "$P/tasks/2026-01-21-t2/plan.md" 's|src/a.sh|src/我的 文件.js|g'
 wip_commit "$P"
 ( cd "$P" && printf 'x\n' > "src/我的 文件.js" && git add "src/我的 文件.js" )
+# 前置条件先验一遍：这条断言只有在「文件名确实进了索引」时才有意义。
+# Windows CI 上它红过而本地红不了——先把它拆出来，红了就知道是夹具造不出这种
+# 文件名，还是闸门真的漏判。
+staged_names="$( cd "$P" && git -c core.quotepath=false diff --cached --name-only )"
+case "$staged_names" in
+    *"我的 文件.js"*) ok "前置：CJK + 空格的文件名进了索引" ;;
+    *) no "前置：CJK + 空格的文件名没进索引（后面的断言因此失去意义）"
+       dump_out "$staged_names" ;;
+esac
+# 计划里的「相关文件」也要真的变成新名字，否则归属检查根本看不到它
+plan_rel="$( grep -F '我的 文件.js' "$P/tasks/2026-01-21-t2/plan.md" 2>/dev/null )"
+if [ -n "$plan_rel" ]; then ok "前置：计划的「相关文件」已改成带空格的名字"
+else no "前置：计划里的「相关文件」没被 sed 替换（模式或编码不匹配）"; fi
 out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
 has "review.md" "$out" "带空格的文件名不能因为按空格切词而逃过归属检查"
 # 同一条违规不该打印两次

@@ -818,7 +818,7 @@ function check_next_notes(   n, i, l, txt, item, item_line, have_item) {
 function is_bullet(l) { return l ~ /^[ \t]*([-*+][ \t]+|(（|\()?[0-9]+([.]|、|\)|）)[ \t]*)[^ \t]/ }
 
 # 一个条目里只要**任何一行**是 `去向: <四选一>` 就算数。
-function flush_note(item, item_line, have_item,   l, n, i) {
+function flush_note(item, item_line, have_item,   l, n, i, bare) {
     if (item == "") return
     n = split(item, NOTE_TMP, "\n")
     for (i = 1; i <= n; i++) {
@@ -827,8 +827,12 @@ function flush_note(item, item_line, have_item,   l, n, i) {
         gsub(/^[ \t]+/, "", l)
         sub(/[ \t]+$/, "", l)
         # 整节只写「无」是合法写法：带条目符号的 `- 无` 也算。
-        if (l == "无" || l == "无。" || l == "N/A") return
-        if (l ~ /^([-*+]|(（|\()?[0-9]+([.]|、|\)|）))[ \t]+(无。?|N\/A)[ \t]*$/) return
+        # 先剥条目符号再**逐字面量比较**，不把多字节字符写进正则的选择分支里：
+        # 同一个正则在 Git for Windows 的 gawk 上匹配不到「无」（Windows CI 实测），
+        # 而在别处能匹配——判据不能有这种平台分叉。
+        bare = l
+        sub(/^[ \t]*([-*+]|(（|\()?[0-9]+([.]|、|\)|）))[ \t]*/, "", bare)
+        if (bare == "无" || bare == "无。" || bare == "N/A") return
         # 去向整行精确匹配：全角冒号、多一个词、写成箭头都算没写。
         if (l ~ /^去向: (docs|adr|memory|journal)$/) return
     }
