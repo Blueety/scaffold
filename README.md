@@ -78,7 +78,7 @@ my-project-name/
 ├── README.md              # 项目说明
 ├── .gitignore             # Git 忽略规则
 ├── .gitattributes         # 锁 LF（脚本与钩子在 Linux/macOS 上必须无 CRLF）
-├── .scaffold-kinds        # 模板文件分类：mechanism 整份取模板 / content 按内容合并
+├── .scaffold-kinds        # 模板文件分类：mechanism 本地一改就取模板 / content 按内容合并
 ├── src/                   # 源代码目录（空）
 ├── scripts/
 │   ├── check-gates.sh     # 闸门检查器（plan / prd / journal / 切片 / review / 架构 / [DEBUG- 残留）
@@ -148,7 +148,7 @@ bash scripts/scaffold-update.sh ../my-project-name           # 预览，不写�
 bash scripts/scaffold-update.sh ../my-project-name --write   # 写盘（脚本不提交）
 ```
 
-逐文件三方合并（项目现状 × 生成时的旧模板 × 当前模板）：没动过的升级、只本地改过的保留、两边都改的按 `mechanism` / `content` 分流或走 `git merge-file`。只碰 `templates/` 里出现过的路径，`src/` 与 `tasks/<任务>/` 一概不动。
+逐文件三方合并（项目现状 × 生成时的旧模板 × 当前模板）：没动过的升级；`mechanism` 类（钩子、闸门脚本、角色提示词、模板四件）本地一改就取模板版并把本地版留在现场；其余本地改过的、模板没动就保留，两边都改走 `git merge-file`。只碰 `templates/` 里出现过的路径，`src/` 与 `tasks/<任务>/` 一概不动。
 
 基线选择、冲突现场、`--keep-local` / `--union` 裁决、全部开关、Windows 包装器 → **[`UPDATE.md`](UPDATE.md)**。
 

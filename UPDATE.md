@@ -18,10 +18,12 @@ bash scripts/scaffold-update.sh ../my-project-name --write   # 真的写
 | 情况 | 结果 |
 |---|---|
 | 项目没动过这个文件 | 直接升级到新模板 |
-| 项目改过、模板没动 | 原样保留 |
+| 项目改过、模板没动 | 原样保留（`mechanism` 类除外：本地一改就取模板版，见下） |
 | 两边都改过 | `templates/.scaffold-kinds` 标成 `mechanism` 的取模板版（本地改动备份到现场）；其余走 `git merge-file`，合不拢就写冲突标记并返回 1 |
-| 模板新增 | 加进去；项目已有同名文件则跳过，不覆盖 |
+| 模板新增 | 加进去；项目已有同名文件则跳过，不覆盖（`mechanism` 类除外） |
 | 模板删掉 | 项目没动过就删，改过就保留并报告 |
+
+`mechanism` 的判定只看「本地 vs 模板」：两者不一致就取模板版，不管模板那一版动没动。理由是这类文件的正确状态就是模板原样，本地改动应当报上游；把「模板没动」当作放行条件，等于本地悄悄改过的钩子每次同步都原样通过。
 
 只碰 `templates/` 里出现过的路径——`src/`、`tasks/<任务>`、`.git/` 一概不动。脚本不做提交，写完自己看 `git diff`。
 
@@ -56,9 +58,9 @@ bash scripts/scaffold-update.sh ../p --accept-guess          # 确认可用，�
 
 ## 三类文件
 
-| 分类 | 例子 | 「两边都改过」时 |
+| 分类 | 例子 | 本地与模板不一致时 |
 |---|---|---|
-| `mechanism` | `docs/agents/*`、`skills/*`、`scripts/check-gates.*`、`.githooks/pre-commit`、`tasks/_template/*` | 取模板版；本地改动备份到现场。这类文件本地改了应当报上游，而不是留着 |
+| `mechanism` | `docs/agents/*`、`skills/*`、`scripts/check-gates.*`、`.githooks/*`、`tasks/_template/*` | 取模板版；本地改动备份到现场。不论模板那一版动没动——这类文件本地改了应当报上游，而不是留着 |
 | `content` | `AGENTS.md`、`docs/commands.md`、`docs/pitfalls.md` | 照常三方合并；想免掉反复冲突用下面的裁决 |
 | 未列出 | 其余 | 默认三方合并，和不分类时一样 |
 

@@ -32,11 +32,12 @@
 #   只在 theirs 里有    → 新增
 #   只在 base 里有      → 模板删掉了：ours 没改就删，改过就保留并报告
 #
-# 模板根的 `.scaffold-kinds` 给每个文件分类，分类决定「两边都改过」时怎么办：
-#   mechanism  机制文件（角色提示词、闸门脚本、钩子）：取模板版，本地改动备份到现场
+# 模板根的 `.scaffold-kinds` 给每个文件分类，分类决定「本地与模板不一致」时怎么办：
+#   mechanism  机制文件（角色提示词、闸门脚本、钩子）：取模板版，本地改动备份到现场。
+#              不看模板那一版动没动——本地改了就该报上游，不是留着。
 #   content    内容文件（AGENTS.md / commands.md 这类项目会填满的）：照常合并，
 #              合不拢就冲突；想免掉反复冲突用 --keep-local / --union
-#   没列出的文件走默认的三方合并。
+#   没列出的文件走默认的三方合并（模板没动就原样保留本地版）。
 #
 # 已裁决的文件（记在 .scaffold-version 的 decision 段）不再走上面的判断：
 #   keep-local  永远保留本地版；模板又变了就提示「请重新判断」
@@ -710,6 +711,19 @@ while IFS= read -r p; do
             # 项目自己就有同名文件：不是从模板来的，绝不覆盖
             if same "$o" "$t"; then
                 n_same=$((n_same + 1))
+            elif [ "${KIND[$p]:-}" = "mechanism" ]; then
+                # 例外：模板现在把这条路径算机制文件。手工造的同名钩子留着，
+                # 等于闸门入口不受上游管辖——正是 mechanism 要消灭的状态。
+                printf '  覆盖   %s（机制文件：模板新增同名路径，取模板版，本地版留在现场）\n' "$p"
+                n_over=$((n_over + 1))
+                ACTIONS+=("覆盖    $p")
+                if [ "$WRITE" -eq 1 ]; then
+                    ensure_work_dir || true
+                    mkdir -p "$KEEP_DIR/$(dirname "$p")" 2>/dev/null || true
+                    cp "$o" "$KEEP_DIR/$p.ours" 2>/dev/null || true
+                    cat "$t" > "$o"
+                    mark_exec "$p"
+                fi
             else
                 printf '  跳过   %s（项目已有同名文件，不是模板来的）\n' "$p"
                 n_foreign=$((n_foreign + 1))
@@ -753,26 +767,26 @@ while IFS= read -r p; do
         ACTIONS+=("升级    $p")
         show_diff "$b" "$t"
         if [ "$WRITE" -eq 1 ]; then cat "$t" > "$o"; mark_exec "$p"; fi
+    elif [ "${KIND[$p]:-}" = "mechanism" ]; then
+        # 机制文件：项目的正确状态就是模板原样，本地改了应当报上游，而不是留着。
+        # 所以「模板这一版没动」不放行——只比「本地 vs 模板」，不一致就取模板版
+        # 并把本地版留在现场。否则本地悄悄改过的钩子会在每次同步里原样通过，
+        # 闸门入口就这么长期不受上游管辖（pre-push 漏标 mechanism 时正是如此）。
+        printf '  覆盖   %s（机制文件：取模板版，本地改动留在现场）\n' "$p"
+        n_over=$((n_over + 1))
+        ACTIONS+=("覆盖    $p")
+        show_diff "$b" "$t"
+        if [ "$WRITE" -eq 1 ]; then
+            keep_conflict "$p" "$o" "$b" "$t"
+            cat "$t" > "$o"
+            mark_exec "$p"
+        fi
+        continue
     elif same "$t" "$b"; then
         printf '  保留   %s（本地改过，模板没动）\n' "$p"
         n_keep=$((n_keep + 1))
         ACTIONS+=("保留    $p")
     else
-        # 两边都改过。分类决定怎么合：
-        # mechanism（角色提示词、闸门脚本、钩子）本地改了就一定是改错了地方，
-        # 取模板版并留下本地版供追溯；content 和未分类的文件照常三方合并。
-        if [ "${KIND[$p]:-}" = "mechanism" ]; then
-            printf '  覆盖   %s（机制文件：取模板版，本地改动留在现场）\n' "$p"
-            n_over=$((n_over + 1))
-            ACTIONS+=("覆盖    $p")
-            show_diff "$b" "$t"
-            if [ "$WRITE" -eq 1 ]; then
-                keep_conflict "$p" "$o" "$b" "$t"
-                cat "$t" > "$o"
-                mark_exec "$p"
-            fi
-            continue
-        fi
         merged="$WORK/merged"
         # 本地那一版先归一到 LF 再参与合并：项目锁 eol=lf，CR 不是内容。
         # 不归一的话，一个 CRLF 文件会被 git merge-file 判成「每一行都变了」。

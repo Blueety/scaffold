@@ -226,13 +226,51 @@ echo "== .scaffold-kinds: mechanism =="
 # 钩子必须**全部**标成 mechanism。漏一个的后果不是报错，而是「本地改过钩子的项目
 # 不会被同步纠正」——被改的恰好是闸门入口时，等于闸门在那边静默失灵。
 # 这条清单以前就漏过 pre-push（唯一能兜住 cherry-pick/rebase/am 的入口）。
-hooks="$(cd "$REPO_ROOT/templates/.githooks" && ls -1)"
+hooks="$(cd "$REPO_ROOT/templates/.githooks" && ls -1 | tr '\n' ' ' | sed 's/ $//')"
 miss=""
 for h in $hooks; do
     grep -qx "mechanism \.githooks/$h" "$REPO_ROOT/templates/.scaffold-kinds" || miss="$miss $h"
 done
 if [ -z "$miss" ]; then ok "每个钩子都在 mechanism 清单里（$hooks）"
 else no "钩子没标 mechanism:$miss"; fi
+
+# 本地改了钩子、模板那一版没动 —— 也必须取模板版。
+# 只判「两边都改过」的话，这个场景会被当成「本地改过，模板没动」原样放行，
+# 于是本地偷偷改过的闸门入口每次同步都通过，mechanism 这个分类等于失效。
+P="$TMP/mech-local"; cp -r "$TMP/withver" "$P"
+printf '\n# 本地偷偷加的一行\n' >> "$P/.githooks/pre-push"
+commit_all "$P" patch-hook
+out="$("$B" "$UP" "$P" --write 2>&1)"; rc=$?
+has "覆盖   .githooks/pre-push" "$out" "本地改了钩子（模板没动）也取模板版"
+if cmp -s "$P/.githooks/pre-push" "$SCAF/templates/.githooks/pre-push"; then
+    ok "钩子恢复成模板版"
+else
+    no "钩子恢复成模板版"
+fi
+if grep -rqxF '# 本地偷偷加的一行' "$P/.git/scaffold-work" 2>/dev/null; then
+    ok "本地版留在现场目录（能追溯）"
+else
+    no "本地版留在现场目录（能追溯）"
+fi
+# 内容文件不受影响：同样的「本地改过、模板没动」必须保留
+printf '\n本地给坑清单加的一条\n' >> "$P/docs/pitfalls.md"
+commit_all "$P" patch-doc
+out="$("$B" "$UP" "$P" --write 2>&1)"
+has "保留   docs/pitfalls.md" "$out" "内容文件本地改过、模板没动仍然原样保留"
+
+# 裁决是这个分类唯一的合法出口：改了机制文件又想留着，必须能在命令行上说清
+P="$TMP/mech-keep"; cp -r "$TMP/withver" "$P"
+printf '\n# 本项目确实需要的改动\n' >> "$P/.githooks/pre-push"
+commit_all "$P" patch-hook2
+"$B" "$UP" "$P" --write --keep-local .githooks/pre-push >/dev/null 2>&1
+if grep -qF '# 本项目确实需要的改动' "$P/.githooks/pre-push"; then
+    ok "mechanism 文件用 --keep-local 能保住本地版"
+else
+    no "mechanism 文件用 --keep-local 能保住本地版"
+fi
+commit_all "$P" decision            # 裁决记进 .scaffold-version；不提交的话下一次会被「脏树」挡下
+out="$("$B" "$UP" "$P" --write 2>&1)"
+has "跳过   .githooks/pre-push（已裁决 keep-local，模板未变）" "$out" "裁决记下后第二次不再覆盖"
 
 # 机制文件两边都改过才算数：模板侧也要动一次
 printf '\n模板给执行者加的一条\n' >> "$SCAF/templates/docs/agents/执行者.md"
