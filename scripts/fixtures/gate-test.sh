@@ -1296,6 +1296,11 @@ plan_rel="$( grep -F '我的 文件.js' "$P/tasks/2026-01-21-t2/plan.md" 2>/dev/
 if [ -n "$plan_rel" ]; then ok "前置：计划的「相关文件」已改成带空格的名字"
 else no "前置：计划里的「相关文件」没被 sed 替换（模式或编码不匹配）"; fi
 out="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 )"
+if ! printf '%s' "$out" | grep -qF 'review.md'; then
+    dump_out "$out"
+    # 闸门没报这条，两侧候选到底长什么样？只在失败时重跑一次带调试的。
+    dump_out "$( cd "$P" && GATE_DEBUG_SCOPE=1 "$B" scripts/check-gates.sh --staged 2>&1 )"
+fi
 has "review.md" "$out" "带空格的文件名不能因为按空格切词而逃过归属检查"
 # 同一条违规不该打印两次
 n="$( cd "$P" && "$B" scripts/check-gates.sh --staged 2>&1 | grep -c '本次提交的' )"

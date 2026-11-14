@@ -648,6 +648,9 @@ check_review_by_scope() {
         done
         [ -f "$root/$d/plan.md" ] && versions+=("$(cat "$root/$d/plan.md" 2>/dev/null)")
         [ "${#versions[@]}" -gt 0 ] || continue
+        if [ -n "${GATE_DEBUG_SCOPE:-}" ]; then
+            printf '  [debug] task=%s versions=%s\n' "$d" "${#versions[@]}" >&2
+        fi
 
         # 档位来源要与 task_is_high_tier 一致：plan、prd、切片里**任何一处**声明了
         # T2/T3 就算高档。只看 plan 的话，「prd 写 T2、plan 写 T1」能绕过归属检查。
@@ -679,6 +682,9 @@ check_review_by_scope() {
                      find "$root/$d" -maxdepth 1 -name '*.md' 2>/dev/null | sed "s|^${root%/}/||"; } | feed)"
         fi
         [ "$high" -eq 1 ] || continue
+        if [ -n "${GATE_DEBUG_SCOPE:-}" ]; then
+            printf '  [debug] task=%s high=%s\n' "$d" "$high" >&2
+        fi
 
         # 非空裁决单：三个版本任一处有内容就算有（0 字节不算）
         review_ok=0
@@ -700,6 +706,17 @@ check_review_by_scope() {
             done < "$(printf '%s\n' "$v" | awk -v kind=related -f "$AWK_PROG" - 2>/dev/null | feed)"
         done
         [ "${#rels[@]}" -gt 0 ] || continue
+        # 排障用：GATE_DEBUG_SCOPE=1 时把两侧的候选原样打出来（含字符数）。
+        # 只在夹具复现不出、CI 上才红时开——比再猜一轮便宜。
+        if [ -n "${GATE_DEBUG_SCOPE:-}" ]; then
+            printf '  [debug] task=%s changed=%s rels=%s\n' "$d" "${#changed[@]}" "${#rels[@]}" >&2
+            for f in ${changed[@]+"${changed[@]}"}; do
+                printf '  [debug] C[len=%s] %s\n' "${#f}" "$f" >&2
+            done
+            for rel in ${rels[@]+"${rels[@]}"}; do
+                printf '  [debug] R[len=%s] %s\n' "${#rel}" "$rel" >&2
+            done
+        fi
         hit=""
         for f in "${changed[@]}"; do
             for rel in "${rels[@]}"; do
