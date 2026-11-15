@@ -4,6 +4,8 @@
 
 `scaffold` —— 一条命令生成项目骨架，骨架里带一套让 AI 按流程干活、并且能被机器检查的规则。
 
+[English](README.en.md) | 简体中文
+
 [![CI](https://github.com/Blueety/scaffold/actions/workflows/check.yml/badge.svg)](https://github.com/Blueety/scaffold/actions/workflows/check.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)
@@ -12,7 +14,11 @@
 
 ![闸门演示：提交被拦下，补上内容后通过](assets/demo.svg)
 
+<sub>真实终端输出：任务计划的「目标」为空，提交被拦下；补上后通过。</sub>
+
 </div>
+
+和 AI 一起写代码，真正崩掉的地方很少是模型不够强：跳过计划直接改代码、验证只说「应该可以」、计划写一套实现另一套、上周踩过的坑这周再踩一遍。各种 prompt 模板和规范文档靠模型自觉；这里的规矩尽量做成**能跑的检查**——钩子直接拒提交，不是再提醒它一遍。
 
 生成出来的是 markdown 和纯 POSIX sh：项目规范与角色提示词、七个流程 skill、五份任务模板、闸门检查器（`check-gates.sh` + `.awk`）、三个 git 钩子。没有语言、框架和依赖，技术栈你自己装，骨架只约定「AI 按什么流程干活」。
 
@@ -20,23 +26,36 @@
 
 你要做的只有三件事：生成项目、把第一句话交给 Agent、在「计划批准」和「提交」两处看一眼。其余由 Agent 按项目里的 `AGENTS.md` 执行。
 
-> **English (short)** — One command scaffolds a project skeleton that encodes an **AI workflow with
-> executable checks**: task state in git, a gate checker on `pre-commit` / `pre-merge-commit` / `pre-push`, and planning / implementation /
-> review in *separate* agent contexts. Every core rule has either a machine check or an explicit
-> "human judgment" label. Windows (PowerShell 5.1+) / Linux / macOS, stock bash 3.2, no runtime deps.
-> Docs are Chinese; start with [`INTRO.md`](INTRO.md).
->
-> ```bash
-> bash init.sh my-project-name      # Windows: .\init.ps1 my-project-name
-> ```
-
 ## 目录
 
+- [闸门到底拦什么](#闸门到底拦什么)
+- [什么时候别用](#什么时候别用)
 - [开始](#开始)
+- [前十分钟](#前十分钟)
 - [对 Agent 说什么](#对-agent-说什么)
 - [三件容易踩的事](#三件容易踩的事)
 - [更新已生成的项目](#更新已生成的项目)
 - [其余文档](#其余文档)
+
+## 闸门到底拦什么
+
+不是清单，是拒绝。顶上那张图是真终端输出：`plan.md` 的「目标」为空，`pre-commit` 钩子直接拒掉这次提交，报出是哪个文件的哪个字段；补上再提交就过。
+
+同一时刻还会跑这些检查：`journal.md` 的验证结果必须有实际内容、不许写「应该可以」；`journal.md` 的每条提醒必须标去向（`docs` / `adr` / `memory` / `journal`）；`docs/architecture.md` 的模块表与实际 `src/` 目录双向比对；`[DEBUG-` 残留；`src/` 下动到四个以上文件却没声明档位，按低报拒掉。
+
+在这一切之前，最贵的那道闸门是人：修 bug 在形成根因假设之前，必须有一条**已经对这个 bug 变红过**的命令。
+
+## 什么时候别用
+
+提前划清，免得装完才发现不合适：
+
+- **要英文文档的话**：英文版只有 [`README.en.md`](README.en.md)。`INTRO.md`、`WORKFLOW.md`、`CONTRIBUTING.md`，以及生成出来的全部文档、任务模板、skill、角色提示词、闸门报错，都是中文。团队读不了中文，就先按翻译项目算，或者干脆别用。
+- **一次性脚本、几十行的实验**：整套流程比活本身大。
+- **验证只能靠人眼、又建不出客观信号的项目**：流程的骨架是闸门，没有能变红的命令就没有闸门。视觉类项目可以进——截图像素基线也是客观信号。
+- **想完全无人值守跑**：两个检查点是人工闸门，设计上不接受预先授权。
+- **没有独立子 agent 原语**：任务目录和闸门照用，但「计划与实施换人」只能靠人自觉。
+
+也不必一次用全：只用 `tasks/` + 闸门也算用上了。
 
 ## 开始
 
@@ -57,6 +76,16 @@ powershell -ExecutionPolicy Bypass -File .\init.ps1 my-project-name
 脚本在当前目录建 `my-project-name/`，同时 `git init`、写 `core.quotepath=false`、把 `.githooks/` 挂成钩子目录。没有 `install` 步骤，这不是 npm 包。
 
 项目名允许字母、数字、`.`、`_`、`-` 和非 ASCII 字符（中文等，须是合法 UTF-8）；不能是 `.` / `..` / `.git`（不分大小写），不能以 `-` 开头或以 `.` 结尾，不能是 Windows 保留设备名（`CON` / `PRN` / `AUX` / `NUL` / `COM1`–`COM9` / `LPT1`–`LPT9`），也不能含空格、引号、路径分隔符、控制字符或 shell 元字符。
+
+## 前十分钟
+
+最短的「看到它到底在干什么」的路径：
+
+1. `bash init.sh my-project-name && cd my-project-name` —— 骨架不替你提交，第一个提交是你的。
+2. 打开生成项目里的 `AGENTS.md`。整套流程就在那里，Agent 每轮读的就是它。
+3. 让它改**一个**文件，看它声明档位 T0 后直接动手：没有计划，不打断。
+4. 让它碰 2–3 个文件：必须先落 `tasks/<日期>-<简述>/plan.md`，里面带验证命令。
+5. 打开 `tasks/` 下刚生成的那份 `plan.md`，删掉「目标」那行再 `git commit`——钩子会拒掉。这就是它。
 
 ## 对 Agent 说什么
 
@@ -97,6 +126,8 @@ bash scripts/scaffold-update.sh ../my-project-name --write   # 写盘（不提�
 | 生成出来的目录结构（唯一一份，`check-tree.ps1` 守着它） | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | 改这个脚手架本身：跑什么、约束、CI | [`CONTRIBUTING.md`](CONTRIBUTING.md) / [`AGENTS.md`](AGENTS.md) |
 | 在网页 AI（GPT / Claude / Gemini）里把讨论整理成任务，再交接给本地 agent | [`web-chat-templates/`](web-chat-templates/README.md) |
+
+有问题、对哪条取舍有不同意见，或者你们的做法不一样——都可以开 issue。
 
 ## 许可
 
