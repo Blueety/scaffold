@@ -1,6 +1,6 @@
 <div align="center">
 
-# AI 工作流脚手架
+# Vibecoding 工作流脚手架
 
 `scaffold` —— 一条命令生成项目骨架，骨架里带一套让 AI 按流程干活、并且能被机器检查的规则。
 

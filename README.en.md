@@ -1,6 +1,6 @@
 <div align="center">
 
-# AI Workflow Scaffold
+# Vibecoding Workflow Scaffold
 
 `scaffold` — one command generates a project skeleton that makes the AI work to a process, and
 makes that process **machine-checkable**.
