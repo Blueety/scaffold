@@ -121,7 +121,7 @@ bash scripts/scaffold-update.sh ../my-project-name --write   # 写盘（不提�
 
 | 想知道什么 | 看哪里 |
 |---|---|
-| 一个任务怎么走、四道闸门、六条关键取舍 | [`INTRO.md`](INTRO.md)，第一次接触从这里开始 |
+| 四段流程全景图、一个任务怎么走、四道闸门、六条关键取舍 | [`INTRO.md`](INTRO.md)，第一次接触从这里开始 |
 | 一个任务从需求到提交的逐步操作（Phase 1–4） | [`WORKFLOW.md`](WORKFLOW.md) |
 | 生成出来的目录结构（唯一一份，`check-tree.ps1` 守着它） | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | 改这个脚手架本身：跑什么、约束、CI | [`CONTRIBUTING.md`](CONTRIBUTING.md) / [`AGENTS.md`](AGENTS.md) |

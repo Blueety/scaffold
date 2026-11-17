@@ -175,7 +175,7 @@ Verdicts, conflict sites, and every switch are in [`UPDATE.md`](UPDATE.md).
 
 | If you want to know | Read |
 |---|---|
-| How one task runs end to end, the four gates, six key tradeoffs | [`INTRO.md`](INTRO.md) — start here on first contact |
+| The four-phase panorama, how one task runs end to end, the four gates, six key tradeoffs | [`INTRO.md`](INTRO.md) — start here on first contact (Chinese) |
 | Step-by-step from requirement to commit (Phase 1–4) | [`WORKFLOW.md`](WORKFLOW.md) |
 | The generated directory tree (the only copy; `check-tree.ps1` guards it) | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | Changing this scaffold itself: what to run, constraints, CI | [`CONTRIBUTING.md`](CONTRIBUTING.md) / [`AGENTS.md`](AGENTS.md) |
