@@ -19,7 +19,7 @@
 - `UPDATE.md` —— 更新器的手册：基线选择、冲突现场、三类文件、裁决、全部开关。README 里只留两条命令和一行指针。
 - `CONTRIBUTING.md` —— 面向改这个仓库的人：硬约束、改完跑什么、CI 三组 job，以及**唯一一份**生成物目录树。
 - `web-chat-templates/` —— Phase 1 网页对话用的提示词模板（不随项目分发）。
-- `assets/` —— 文档里的图（`demo.svg` 是真实终端的输出渲染，不是示意图；`flow.svg` 是 `INTRO.md` 的四段流程示意图，改流程时两处一起改）。
+- `assets/` —— 文档里的图（`demo.svg` 是真实终端的输出渲染，不是示意图；`flow.svg` / `flow.en.svg` 是 README 与 `INTRO.md` 的四段流程示意图，中英各一份，改流程时一起改）。
 
 ## 硬约束
 

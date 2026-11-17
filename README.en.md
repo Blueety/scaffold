@@ -40,6 +40,8 @@ You do three things: generate the project, hand the agent its first instruction,
 checkpoints — plan approval and commit. The rest is run by the agent per the project's own
 `AGENTS.md`.
 
+![Four phases: Phase 1 web chat → Phase 2 terminal setup → Phase 3 task run → Phase 4 repeat; check-gates.sh runs on commit, merge, and push](assets/flow.en.svg)
+
 ## Contents
 
 - [What a gate actually blocks](#what-a-gate-actually-blocks)

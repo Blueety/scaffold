@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="264" viewBox="0 0 960 264" role="img" aria-labelledby="flow-title flow-desc">
+  <title id="flow-title">Four phases</title>
+  <desc id="flow-desc">Phase 1 web chat → Phase 2 terminal setup → Phase 3 task run → Phase 4 repeat; check-gates.sh runs on commit, merge, and push.</desc>
+
+  <style>
+    text {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue",
+                   Arial, sans-serif;
+    }
+    .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+    .eyebrow { font-size: 10px; font-weight: 600; letter-spacing: 0.12em; fill: var(--muted); }
+    .phase { font-size: 9.5px; font-weight: 600; letter-spacing: 0.14em; fill: var(--muted); }
+    .title { font-size: 16px; font-weight: 600; fill: var(--ink); }
+    .body { font-size: 11.5px; fill: var(--muted); }
+    .note { font-size: 11px; fill: var(--muted); }
+    .card { fill: var(--card); stroke: var(--border); stroke-width: 1; }
+    .hair { stroke: var(--hairline); stroke-width: 1; }
+    .arrow { stroke: var(--arrow); stroke-width: 1.25; fill: none; }
+    .loop { stroke: var(--accent); stroke-width: 1.25; fill: none; stroke-dasharray: 4 3; }
+    .dot { fill: var(--amber); }
+    .ink { fill: var(--ink); font-weight: 600; }
+
+    :root {
+      --ink: #1f2328;
+      --muted: #59636e;
+      --card: #ffffff;
+      --border: #d1d9e0;
+      --hairline: #eaeef2;
+      --arrow: #8c959f;
+      --accent: #0969da;
+      --amber: #9a6700;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --ink: #e6edf3;
+        --muted: #9198a1;
+        --card: #151b23;
+        --border: #3d444d;
+        --hairline: #21262d;
+        --arrow: #656c76;
+        --accent: #4493f8;
+        --amber: #d29922;
+      }
+    }
+  </style>
+
+  <defs>
+    <marker id="arrowhead" viewBox="0 0 8 8" refX="7.2" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0.5 0.5 L7.5 4 L0.5 7.5 Z" style="fill:var(--arrow)"/>
+    </marker>
+    <marker id="arrowhead-accent" viewBox="0 0 8 8" refX="7.2" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0.5 0.5 L7.5 4 L0.5 7.5 Z" style="fill:var(--accent)"/>
+    </marker>
+  </defs>
+
+  <!-- setup: phases 1-2 -->
+  <text class="eyebrow" x="8" y="22">SETUP · ONCE PER PROJECT</text>
+  <line class="hair" x1="8" y1="34" x2="452" y2="34"/>
+
+  <!-- loop: phases 3-4 -->
+  <text class="eyebrow" x="488" y="22">TASK LOOP · ONCE PER TASK</text>
+  <line class="hair" x1="488" y1="34" x2="932" y2="34"/>
+
+  <!-- phase 1 -->
+  <g>
+    <rect class="card" x="8" y="52" width="204" height="144" rx="12"/>
+    <text class="phase mono" x="24" y="78">PHASE 1</text>
+    <text class="title" x="24" y="108">Web chat</text>
+    <line class="hair" x1="24" y1="122" x2="196" y2="122"/>
+    <text class="body" x="24" y="146">idea → Task Brief</text>
+    <text class="body" x="24" y="164">→ Task Handoff</text>
+    <text class="body" x="24" y="182">no code yet</text>
+  </g>
+
+  <path class="arrow" d="M212 124 H240" marker-end="url(#arrowhead)"/>
+
+  <!-- phase 2 -->
+  <g>
+    <rect class="card" x="248" y="52" width="204" height="144" rx="12"/>
+    <text class="phase mono" x="264" y="78">PHASE 2</text>
+    <text class="title" x="264" y="108">Terminal setup</text>
+    <line class="hair" x1="264" y1="122" x2="436" y2="122"/>
+    <text class="body" x="264" y="146">init scaffolds repo</text>
+    <text class="body" x="264" y="164">agent fills specs</text>
+    <text class="body" x="264" y="182">→ initial commit</text>
+  </g>
+
+  <path class="arrow" d="M452 124 H480" marker-end="url(#arrowhead)"/>
+
+  <!-- phase 3 -->
+  <g>
+    <rect class="card" x="488" y="52" width="204" height="144" rx="12"/>
+    <text class="phase mono" x="504" y="78">PHASE 3</text>
+    <text class="title" x="504" y="108">Task run</text>
+    <line class="hair" x1="504" y1="122" x2="676" y2="122"/>
+    <text class="body" x="504" y="146">tier → plan.md</text>
+    <text class="body" x="504" y="164">dispatch → verify</text>
+    <text class="body" x="504" y="182">review → commit → journal</text>
+  </g>
+
+  <path class="arrow" d="M692 124 H720" marker-end="url(#arrowhead)"/>
+
+  <!-- phase 4 -->
+  <g>
+    <rect class="card" x="728" y="52" width="204" height="144" rx="12"/>
+    <text class="phase mono" x="744" y="78">PHASE 4</text>
+    <text class="title" x="744" y="108">Repeat</text>
+    <line class="hair" x1="744" y1="122" x2="916" y2="122"/>
+    <text class="body" x="744" y="146">lessons → pitfalls</text>
+    <text class="body" x="744" y="164">adr / CONTEXT</text>
+  </g>
+
+  <!-- back edge: next task -->
+  <path class="loop" d="M830 196 V236 H590 V198" marker-end="url(#arrowhead-accent)"/>
+  <text class="note" x="710" y="222" text-anchor="middle">next task</text>
+
+  <!-- gate note -->
+  <circle class="dot" cx="12" cy="232" r="3.5"/>
+  <text class="body" x="26" y="236"><tspan class="ink">Gate</tspan> check-gates.sh runs on commit / merge / push; violations are rejected</text>
+</svg>
