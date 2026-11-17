@@ -27,19 +27,7 @@
 
 `WORKFLOW.md` 把流程分成四段，产物全落在仓库里，不在聊天记录里：Phase 1 网页对话澄清、Phase 2 终端搭建、Phase 3 单任务执行、Phase 4 循环。检查器在三个 git 时机自动跑；人工检查点集中在 T2 / T3 那两次，另加 7 类不可逆外部动作随时会停。
 
-```mermaid
-flowchart TD
-    A["Phase 1 · 网页对话<br/>想法 → Task Handoff"]
-    B["Phase 2 · 终端<br/>init 生成骨架<br/>Agent 填规范 → 初始提交"]
-    C["Phase 3 · 本地 Agent<br/>一次一个任务<br/>档位 → plan.md<br/>实施 → 验证 → 审查<br/>提交 → journal.md"]
-    D["Phase 4 · 重复<br/>经验进 pitfalls<br/>/ adr / CONTEXT"]
-    G["check-gates.sh<br/>提交 / 合并 / 推送都跑<br/>不合规就拒"]
-
-    A --> B --> C
-    C --> D
-    D -.->|"下一个任务"| C
-    C -.-> G
-```
+![四段流程：Phase 1 网页对话 → Phase 2 终端搭建 → Phase 3 任务执行 → Phase 4 重复；check-gates.sh 在提交、合并、推送时自动运行](assets/flow.svg)
 
 Phase 3 内部按档位分流（T0 免检、T1 落 plan 后直接做、T2 / T3 停两次），展开见[「一个任务走一遍」](#一个任务走一遍)。
 
