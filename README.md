@@ -26,6 +26,8 @@
 
 你要做的只有三件事：生成项目、把第一句话交给 Agent、在「计划批准」和「提交」两处看一眼。其余由 Agent 按项目里的 `AGENTS.md` 执行。
 
+![四段流程：Phase 1 网页对话 → Phase 2 终端搭建 → Phase 3 任务执行 → Phase 4 重复；check-gates.sh 在提交、合并、推送时自动运行](assets/flow.svg)
+
 ## 目录
 
 - [闸门到底拦什么](#闸门到底拦什么)
