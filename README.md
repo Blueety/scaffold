@@ -131,6 +131,10 @@ bash scripts/scaffold-update.sh ../my-project-name --write   # 写盘（不提�
 
 有问题、对哪条取舍有不同意见，或者你们的做法不一样——都可以开 issue。
 
+## 社区友链
+
+- [LINUX DO (https://linux.do/)](https://linux.do/)
+
 ## 许可
 
 MIT，见 [`LICENSE`](LICENSE)。生成出来的项目属于你，没有署名要求。

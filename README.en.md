@@ -185,6 +185,10 @@ Verdicts, conflict sites, and every switch are in [`UPDATE.md`](UPDATE.md).
 
 Questions, disagreements about the tradeoffs, or "we do this differently" — open an issue.
 
+## Community links
+
+- [LINUX DO (https://linux.do/)](https://linux.do/)
+
 ## License
 
 MIT, see [`LICENSE`](LICENSE). Generated projects are yours; no attribution required.
