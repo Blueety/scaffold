@@ -58,7 +58,7 @@ scripts/              闸门检查器（check-gates.sh + check-gates.awk）
 - 修 bug 走 `skills/bug-fix/SKILL.md`：进根因假设前先有一条能对这个 bug 变红的命令（闸门 A）。
 - 写测试走 `skills/tdd/SKILL.md`：先把 seam 写进 `plan.md`，再动手。
 - 重构走 `skills/refactor/SKILL.md`：先造行为安全网，再改结构；行为一变就不是重构。
-- 提交前走 `skills/pre-review/SKILL.md`：Standards / Spec 两轴分开报告。**T2 / T3 必须派独立子 agent 审**，产出 `tasks/<日期>-<简述>/review.md`；T1 自己审。提交时 `scripts/check-gates.sh --staged` 会拦 `[DEBUG-` 残留、`plan.md` / `journal.md` / 切片 / `review.md` 的字段、`architecture.md` 模块表与实际目录的偏差、**文档里指向不存在文件的相对路径**、**ADR 的取代关系只写一边**，以及**规模低报**（`src/` 下改 ≥ 4 个文件却没有 T2 / T3 的声明）。
+- 提交前走 `skills/pre-review/SKILL.md`：Standards / Spec 两轴分开报告。**T2 / T3 必须派独立子 agent 审**（派不出来就阻塞，不自审顶替），产出 `tasks/<日期>-<简述>/review.md`；T1 自己审。改动影响渲染时，裁决单里还要有截图路径或测量值。提交时 `scripts/check-gates.sh --staged` 会拦 `[DEBUG-` 残留、`plan.md` / `journal.md` / 切片 / `review.md` 的字段、`architecture.md` 模块表与实际目录的偏差、**文档里指向不存在文件的相对路径**、**ADR 的取代关系只写一边**，以及**规模低报**（`src/` 下改 ≥ 4 个文件却没有 T2 / T3 的声明）。
 - 收到审查意见走 `skills/receiving-review/SKILL.md`：每条发现落到「改 / 不改 + 理由 / 不接受 + 反证」，改完重跑验证。
 - **长期项目定期走查**走 `skills/self-audit/SKILL.md`：逐条实跑 `docs/commands.md` 的命令、逐条对 `architecture.md` 的接口契约与数据模型、逐个 grep `CONTEXT.md` 的术语、逐条实跑 `docs/pitfalls.md` 的解决命令。触发：T3 任务结束 / 每 10 个任务 / 你说「查一下」。产出不一致清单，每条落到「改文档 / 改代码 / 删掉」。
 - 提交时闸门自动跑（`core.hooksPath` 指向 `.githooks`）。手动全量：`bash scripts/check-gates.sh`（Linux / macOS / Git Bash 都一样）。Windows 的 PowerShell 里如果 `bash` 指向 WSL 的桩（报错是一串 `?`），改用 Git 自带的 `sh scripts/check-gates.sh`——但**只在 sh 真是 bash 的机器上**，Ubuntu 的 `/bin/sh` 是 dash，跑不了这个脚本；临时绕过：`git commit --no-verify`（别习惯性用）。
