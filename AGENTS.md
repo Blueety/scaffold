@@ -56,3 +56,5 @@ CI 上（`.github/workflows/check.yml`）跑同一组不变量，外加三个 fi
 ```bash
 git config core.hooksPath .githooks
 ```
+
+本仓库的 `.githooks/` 只有 `pre-commit`（`check-tree.ps1`），模板里的 `pre-merge-commit` / `pre-push` 不装：它们要补的是 merge / rebase / cherry-pick 绕过闸门的口子，而本仓库的权威检查是 27 分钟的 `gate-test.sh`，不适合挂在推送路径上——这些情形由 CI 覆盖（`push` 到 `main` 与 `pull_request` 都会跑 Windows + Linux 两组的全部 fixture）。代价是 main 上可能出现几分钟的红提交。

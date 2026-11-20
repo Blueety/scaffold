@@ -142,11 +142,18 @@ has "模板已变" "$out" "模板变了会提示重新判断"
 
 echo "== 裁决 union =="
 P="$TMP/p5"; cp -r "$TMP/withver" "$P"
+# 从本地删掉一行**模板里现有的**行，union 才有东西可补。行取自模板本身，
+# 不写死内容——写死就会随模板漂（原来钉的是 tasks/**/tmp/，模板删掉它之后断言才露馅：
+# 那一行本来就是生成时带进来的，grep 一直命中，从没验过「追加」）。
+tmpl_line="$(grep -v '^[[:space:]]*#' "$SCAF/templates/.gitignore" | grep -v '^[[:space:]]*$' | head -1)"
+[ -n "$tmpl_line" ] || no "模板 .gitignore 里有可用的非注释行"
+[ -n "$tmpl_line" ] && grep -vxF -- "$tmpl_line" "$P/.gitignore" > "$P/.gitignore.tmp" || true
+[ -n "$tmpl_line" ] && mv "$P/.gitignore.tmp" "$P/.gitignore"
 printf '\n本地专有的 .gitignore 行\n' >> "$P/.gitignore"
 commit_all "$P" local-edit
 "$B" "$UP" "$P" --write --union .gitignore >/dev/null 2>&1
 grep -q '本地专有的 .gitignore 行' "$P/.gitignore" && ok "union 不删本地行" || no "union 不删本地行"
-grep -q 'tasks/\*\*/tmp/' "$P/.gitignore" && ok "union 追加了模板行" || no "union 追加了模板行"
+[ -n "$tmpl_line" ] && grep -qxF -- "$tmpl_line" "$P/.gitignore" && ok "union 补回了本地删掉的模板行" || no "union 补回了本地删掉的模板行"
 grep -q '^decision union .gitignore ' "$P/.scaffold-version" && ok "union 记进了 .scaffold-version" || ok "union 记进了 .scaffold-version"
 
 # ---------------------------------------------------------------- 6. 落盘自检
